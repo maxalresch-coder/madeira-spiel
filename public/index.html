@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#0b5f78">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Madeira">
+  <title>Madeira-Spiel</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Login -->
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="login-logo" aria-hidden="true">🌺</div>
+      <h1>Madeira-Spiel</h1>
+      <p class="muted">Drei Entdecker, zehn Regionen, eine Insel.</p>
+      <form id="login-form" autocomplete="on">
+        <label>Dein Name
+          <input id="login-name" name="name" required maxlength="24" autocomplete="nickname" placeholder="z. B. Maxi">
+        </label>
+        <label>Passwort
+          <input id="login-pass" name="password" type="password" required autocomplete="current-password">
+        </label>
+        <button class="btn btn-primary btn-block" type="submit">Los geht's</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- App -->
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-title">Madeira-Spiel</span>
+        <span class="brand-rank" id="hdr-rank"></span>
+      </div>
+      <div class="topbar-right">
+        <button class="chip chip-points" id="hdr-points" data-go="stats" title="Kontostand"></button>
+        <button class="icon-btn" id="help-btn" aria-label="Spielanleitung">?</button>
+      </div>
+    </header>
+    <div id="offline" class="offline" hidden>Keine Verbindung – Änderungen können gerade nicht gespeichert werden.</div>
+    <main id="view" class="view"></main>
+    <nav class="tabbar" id="tabbar">
+      <button data-view="map"><span class="tab-ic">🗺️</span><span>Karte</span></button>
+      <button data-view="bonus"><span class="tab-ic">🃏</span><span>Bonus</span></button>
+      <button data-view="shop"><span class="tab-ic">🛒</span><span>Shop</span></button>
+      <button data-view="log"><span class="tab-ic">📜</span><span>Logbuch</span></button>
+      <button data-view="stats"><span class="tab-ic">📊</span><span>Mehr</span></button>
+    </nav>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="fx-root" aria-hidden="true"></div>
+  <div id="toast-root" aria-live="polite"></div>
+
+  <script src="content.js"></script>
+  <script src="map-data.js"></script>
+  <script src="logic.js"></script>
+  <script src="vendor/jspdf.umd.min.js" defer></script>
+  <script src="app.js"></script>
+</body>
+</html>

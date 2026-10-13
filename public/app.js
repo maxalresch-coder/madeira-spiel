@@ -1,0 +1,783 @@
+// ============================================================================
+//  Madeira-Spiel – Oberfläche
+// ============================================================================
+(function () {
+  "use strict";
+  const C = window.GAME_CONTENT;
+  const L = window.GameLogic;
+  const MAP = window.MADEIRA_MAP;
+  const IX = L.index(C);
+  const $ = (sel, el) => (el || document).querySelector(sel);
+  const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const fmt = (n) => Math.round(n).toLocaleString("de-DE");
+  const signed = (n) => (n > 0 ? "+" : n < 0 ? "−" : "±") + fmt(Math.abs(n));
+  const store = {
+    get(k) { try { return localStorage.getItem("madeira:" + k); } catch (e) { return null; } },
+    set(k, v) { try { v == null ? localStorage.removeItem("madeira:" + k) : localStorage.setItem("madeira:" + k, v); } catch (e) { /* egal */ } }
+  };
+
+  const app = {
+    token: store.get("token"),
+    name: store.get("name") || "",
+    view: store.get("view") || "map",
+    version: -1,
+    state: null,
+    online: true,
+    busy: false,
+    modals: [] // offene Fenster (oberstes zuletzt)
+  };
+
+  // ------------------------------------------------------------------ API
+  async function api(path, opts) {
+    opts = opts || {};
+    const res = await fetch("api/" + path, {
+      method: opts.method || "GET",
+      headers: Object.assign({ "Content-Type": "application/json" }, app.token ? { Authorization: "Bearer " + app.token } : {}),
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      cache: "no-store"
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* leer */ }
+    if (res.status === 401 && path !== "login") { logout(); throw new Error("Bitte neu anmelden."); }
+    return { status: res.status, data };
+  }
+
+  function setOnline(on) {
+    app.online = on;
+    $("#offline").hidden = on;
+  }
+
+  async function poll() {
+    if (!app.token) return;
+    try {
+      const r = await api("state?since=" + app.version);
+      setOnline(true);
+      if (r.status !== 200 || r.data.unchanged) return;
+      if (!r.data.state) { await createGame(); return; }
+      receive(r.data.version, r.data.state, false);
+    } catch (e) {
+      setOnline(false);
+    }
+  }
+
+  async function createGame() {
+    const seed = Math.floor(Math.random() * 2 ** 31);
+    const s = L.newGame(C, seed, Date.now());
+    const r = await api("state", { method: "POST", body: { baseVersion: 0, state: s } });
+    if (r.status === 200) receive(r.data.version, s, true);
+    else if (r.status === 409 && r.data.state) receive(r.data.version, r.data.state, false);
+  }
+
+  function receive(version, state, own) {
+    const prev = app.state;
+    app.version = version;
+    app.state = state;
+    if (prev && prev.seed === state.seed) {
+      celebrate(prev, state, own);
+      if (!own) announceRemote(prev, state);
+    }
+    render();
+  }
+
+  // Aktion ausführen: lokal anwenden, an Server senden, bei Konflikt neu versuchen.
+  async function act(action, opts) {
+    opts = opts || {};
+    if (app.busy) return false;
+    app.busy = true;
+    try {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        let next;
+        try {
+          next = L.apply(app.state, C, action, app.name, Date.now());
+        } catch (e) {
+          if (e instanceof L.GameError) { toast(e.message, true); return false; }
+          throw e;
+        }
+        let r;
+        try {
+          r = await api("state", { method: "POST", body: { baseVersion: app.version, state: next } });
+        } catch (e) {
+          setOnline(false);
+          toast("Keine Verbindung – nicht gespeichert. Bitte nochmal versuchen.", true);
+          return false;
+        }
+        setOnline(true);
+        if (r.status === 200) {
+          receive(r.data.version, next, true);
+          if (opts.fxFrom) burst(opts.fxFrom, next);
+          return true;
+        }
+        if (r.status === 409) { receive(r.data.version, r.data.state, false); continue; }
+        toast((r.data && r.data.error) || "Fehler beim Speichern", true);
+        return false;
+      }
+      toast("Gerade sehr viel los – bitte nochmal versuchen.", true);
+      return false;
+    } finally {
+      app.busy = false;
+    }
+  }
+
+  // ------------------------------------------------------------------ Login
+  function showLogin() {
+    $("#app").hidden = true;
+    $("#login").hidden = false;
+    $("#login-name").value = app.name;
+  }
+  function logout() {
+    app.token = null;
+    store.set("token", null);
+    showLogin();
+  }
+  $("#login-form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const name = $("#login-name").value.trim();
+    const password = $("#login-pass").value;
+    $("#login-error").textContent = "";
+    if (!name) return;
+    try {
+      const r = await api("login", { method: "POST", body: { password } });
+      if (r.status !== 200) { $("#login-error").textContent = "Falsches Passwort."; return; }
+      app.token = r.data.token; app.name = name;
+      store.set("token", app.token); store.set("name", name);
+      $("#login-pass").value = "";
+      start();
+    } catch (e) {
+      $("#login-error").textContent = "Keine Verbindung zum Server.";
+    }
+  });
+
+  function start() {
+    $("#login").hidden = true;
+    $("#app").hidden = false;
+    render();
+    poll();
+  }
+
+  // ------------------------------------------------------------------ Rendering
+  function sum() { return L.summary(app.state, C); }
+
+  function render() {
+    if (!app.state) { $("#view").innerHTML = '<div class="empty">Spielstand wird geladen …</div>'; return; }
+    const s = sum();
+    $("#hdr-points").textContent = fmt(s.balance) + " P";
+    $("#hdr-points").classList.toggle("neg", s.balance < 0);
+    $("#hdr-rank").textContent = s.rankName + " · " + fmt(s.earned) + " verdient";
+    $$("#tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === app.view));
+    const views = { map: viewMap, bonus: viewBonus, shop: viewShop, log: viewLog, stats: viewStats };
+    $("#view").innerHTML = app.state.ended && app.view === "stats" ? viewEnded(s) : (views[app.view] || viewMap)(s);
+    app.modals.forEach((m) => m.refresh());
+  }
+
+  function go(view) {
+    app.view = view;
+    store.set("view", view);
+    window.scrollTo(0, 0);
+    render();
+  }
+
+  // ---- Inselkarte
+  function mapSVG(levels, opts) {
+    opts = opts || {};
+    const paths = C.regions.map((r) => {
+      const lvl = levels[r.id] || 0;
+      const d = (MAP.regions[r.name] || []).join(" ");
+      return '<path class="region-path" data-region="' + r.id + '" tabindex="0" role="button" aria-label="' + esc(r.name + ": " + L.LEVELS[lvl].name) + '" d="' + d + '" fill="' + L.LEVELS[lvl].color + '"/>';
+    }).join("");
+    const labels = opts.labels === false ? "" : C.regions.map((r) => {
+      const p = MAP.labels[r.name];
+      return p ? '<text class="region-label" x="' + p[0] + '" y="' + p[1] + '">' + esc(r.name) + "</text>" : "";
+    }).join("");
+    return '<svg viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg">' + paths + labels + "</svg>";
+  }
+
+  function stars(lvl) { return "★".repeat(Math.max(0, lvl - 0)) + "☆".repeat(3 - lvl); }
+
+  function viewMap(s) {
+    const legend = L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + "</span>").join("");
+    const list = C.regions.map((r) => {
+      const lvl = s.levels[r.id];
+      return '<button class="region-btn" data-region="' + r.id + '"><span class="dot" style="background:' + L.LEVELS[lvl].color + '"></span>' + esc(r.name) + '<span class="stars">' + stars(lvl) + "</span></button>";
+    }).join("");
+    return '' +
+      '<div class="map-wrap">' + mapSVG(s.levels) + '</div>' +
+      '<div class="legend">' + legend + '</div>' +
+      '<div class="card" style="margin-top:14px">' +
+        '<div class="row between"><strong>' + s.explored + " / " + C.regions.length + ' Regionen erkundet</strong><span class="muted small">' + (s.allExplored ? "🎉 Madeira erkundet!" : "Ziel: alle 10") + "</span></div>" +
+        '<div class="progress" style="margin-top:8px"><div style="width:' + (s.explored / C.regions.length * 100) + '%"></div></div>' +
+        '<p class="muted small" style="margin:8px 0 0">Tippe auf eine Region, um ihre 3 Quests zu sehen.</p>' +
+      "</div>" +
+      '<div class="region-list">' + list + "</div>";
+  }
+
+  function openRegion(regionId) {
+    const r = IX.regions[regionId];
+    openModal(() => {
+      const s = sum();
+      const lvl = s.levels[r.id];
+      const joker = app.state.joker && app.state.joker.region === r.id;
+      const quests = r.quests.map((q) => {
+        const done = app.state.quests[q.id];
+        return '<div class="quest">' +
+          '<button class="check ' + (done ? "on" : "") + '" data-quest="' + q.id + '" aria-label="' + (done ? "Erledigt – rückgängig machen" : "Als erledigt abhaken") + '">' + (done ? "✓" : "") + "</button>" +
+          "<div><h4>" + esc(q.title) + "</h4><p>" + esc(q.text) + "</p>" +
+          (done ? '<div class="by">✓ ' + esc(done.by) + " · " + when(done.t) + "</div>" : "") + "</div></div>";
+      }).join("");
+      const next = lvl === 0 ? "Erste Quest: Region erkundet (+100)" : lvl < 3 ? "Nächste Quest: " + L.LEVELS[lvl + 1].name + " (+20)" : "Höchste Stufe erreicht!";
+      return '<div class="modal-head"><div><h2>' + esc(r.name) + "</h2>" +
+        '<span class="pill" style="background:' + L.LEVELS[lvl].color + ";color:" + (lvl === 1 || lvl === 0 ? "#1d2a30" : "#fff") + '">' + L.LEVELS[lvl].name + "</span> " +
+        '<span class="stars" style="font-size:1rem">' + stars(lvl) + "</span>" +
+        (joker ? ' <span class="pill" style="background:var(--ocean)">Region-Joker</span>' : "") +
+        '</div><button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
+        '<p class="muted small">' + next + " · Punkte hier: " + fmt(L.regionPoints(app.state, C, r.id)) + "</p>" +
+        quests;
+    }, (el) => {
+      $$("[data-quest]", el).forEach((b) => b.addEventListener("click", () => toggleQuest(b.dataset.quest, b)));
+    });
+  }
+
+  async function toggleQuest(questId, btn) {
+    const done = app.state.quests[questId];
+    if (!done) { await act({ type: "quest", questId }, { fxFrom: btn }); return; }
+    const entry = lastEntry((e) => e.type === "quest" && e.data.questId === questId);
+    if (!entry) return;
+    if (await confirmBox("Quest rückgängig machen?", "„" + IX.quests[questId].title + "“ wird wieder offen, die Punkte werden abgezogen.", "Rückgängig")) {
+      await act({ type: "undo", logId: entry.id });
+    }
+  }
+
+  function lastEntry(pred) {
+    for (let i = app.state.log.length - 1; i >= 0; i--) {
+      const e = app.state.log[i];
+      if (!e.undone && pred(e)) return e;
+    }
+    return null;
+  }
+
+  // ---- Bonus-Karten
+  function cardHTML(id, s, i) {
+    const c = IX.cards[id];
+    const m = app.state.mults[id];
+    const base = L.cardBase(C, id);
+    const pts = L.cardPoints(app.state, C, id);
+    const shopOk = s.balance >= 0;
+    return '<div class="bcard ' + c.difficulty + '" data-card-box="' + id + '">' +
+      '<div class="row between"><span class="pill diff-' + c.difficulty + '">' + cap(c.difficulty) + "</span>" +
+      (m ? '<span class="pill mult-badge">' + L.fmtFactor(m.factor) + (m.factor === 5 ? " Jackpot" : "") + "</span>" : "") + "</div>" +
+      "<h3>" + esc(c.title) + "</h3><p>" + esc(c.text) + "</p>" +
+      '<div class="pts">' + (m && pts !== base ? "<s>" + base + "</s>" : "") + pts + " Punkte</div>" +
+      '<div class="actions">' +
+        '<button class="btn btn-good" data-done="' + id + '">✓ Erledigt</button>' +
+        '<button class="btn btn-small btn-ghost" data-swap="' + id + '" ' + (m || !app.state.deck.length || !shopOk ? "disabled" : "") + '>⇄ Tauschen · ' + L.PRICES.swap + "</button>" +
+        '<button class="btn btn-small btn-ghost" data-mult="' + id + '" ' + (m || s.multCount >= L.MAX_MULTS || !shopOk ? "disabled" : "") + ">✦ Multiplikator · " + L.PRICES.mult + "</button>" +
+      "</div></div>";
+  }
+
+  function viewBonus(s) {
+    const hand = app.state.hand.filter(Boolean);
+    const cards = hand.length ? hand.map((id, i) => cardHTML(id, s, i)).join("") :
+      '<div class="card empty">🎉 Alle Bonus-Karten erledigt – der Bonus-Teil ist abgeschlossen!</div>';
+    const done = app.state.log.filter((e) => e.type === "card" && !e.undone).slice().reverse();
+    const doneList = done.length ? done.map((e) => {
+      const id = e.data.cardId;
+      return '<div class="list-item"><div class="grow"><div class="txt"><strong>' + esc(IX.cards[id].title) + "</strong></div>" +
+        '<div class="meta">' + cap(IX.cards[id].difficulty) + " · " + esc(e.by) + " · " + when(e.t) + "</div></div>" +
+        '<span class="delta plus">+' + L.cardPoints(app.state, C, id) + "</span>" +
+        '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">↩</button></div>';
+    }).join("") : '<p class="muted small" style="margin:0">Noch keine Bonus-Karte erledigt.</p>';
+    return '' +
+      '<div class="card deck-info"><div class="deck-stack"></div><div><strong>' + s.deckLeft + " Karten im Stapel</strong>" +
+      '<div class="muted small">' + s.doneCards + " von " + C.bonusCards.length + " erledigt · Multiplikatoren " + s.multCount + "/" + L.MAX_MULTS +
+      (s.balance < 0 ? " · <strong style='color:var(--hibiscus)'>Shop gesperrt</strong>" : "") + "</div></div></div>" +
+      cards +
+      '<div class="section-title"><h3>Erledigt</h3></div><div class="card">' + doneList + "</div>";
+  }
+
+  async function doSwap(id) {
+    if (await confirmBox("Tausch-Joker kaufen?", "Für " + L.PRICES.swap + " Punkte geht „" + IX.cards[id].title + "“ zurück in den Stapel und eine neue Karte kommt auf die Hand.", "Tauschen (" + L.PRICES.swap + ")")) {
+      if (await act({ type: "swap", cardId: id })) {
+        const e = lastEntry((x) => x.type === "swap");
+        if (e) toast("Neue Karte: „" + IX.cards[e.data.newId].title + "“");
+      }
+    }
+  }
+  async function doMult(id) {
+    const base = L.cardBase(C, id);
+    if (await confirmBox("Multiplikator kaufen?", "Für " + L.PRICES.mult + " Punkte bekommt „" + IX.cards[id].title + "“ (" + base + " P) einen zufälligen Faktor: ×0,5 bis ×2,0 – mit 5 % Chance Jackpot ×5. Danach kann die Karte nicht mehr getauscht werden." + (base === 15 ? " Tipp: Auf leichten Karten lohnt er sich eher nicht." : ""), "Würfeln (" + L.PRICES.mult + ")")) {
+      if (await act({ type: "mult", cardId: id })) {
+        const m = app.state.mults[id];
+        if (m) {
+          banner(m.factor === 5 ? "💥 JACKPOT ×5!" : L.fmtFactor(m.factor), "„" + IX.cards[id].title + "“ ist jetzt " + L.cardPoints(app.state, C, id) + " Punkte wert");
+          if (m.factor >= 1.5) confetti(m.factor === 5 ? 160 : 60);
+        }
+      }
+    }
+  }
+
+  // ---- Shop
+  function viewShop(s) {
+    const locked = s.balance < 0;
+    const unexplored = C.regions.filter((r) => s.levels[r.id] === 0);
+    const jokerUsed = app.state.joker;
+    const jokerBody = jokerUsed ?
+      '<p class="muted small" style="margin:0">Eingesetzt für <strong>' + esc(IX.regions[jokerUsed.region].name) + "</strong> (" + esc(jokerUsed.by) + "). Rückgängig im Logbuch.</p>" :
+      unexplored.length ?
+        '<div class="row"><select id="joker-region">' + unexplored.map((r) => '<option value="' + r.id + '">' + esc(r.name) + "</option>").join("") + "</select>" +
+        '<button class="btn btn-primary" id="buy-joker" ' + (locked || s.balance < L.PRICES.joker ? "disabled" : "") + ">Kaufen</button></div>" :
+        '<p class="muted small" style="margin:0">Alle Regionen sind schon erkundet.</p>';
+    const handBtns = (attr, disabledFn) => app.state.hand.filter(Boolean).map((id) =>
+      '<button class="btn btn-ghost btn-small" style="justify-content:space-between" ' + attr + '="' + id + '" ' + (disabledFn(id) ? "disabled" : "") + ">" +
+      "<span>" + esc(IX.cards[id].title) + "</span><span class='muted'>" + L.cardBase(C, id) + " P" + (app.state.mults[id] ? " · " + L.fmtFactor(app.state.mults[id].factor) : "") + "</span></button>").join("");
+    return '' +
+      '<div class="card row between"><div><div class="muted small">Kontostand</div><div class="rank-big" style="color:' + (locked ? "var(--hibiscus)" : "inherit") + '">' + fmt(s.balance) + ' P</div></div>' +
+      '<div class="muted small" style="text-align:right">verdient ' + fmt(s.earned) + "<br>ausgegeben " + fmt(s.spent) + "</div></div>" +
+      (locked ? '<div class="locked">Der Kontostand ist negativ – der Shop ist gesperrt, bis wieder Punkte reinkommen.</div>' : "") +
+      '<p class="muted small">Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen.</p>' +
+      '<div class="card shop-item"><div class="row between"><h3 style="margin:0">🧭 Region-Joker</h3><span class="price">' + L.PRICES.joker + " P</span></div>" +
+      '<p class="muted small" style="margin:0">Eine Region gilt als erkundet, bringt aber keine 100 Punkte. Sie kann danach normal mit Quests auf Erobert und Erschlossen gebracht werden. <strong>Einmal pro Spiel.</strong></p>' + jokerBody + "</div>" +
+      '<div class="card shop-item"><div class="row between"><h3 style="margin:0">⇄ Tausch-Joker</h3><span class="price">' + L.PRICES.swap + " P</span></div>" +
+      '<p class="muted small" style="margin:0">Eine Handkarte geht zurück in den Stapel, eine neue kommt auf die Hand. So oft ihr wollt (' + s.swaps + "× genutzt).</p>" +
+      '<div class="hand-pick">' + handBtns("data-swap", (id) => locked || app.state.mults[id] || !app.state.deck.length) + "</div></div>" +
+      '<div class="card shop-item"><div class="row between"><h3 style="margin:0">✦ Multiplikator</h3><span class="price">' + L.PRICES.mult + " P</span></div>" +
+      '<p class="muted small" style="margin:0">Zufälliger Faktor auf eine Handkarte: 95 % ×0,5–×2,0, 5 % Jackpot ×5. Ergebnis wird aufgerundet. Lohnt sich vor allem auf schweren Karten. <strong>' + (L.MAX_MULTS - s.multCount) + " von 3 übrig.</strong></p>" +
+      '<div class="hand-pick">' + handBtns("data-mult", (id) => locked || app.state.mults[id] || s.multCount >= L.MAX_MULTS) + "</div></div>";
+  }
+
+  // ---- Logbuch
+  function viewLog() {
+    const items = app.state.log.slice().reverse().map((e) => {
+      const d = e.dE - e.dS;
+      return '<div class="list-item ' + (e.undone ? "undone" : "") + '"><div class="grow"><div class="txt">' + esc(e.text) + "</div>" +
+        '<div class="meta">' + when(e.t, true) + " · " + esc(e.by) + (e.undone ? " · rückgängig gemacht" : "") + "</div></div>" +
+        (d ? '<span class="delta ' + (d > 0 ? "plus" : "minus") + '">' + signed(d) + "</span>" : "") +
+        (L.canUndo(e) && !app.state.ended ? '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">↩</button>' : "") + "</div>";
+    }).join("");
+    return '<h2>Logbuch</h2><p class="muted small">Alle Aktionen mit Uhrzeit und Name. Mit ↩ lässt sich gezielt etwas rückgängig machen – keine Aufgabe bringt je zweimal Punkte.</p>' +
+      '<div class="card">' + (items || '<p class="muted" style="margin:0">Noch nichts passiert. Auf geht\'s!</p>') + "</div>";
+  }
+
+  async function undo(logId) {
+    const e = app.state.log.find((x) => x.id === logId);
+    if (!e) return;
+    if (await confirmBox("Rückgängig machen?", e.text, "Rückgängig")) await act({ type: "undo", logId });
+  }
+
+  // ---- Statistik & Einstellungen
+  function viewStats(s) {
+    const pct = s.nextRank ? Math.min(100, (s.earned - L.RANKS[s.rank].min) / (s.nextRank.min - L.RANKS[s.rank].min) * 100) : 100;
+    const days = L.dayCount(app.state, Date.now());
+    const perDay = L.pointsPerDay(app.state, Date.now());
+    const lvlCounts = [0, 0, 0, 0];
+    C.regions.forEach((r) => lvlCounts[s.levels[r.id]]++);
+    return '' +
+      '<div class="card rank-card"><div class="muted small">Team-Rang</div><div class="rank-big">' + esc(s.rankName) + "</div>" +
+      '<div class="progress" style="margin:10px 0 6px"><div style="width:' + pct + '%"></div></div>' +
+      '<div class="small muted">' + (s.nextRank ? "Noch " + fmt(s.nextRank.min - s.earned) + " Punkte bis „" + s.nextRank.name + "“" : "Höchster Rang erreicht!") + "</div></div>" +
+      '<div class="kpis">' +
+        kpi(fmt(s.earned), "Punkte verdient") + kpi(fmt(s.balance), "Kontostand") +
+        kpi(Math.round(s.earned / L.MAX_POINTS * 100) + " %", "von 2.400 möglichen") + kpi(s.bestMult ? L.fmtFactor(s.bestMult) : "–", "bester Multiplikator") +
+        kpi(days, days === 1 ? "Tag" : "Tage") + kpi(fmt(s.earned / days), "Punkte pro Tag") +
+        kpi(s.questsDone + "/30", "Quests erledigt") + kpi(s.doneCards + "/" + C.bonusCards.length, "Bonus-Karten") +
+      "</div>" +
+      '<div class="section-title"><h3>Punkte pro Tag</h3></div><div class="card chart">' + barChart(perDay) + "</div>" +
+      '<div class="section-title"><h3>Woher die Punkte kommen</h3></div><div class="card">' +
+        breakdown([["Regionen & Stufen", s.regionPts, "var(--laurel)"], ["Madeira-Bonus", s.madeiraBonus, "var(--gold)"], ["Bonus-Karten", s.cardPts, "var(--medium)"]], s.earned) +
+        '<div class="legend" style="margin-top:10px">' + L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + ": " + lvlCounts[i] + "</span>").join("") + "</div>" +
+        '<p class="muted small" style="margin:8px 0 0">Joker: Region-Joker ' + s.jokerUsed + "/1 · Tausch " + s.swaps + "× · Multiplikator " + s.multCount + "/3 · ausgegeben " + fmt(s.spent) + " P</p></div>" +
+      '<div class="section-title"><h3>Spiel</h3></div>' +
+      '<div class="card" style="display:grid;gap:10px">' +
+        '<button class="btn btn-gold btn-block" id="end-btn">🏁 Urlaub beenden & Belohnungen</button>' +
+        '<button class="btn btn-ghost btn-block" id="help-btn2">? Spielanleitung</button>' +
+        '<div class="grid2"><button class="btn btn-ghost" id="rename-btn">Name: ' + esc(app.name) + '</button><button class="btn btn-ghost" id="logout-btn">Abmelden</button></div>' +
+        '<button class="btn btn-danger btn-block" id="reset-btn">Kompletter Reset</button>' +
+      "</div>";
+  }
+  function kpi(v, l) { return '<div class="kpi"><div class="v">' + v + '</div><div class="l">' + l + "</div></div>"; }
+  function breakdown(parts, total) {
+    const t = Math.max(total, 1);
+    return '<div style="display:flex;height:16px;border-radius:99px;overflow:hidden;background:var(--line)">' +
+      parts.map((p) => '<div style="width:' + Math.max(0, p[1]) / t * 100 + "%;background:" + p[2] + '"></div>').join("") + "</div>" +
+      '<div class="legend">' + parts.map((p) => '<span><i style="background:' + p[2] + '"></i>' + p[0] + ": " + fmt(p[1]) + "</span>").join("") + "</div>";
+  }
+  function barChart(days) {
+    const W = 600, H = 180, pad = 26;
+    const max = Math.max(50, ...days.map((d) => d.points));
+    const show = days.slice(-14);
+    const bw = Math.min(70, (W - pad * 2) / show.length);
+    const bars = show.map((d, i) => {
+      const h = Math.max(0, d.points) / max * (H - pad * 2);
+      const x = pad + i * bw + bw * 0.15, y = H - pad - h;
+      const lbl = d.day.slice(8) + "." + d.day.slice(5, 7) + ".";
+      return '<rect x="' + x + '" y="' + y + '" width="' + bw * 0.7 + '" height="' + h + '" rx="4" fill="var(--ocean)"/>' +
+        (d.points ? '<text x="' + (x + bw * 0.35) + '" y="' + (y - 5) + '" text-anchor="middle">' + fmt(d.points) + "</text>" : "") +
+        '<text x="' + (x + bw * 0.35) + '" y="' + (H - 8) + '" text-anchor="middle">' + lbl + "</text>";
+    }).join("");
+    return '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Punkte pro Tag"><line x1="' + pad + '" x2="' + (W - pad) + '" y1="' + (H - pad) + '" y2="' + (H - pad) + '" stroke="var(--line)"/>' + bars + "</svg>";
+  }
+
+  // ---- Urlaub beenden
+  function players() {
+    const names = [];
+    const add = (n) => { if (n && names.indexOf(n) < 0) names.push(n); };
+    app.state.log.forEach((e) => add(e.by));
+    add(app.name);
+    return names;
+  }
+
+  async function startEnd() {
+    if (!(await confirmBox("Urlaub beenden?", "Die Restpunkte werden jetzt in Belohnungen umgetauscht. Danach gibt es das Zertifikat. (Falls nötig, kann man den Urlaub später fortsetzen.)", "Weiter"))) return;
+    const s = sum();
+    const rest = Math.max(0, s.balance);
+    const alloc = {};
+    C.rewards.forEach((r) => { alloc[r.id] = 0; });
+    let names = players().slice(0, 3).join(", ");
+    const remaining = () => rest - C.rewards.reduce((a, r) => a + (alloc[r.id] || 0), 0);
+    openModal(() => {
+      const rem = remaining();
+      return '<div class="modal-head"><h2>Belohnungen verteilen</h2><button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
+        '<div class="sticky-remaining"><div class="muted small">Restpunkte: ' + fmt(rest) + " (verdient " + fmt(s.earned) + " − ausgegeben " + fmt(s.spent) + ")</div>" +
+        '<div class="remaining" style="color:' + (rem === 0 ? "var(--laurel)" : rem < 0 ? "var(--hibiscus)" : "inherit") + '">Noch zu verteilen: ' + fmt(rem) + " Punkte</div></div>" +
+        '<label style="margin-top:10px">Spielernamen fürs Zertifikat<input id="end-names" value="' + esc(names) + '"></label>' +
+        C.rewards.map((r) => {
+          const v = alloc[r.id] || 0;
+          return '<div class="reward"><div><strong>' + esc(r.name) + '</strong><span class="tag tag-' + r.type + '">' + r.type + "</span></div>" +
+            (r.desc ? '<div class="muted small">' + esc(r.desc) + "</div>" : "") +
+            '<div class="muted small">100 Punkte = ' + r.per100 + " " + (r.per100 === 1 ? r.unit : (r.unitPlural || r.unit)) + " · Schritte: " + r.step + "</div>" +
+            '<div class="stepper"><button class="btn" data-minus="' + r.id + '" aria-label="weniger">−</button>' +
+            '<input inputmode="numeric" data-amount="' + r.id + '" value="' + v + '" aria-label="Punkte für ' + esc(r.name) + '">' +
+            '<button class="btn" data-plus="' + r.id + '" aria-label="mehr">+</button></div>' +
+            '<div class="live">' + fmt(v) + " Punkte = " + L.formatReward(r, v) + " " + esc(r.name) + "</div>" +
+            (r.rules ? '<div class="muted small">' + esc(r.rules) + "</div>" : "") + "</div>";
+        }).join("") +
+        '<p class="muted small">Wie die Belohnungen unter euch aufgeteilt werden, regelt ihr selbst – die App rechnet nur um.</p>' +
+        '<div class="modal-actions"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-good" id="finish" ' + (rem !== 0 ? "disabled" : "") + ">Abschließen</button></div>";
+    }, (el, refresh) => {
+      $("#end-names", el).addEventListener("input", (ev) => { names = ev.target.value; });
+      const setV = (id, v) => { alloc[id] = Math.max(0, Math.round(v)); refresh(); };
+      $$("[data-plus]", el).forEach((b) => b.addEventListener("click", () => {
+        const r = C.rewards.find((x) => x.id === b.dataset.plus);
+        setV(r.id, (alloc[r.id] || 0) + Math.min(r.step, Math.max(0, remaining())));
+      }));
+      $$("[data-minus]", el).forEach((b) => b.addEventListener("click", () => {
+        const r = C.rewards.find((x) => x.id === b.dataset.minus);
+        setV(r.id, (alloc[r.id] || 0) - r.step);
+      }));
+      $$("[data-amount]", el).forEach((inp) => inp.addEventListener("change", () => {
+        setV(inp.dataset.amount, parseInt(inp.value.replace(/\D/g, ""), 10) || 0);
+      }));
+      $("#finish", el).addEventListener("click", async () => {
+        if (remaining() !== 0) return;
+        const clean = {};
+        Object.keys(alloc).forEach((k) => { if (alloc[k] > 0) clean[k] = alloc[k]; });
+        clean._players = names.trim();
+        clean._rest = rest;
+        if (await act({ type: "end", alloc: clean })) {
+          closeAll();
+          go("stats");
+          confetti(200);
+        }
+      });
+    }, { keepScroll: true });
+  }
+
+  function viewEnded(s) {
+    const alloc = app.state.ended.alloc || {};
+    const lines = C.rewards.filter((r) => alloc[r.id] > 0).map((r) =>
+      '<div class="list-item"><div class="grow"><strong>Gutschein: ' + L.formatReward(r, alloc[r.id]) + " " + esc(r.voucher) + '</strong><div class="meta">' + fmt(alloc[r.id]) + " Punkte</div></div></div>").join("");
+    return '<h2>🏁 Urlaub beendet</h2>' +
+      '<div class="card rank-card"><div class="muted small">Euer Rang</div><div class="rank-big">' + esc(s.rankName) + '</div><div class="small">' + fmt(s.earned) + " von 2.400 Punkten (" + Math.round(s.earned / L.MAX_POINTS * 100) + " %)</div></div>" +
+      '<div class="card"><h3>Eure Belohnungen</h3>' + (lines || '<p class="muted" style="margin:0">Keine Restpunkte verteilt.</p>') + "</div>" +
+      '<div class="card"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG()) + '">' +
+      '<button class="btn btn-primary btn-block" id="pdf-btn" style="margin-top:12px">📄 Zertifikat als PDF herunterladen</button></div>' +
+      '<div class="card" style="display:grid;gap:10px"><button class="btn btn-ghost btn-block" id="reopen-btn">Urlaub fortsetzen (Verteilung aufheben)</button>' +
+      '<button class="btn btn-ghost btn-block" id="tab-stats-btn">Statistiken ansehen</button></div>';
+  }
+
+  // ---- Zertifikat
+  function certificateSVG() {
+    const s = sum();
+    const st = app.state;
+    const alloc = (st.ended && st.ended.alloc) || {};
+    const W = 1188, H = 840;
+    const names = alloc._players || players().join(", ");
+    const pct = Math.round(s.earned / L.MAX_POINTS * 100);
+    const days = L.dayCount(st, Date.now());
+    const vouchers = C.rewards.filter((r) => alloc[r.id] > 0).map((r) => "Gutschein: " + L.formatReward(r, alloc[r.id]) + " " + r.voucher);
+    const t = (x, y, txt, size, opts) => '<text x="' + x + '" y="' + y + '" font-size="' + size + '" ' + (opts || 'text-anchor="middle"') + ">" + esc(txt) + "</text>";
+    const mapScale = 0.5;
+    const mapG = '<g transform="translate(' + (W / 2 - MAP.w * mapScale / 2) + ',300) scale(' + mapScale + ')">' +
+      C.regions.map((r) => '<path d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[s.levels[r.id]].color + '" stroke="#fff" stroke-width="3"/>').join("") + "</g>";
+    const statsLine = s.doneCards + " Bonus-Karten · bester Multiplikator " + (s.bestMult ? L.fmtFactor(s.bestMult) : "–") +
+      " · " + (s.jokerUsed + s.swaps + s.multCount) + " Joker eingesetzt · " + days + (days === 1 ? " Tag" : " Tage");
+    const date = new Date(st.ended ? st.ended.at : Date.now()).toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" });
+    let vy = 640;
+    const vouchersSvg = vouchers.length ? vouchers.map((v, i) => t(W / 2, vy + i * 30, v, 22, 'text-anchor="middle" font-weight="600" fill="#0b5f78"')).join("") : t(W / 2, vy, "Keine Gutscheine", 20, 'text-anchor="middle" fill="#888"');
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="Georgia, \'Times New Roman\', serif" fill="#1d2a30">' +
+      '<rect width="' + W + '" height="' + H + '" fill="#fbf7ef"/>' +
+      '<rect x="24" y="24" width="' + (W - 48) + '" height="' + (H - 48) + '" fill="none" stroke="#0b5f78" stroke-width="6" rx="18"/>' +
+      '<rect x="40" y="40" width="' + (W - 80) + '" height="' + (H - 80) + '" fill="none" stroke="#e5b53b" stroke-width="2" rx="12"/>' +
+      t(W / 2, 110, "ZERTIFIKAT", 54, 'text-anchor="middle" font-weight="700" letter-spacing="8" fill="#0b5f78"') +
+      t(W / 2, 150, "Madeira-Spiel · " + date, 20, 'text-anchor="middle" fill="#5f6f76"') +
+      t(W / 2, 200, "Hiermit wird bestätigt, dass", 20, 'text-anchor="middle" fill="#5f6f76"') +
+      t(W / 2, 245, names || "das Team", 36, 'text-anchor="middle" font-weight="700"') +
+      t(W / 2, 285, "Madeira als Team erkundet und den Rang „" + s.rankName + "“ erreicht haben.", 22, 'text-anchor="middle"') +
+      mapG +
+      t(W / 2, 568, fmt(s.earned) + " von 2.400 möglichen Punkten (" + pct + " %)", 28, 'text-anchor="middle" font-weight="700"') +
+      t(W / 2, 600, statsLine, 18, 'text-anchor="middle" fill="#5f6f76"') +
+      vouchersSvg +
+      t(W / 2, H - 60, "Dieses Zertifikat gilt gleichzeitig als Gutschein.", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') +
+      "</svg>";
+  }
+
+  async function downloadPDF() {
+    if (!window.jspdf) { toast("PDF-Modul lädt noch – gleich nochmal versuchen.", true); return; }
+    const svg = certificateSVG();
+    const img = new Image();
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    await img.decode().catch(() => new Promise((res) => { img.onload = res; }));
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1188 * scale; canvas.height = 840 * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const pdf = new window.jspdf.jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+    pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, 297, 210);
+    pdf.save("Madeira-Zertifikat.pdf");
+  }
+
+  // ---- Reset
+  async function doReset() {
+    if (!(await confirmBox("Kompletter Reset?", "Setzt ALLES auf null und mischt neu – für alle drei Handys. Das kann nicht rückgängig gemacht werden.", "Weiter", true))) return;
+    const typed = await promptBox("Wirklich zurücksetzen?", "Tippe zur Sicherheit RESET ein:", "RESET");
+    if (typed !== "RESET") { if (typed !== null) toast("Abgebrochen – nicht richtig eingetippt.", true); return; }
+    if (await act({ type: "reset", seed: Math.floor(Math.random() * 2 ** 31) })) toast("Neues Spiel – viel Spaß!");
+  }
+
+  // ------------------------------------------------------------------ Hilfe
+  function openHelp() {
+    openModal(() => '<div class="modal-head"><h2>Spielanleitung</h2><button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
+      '<div class="help">' +
+      "<h3>🎯 Ziel</h3><p>Ihr spielt als <strong>ein Team</strong>: Erkundet alle 10 Regionen Madeiras und sammelt Punkte mit Bonus-Karten. Alle Punkte gehören dem Team – wir vertrauen uns, es gibt keine Beweisfotos.</p>" +
+      "<h3>🗺️ Regionen und Stufen</h3><p>Jede Region hat 3 Quests. Eine erledigte Quest erkundet die Region, jede weitere hebt sie eine Stufe.</p>" +
+      "<table><tr><th>Stufe</th><th>Quests</th><th>Punkte</th></tr><tr><td>Erkundet</td><td>1</td><td>100</td></tr><tr><td>Erobert</td><td>2</td><td>+20</td></tr><tr><td>Erschlossen</td><td>3</td><td>+20</td></tr></table>" +
+      "<p>Alle 10 Regionen erkundet: <strong>„Madeira erkundet!“ +300 Bonus</strong>. Danach geht das Spiel weiter.</p>" +
+      "<h3>🃏 Bonus-Karten</h3><p>26 Karten, überall machbar (leicht 15, mittel 25, schwer 50 Punkte). 3 liegen offen auf der Hand; nach dem Erledigen wird automatisch nachgezogen. Bonus-Karten erkunden keine Region.</p>" +
+      "<h3>🛒 Shop</h3><ul><li><strong>Region-Joker (150):</strong> Region gilt als erkundet, ohne die 100 Punkte. Einmal pro Spiel.</li>" +
+      "<li><strong>Tausch-Joker (10):</strong> Handkarte zurück in den Stapel, neue Karte auf die Hand.</li>" +
+      "<li><strong>Multiplikator (10):</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine Handkarte, aufgerundet. 3 pro Spiel, einer pro Karte; die Karte kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Karten.</li></ul>" +
+      "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt.</p>" +
+      "<h3>🏆 Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
+      "<h3>↩ Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder im Logbuch ↩). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
+      "<h3>🏁 Ende</h3><p>„Urlaub beenden“ (unter Mehr) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
+      "</div>");
+  }
+
+  // ------------------------------------------------------------------ Modals
+  function openModal(renderFn, bindFn, opts) {
+    opts = opts || {};
+    if (!opts.stack) closeAll();
+    const root = $("#modal-root");
+    const backdrop = document.createElement("div");
+    backdrop.className = "modal-backdrop";
+    backdrop.innerHTML = '<div class="modal" role="dialog" aria-modal="true"></div>';
+    root.appendChild(backdrop);
+    const el = $(".modal", backdrop);
+    const refresh = () => {
+      const scroll = el.scrollTop;
+      const focused = document.activeElement && document.activeElement.dataset ? Object.assign({}, document.activeElement.dataset) : null;
+      el.innerHTML = renderFn();
+      $$("[data-close]", el).forEach((b) => b.addEventListener("click", closeModal));
+      if (bindFn) bindFn(el, refresh);
+      el.scrollTop = scroll;
+      if (focused && focused.amount) { const f = $('[data-amount="' + focused.amount + '"]', el); if (f) f.focus(); }
+    };
+    if (!opts.stack) backdrop.addEventListener("click", (ev) => { if (ev.target === backdrop) closeModal(); });
+    const m = { refresh: opts.static ? () => {} : refresh, el: backdrop, onClose: null };
+    app.modals.push(m);
+    refresh();
+    return m;
+  }
+  function closeModal() {
+    const m = app.modals.pop();
+    if (m) { m.el.remove(); if (m.onClose) m.onClose(); }
+  }
+  function closeAll() { while (app.modals.length) closeModal(); }
+  function confirmBox(title, text, ok, danger) {
+    return new Promise((resolve) => {
+      let done = false;
+      let m;
+      const finish = (v) => { if (!done) { done = true; if (app.modals[app.modals.length - 1] === m) closeModal(); resolve(v); } };
+      m = openModal(() => '<h2>' + esc(title) + '</h2><p class="muted">' + esc(text) + "</p>" +
+        '<div class="modal-actions"><button class="btn btn-ghost" id="cb-no">Abbrechen</button><button class="btn ' + (danger ? "btn-danger" : "btn-primary") + '" id="cb-yes">' + esc(ok) + "</button></div>",
+      (el) => {
+        $("#cb-no", el).addEventListener("click", () => finish(false));
+        $("#cb-yes", el).addEventListener("click", () => finish(true));
+      }, { static: true, stack: true });
+      m.onClose = () => finish(false);
+      m.el.addEventListener("click", (ev) => { if (ev.target === m.el) finish(false); });
+    });
+  }
+  function promptBox(title, text, placeholder) {
+    return new Promise((resolve) => {
+      let done = false;
+      let m;
+      const finish = (v) => { if (!done) { done = true; if (app.modals[app.modals.length - 1] === m) closeModal(); resolve(v); } };
+      m = openModal(() => "<h2>" + esc(title) + '</h2><p class="muted">' + esc(text) + '</p><input id="pb-input" autocomplete="off" autocapitalize="characters" placeholder="' + esc(placeholder) + '">' +
+        '<div class="modal-actions"><button class="btn btn-ghost" id="pb-no">Abbrechen</button><button class="btn btn-danger" id="pb-yes">Bestätigen</button></div>',
+      (el) => {
+        $("#pb-no", el).addEventListener("click", () => finish(null));
+        $("#pb-yes", el).addEventListener("click", () => finish($("#pb-input", el).value.trim()));
+        setTimeout(() => $("#pb-input", el).focus(), 50);
+      }, { static: true, stack: true });
+      m.onClose = () => finish(null);
+    });
+  }
+
+  // ------------------------------------------------------------------ Effekte
+  function toast(msg, err) {
+    const t = document.createElement("div");
+    t.className = "toast" + (err ? " err" : "");
+    t.textContent = msg;
+    $("#toast-root").appendChild(t);
+    setTimeout(() => t.remove(), err ? 4200 : 2800);
+  }
+  function banner(title, sub) {
+    const b = document.createElement("div");
+    b.className = "banner";
+    b.innerHTML = '<div class="b-title">' + esc(title) + "</div>" + (sub ? '<div class="muted">' + esc(sub) + "</div>" : "");
+    document.body.appendChild(b);
+    setTimeout(() => { b.style.transition = "opacity .4s"; b.style.opacity = "0"; setTimeout(() => b.remove(), 400); }, 2300);
+  }
+  const COLORS = ["#e0475b", "#e5b53b", "#2f9e44", "#0b5f78", "#a6e3a1", "#8a3fc7", "#f28c28"];
+  function confetti(n, origin) {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const root = $("#fx-root");
+    const W = window.innerWidth, H = window.innerHeight;
+    for (let i = 0; i < n; i++) {
+      const p = document.createElement("div");
+      p.className = "confetti";
+      p.style.background = COLORS[i % COLORS.length];
+      const x0 = origin ? origin.x : Math.random() * W;
+      const y0 = origin ? origin.y : -20;
+      p.style.left = x0 + "px"; p.style.top = y0 + "px";
+      root.appendChild(p);
+      const dx = origin ? (Math.random() - 0.5) * 260 : (Math.random() - 0.5) * 200;
+      const dy = origin ? -80 - Math.random() * 160 : H + 40;
+      const rot = Math.random() * 720;
+      const dur = origin ? 900 + Math.random() * 500 : 1800 + Math.random() * 1600;
+      const anim = p.animate(origin ? [
+        { transform: "translate(0,0) rotate(0)", opacity: 1 },
+        { transform: "translate(" + dx + "px," + dy + "px) rotate(" + rot + "deg)", opacity: 1, offset: 0.5 },
+        { transform: "translate(" + dx * 1.3 + "px," + (dy + 220) + "px) rotate(" + rot * 1.5 + "deg)", opacity: 0 }
+      ] : [
+        { transform: "translate(0,0) rotate(0)" },
+        { transform: "translate(" + dx + "px," + dy + "px) rotate(" + rot + "deg)" }
+      ], { duration: dur, easing: "cubic-bezier(.2,.6,.4,1)", delay: origin ? 0 : Math.random() * 400 });
+      anim.onfinish = () => p.remove();
+    }
+  }
+  function burst(el, state) {
+    if (!el || !el.getBoundingClientRect) return;
+    const r = el.getBoundingClientRect();
+    const origin = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    confetti(26, origin);
+    const last = state.log[state.log.length - 1];
+    if (last && last.dE > 0) {
+      const f = document.createElement("div");
+      f.className = "float-pts";
+      f.textContent = "+" + last.dE;
+      f.style.left = origin.x - 30 + "px"; f.style.top = origin.y - 30 + "px";
+      $("#fx-root").appendChild(f);
+      setTimeout(() => f.remove(), 1400);
+    }
+  }
+
+  // Animationen bei Fortschritt – auch wenn ein anderes Handy abgehakt hat
+  function celebrate(prevState, nextState, own) {
+    const a = L.summary(prevState, C), b = L.summary(nextState, C);
+    if (!a.allExplored && b.allExplored) { bigCelebration(b); return; }
+    const newly = C.regions.filter((r) => a.levels[r.id] === 0 && b.levels[r.id] >= 1);
+    if (newly.length) {
+      const r = newly[0];
+      const viaJoker = nextState.joker && nextState.joker.region === r.id;
+      setTimeout(() => {
+        closeAll();
+        banner("🧭 " + r.name + " erkundet!", viaJoker ? "per Region-Joker" : "+100 Punkte");
+        confetti(90);
+        const path = $('.region-path[data-region="' + r.id + '"]');
+        if (path) path.classList.add("pulse");
+      }, own ? 450 : 0);
+    } else {
+      const up = C.regions.find((r) => b.levels[r.id] > a.levels[r.id] && a.levels[r.id] >= 1);
+      if (up) setTimeout(() => banner("⭐ " + up.name + ": " + L.LEVELS[b.levels[up.id]].name + "!", "+20 Punkte"), own ? 400 : 0);
+    }
+    if (b.rank > a.rank) setTimeout(() => { banner("🏆 Neuer Rang: " + b.rankName, fmt(b.earned) + " Punkte verdient"); confetti(80); }, 2800);
+    if (!a.bonusFinished && b.bonusFinished) setTimeout(() => banner("🃏 Bonus-Teil abgeschlossen!", "Alle 26 Karten erledigt"), 1200);
+  }
+  function bigCelebration(s) {
+    closeAll();
+    const o = document.createElement("div");
+    o.className = "big-celebration";
+    o.innerHTML = '<div><div class="sub">Alle 10 Regionen erkundet</div><h1>Madeira erkundet!</h1>' + mapSVG(s.levels, { labels: false }) +
+      '<div class="bonus">+300 Bonuspunkte</div><button class="btn btn-gold">Weiter geht\'s!</button></div>';
+    document.body.appendChild(o);
+    $("button", o).addEventListener("click", () => o.remove());
+    confetti(220);
+    setTimeout(() => confetti(160), 1200);
+    setTimeout(() => confetti(120), 2600);
+  }
+  function announceRemote(prev, next) {
+    const known = prev.log.length ? prev.log[prev.log.length - 1].id : 0;
+    next.log.filter((e) => e.id > known && e.by !== app.name).slice(-3).forEach((e) => toast(e.by + ": " + e.text));
+  }
+
+  // ------------------------------------------------------------------ Hilfsfunktionen
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  function when(ts, full) {
+    const d = new Date(ts);
+    const time = d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    const today = new Date().toDateString() === d.toDateString();
+    return (today && !full ? "heute " : d.toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "numeric" }) + ", ") + time;
+  }
+
+  // ------------------------------------------------------------------ Events
+  document.addEventListener("click", (ev) => {
+    const t = ev.target.closest("button, [data-region]");
+    if (!t || !app.state) return;
+    if (t.closest(".modal")) return; // Modals binden selbst
+    if (t.dataset.view) return go(t.dataset.view);
+    if (t.dataset.go) return go(t.dataset.go);
+    if (t.dataset.region) return openRegion(t.dataset.region);
+    if (t.dataset.done) return act({ type: "card", cardId: t.dataset.done }, { fxFrom: t });
+    if (t.dataset.swap) return doSwap(t.dataset.swap);
+    if (t.dataset.mult) return doMult(t.dataset.mult);
+    if (t.dataset.undo) return undo(Number(t.dataset.undo));
+    switch (t.id) {
+      case "help-btn": case "help-btn2": return openHelp();
+      case "buy-joker": {
+        const rid = $("#joker-region").value;
+        return confirmBox("Region-Joker kaufen?", IX.regions[rid].name + " gilt dann als erkundet (ohne 100 Punkte). Kosten: 150 Punkte. Nur einmal pro Spiel.", "Kaufen (150)")
+          .then((ok) => ok && act({ type: "joker", regionId: rid }));
+      }
+      case "end-btn": return startEnd();
+      case "reset-btn": return doReset();
+      case "logout-btn": return logout();
+      case "rename-btn": return promptBox("Name ändern", "Unter diesem Namen erscheinen deine Aktionen im Logbuch.", app.name).then((n) => {
+        if (n) { app.name = n.slice(0, 24); store.set("name", app.name); render(); }
+      });
+      case "pdf-btn": return downloadPDF().catch(() => toast("PDF konnte nicht erstellt werden.", true));
+      case "reopen-btn": return confirmBox("Urlaub fortsetzen?", "Die Verteilung der Belohnungen wird aufgehoben und ihr könnt weiterspielen.", "Fortsetzen").then((ok) => ok && act({ type: "reopen" }));
+      case "tab-stats-btn": { const st = app.state.ended; app.state.ended = null; const html = viewStats(sum()); app.state.ended = st; $("#view").innerHTML = html; $("#end-btn").hidden = true; return; }
+    }
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeModal();
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.classList && ev.target.classList.contains("region-path")) { ev.preventDefault(); openRegion(ev.target.dataset.region); }
+  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+  setInterval(() => { if (!document.hidden) poll(); }, 4000);
+
+  // Start
+  if (app.token && app.name) start(); else showLogin();
+})();
