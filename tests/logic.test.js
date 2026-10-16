@@ -9,8 +9,8 @@ const act = (s, a) => L.apply(s, C, a, "Tester", (t += 60000));
 
 // Stapel & Würfe sind deterministisch
 let s = L.newGame(C, 42, t);
-assert.deepStrictEqual(L.newGame(C, 42, t).hand, s.hand);
-assert.strictEqual(s.hand.length, 3);
+assert.deepStrictEqual(L.newGame(C, 42, t).open, s.open);
+assert.strictEqual(s.open.length, 3);
 assert.strictEqual(s.deck.length, 23);
 
 // Verteilung der Multiplikatoren (≈ 1,44 im Schnitt)
@@ -29,12 +29,12 @@ assert.throws(() => act(s, { type: "quest", questId: "q-cal-1" }));
 // Shop-Sperre bei zu wenig Punkten
 assert.throws(() => act(s, { type: "joker", regionId: "funchal" }), /Nicht genug/);
 
-// Bonus-Karte
-const c0 = s.hand[0];
-s = act(s, { type: "card", cardId: c0 });
-assert(s.done[c0]); assert.strictEqual(s.hand.length, 3); assert.strictEqual(s.deck.length, 22);
+// Stapel-Quest
+const c0 = s.open[0];
+s = act(s, { type: "stack", questId: c0 });
+assert(s.done[c0]); assert.strictEqual(s.open.length, 3); assert.strictEqual(s.deck.length, 22);
 const e1 = L.summary(s, C).earned;
-assert.strictEqual(e1, 140 + L.cardBase(C, c0));
+assert.strictEqual(e1, 140 + L.stackBase(C, c0));
 
 // Joker
 s = act(s, { type: "joker", regionId: "funchal" });
@@ -46,39 +46,39 @@ assert.strictEqual(L.summary(s, C).earned, e1 + 20);
 assert.throws(() => act(s, { type: "joker", regionId: "machico" }));
 
 // Tausch & Rückgängig -> gleiches Ergebnis
-const before = JSON.stringify([s.hand, s.deck]);
-const old = s.hand[1];
-s = act(s, { type: "swap", cardId: old });
-const got = s.hand[1];
+const before = JSON.stringify([s.open, s.deck]);
+const old = s.open[1];
+s = act(s, { type: "swap", questId: old });
+const got = s.open[1];
 const swapId = s.log[s.log.length - 1].id;
 s = act(s, { type: "undo", logId: swapId });
-assert.strictEqual(JSON.stringify([s.hand, s.deck]), before);
-s = act(s, { type: "swap", cardId: old });
-assert.strictEqual(s.hand[1], got);
+assert.strictEqual(JSON.stringify([s.open, s.deck]), before);
+s = act(s, { type: "swap", questId: old });
+assert.strictEqual(s.open[1], got);
 
 // Multiplikator: gleicher Faktor nach Rückgängig
-s = act(s, { type: "mult", cardId: s.hand[1] });
-const f1 = s.mults[s.hand[1]].factor;
+s = act(s, { type: "mult", questId: s.open[1] });
+const f1 = s.mults[s.open[1]].factor;
 assert.strictEqual(f1, s.rolls[0]);
 const multLog = s.log[s.log.length - 1].id;
 s = act(s, { type: "undo", logId: multLog });
-s = act(s, { type: "mult", cardId: s.hand[2] });
-assert.strictEqual(s.mults[s.hand[2]].factor, f1);
-assert.throws(() => act(s, { type: "swap", cardId: s.hand[2] }), /Multiplikator/);
-assert.throws(() => act(s, { type: "mult", cardId: s.hand[2] }));
+s = act(s, { type: "mult", questId: s.open[2] });
+assert.strictEqual(s.mults[s.open[2]].factor, f1);
+assert.throws(() => act(s, { type: "swap", questId: s.open[2] }), /Multiplikator/);
+assert.throws(() => act(s, { type: "mult", questId: s.open[2] }));
 
-// Karte mit Multiplikator erledigen: aufgerundet
-const mc = s.hand[2];
-s = act(s, { type: "card", cardId: mc });
-assert.strictEqual(L.cardPoints(s, C, mc), Math.ceil(L.cardBase(C, mc) * f1 - 1e-9));
+// Stapel-Quest mit Multiplikator erledigen: aufgerundet
+const mc = s.open[2];
+s = act(s, { type: "stack", questId: mc });
+assert.strictEqual(L.stackPoints(s, C, mc), Math.ceil(L.stackBase(C, mc) * f1 - 1e-9));
 assert.throws(() => act(s, { type: "undo", logId: s.log.find(e => e.type === "mult" && !e.undone).id }), /zuerst/);
 
-// Rückgängig Karte: zurück oben auf den Stapel, Punkte weg
-const cardLog = s.log[s.log.length - 1];
+// Rückgängig Stapel-Quest: zurück oben auf den Stapel, Punkte weg
+const stackLog = s.log[s.log.length - 1];
 const earnedBefore = L.summary(s, C).earned;
-s = act(s, { type: "undo", logId: cardLog.id });
+s = act(s, { type: "undo", logId: stackLog.id });
 assert.strictEqual(s.deck[0], mc);
-assert.strictEqual(L.summary(s, C).earned, earnedBefore - L.cardPoints(s, C, mc));
+assert.strictEqual(L.summary(s, C).earned, earnedBefore - L.stackPoints(s, C, mc));
 
 // Negativer Kontostand sperrt den Shop
 s = act(s, { type: "undo", logId: s.log.find(e => e.type === "quest" && e.data.questId === "q-cal-1").id });
@@ -86,18 +86,37 @@ s = act(s, { type: "undo", logId: s.log.find(e => e.type === "quest" && e.data.q
 s = act(s, { type: "undo", logId: s.log.find(e => e.type === "quest" && e.data.questId === "q-cal-3").id });
 sm = L.summary(s, C);
 assert(sm.balance < 0, "Kontostand sollte negativ sein: " + sm.balance);
-assert.throws(() => act(s, { type: "mult", cardId: s.hand[0] }), /gesperrt/);
+assert.throws(() => act(s, { type: "mult", questId: s.open[0] }), /gesperrt/);
 
 // Summe der Log-Deltas == verdiente Punkte
 assert.strictEqual(s.log.reduce((a, e) => a + e.dE, 0), sm.earned);
 
-// Alle Regionen + alle Karten = 2.000 Basis, mit Stufen 2.400
+// Alle Regionen + alle Stapel-Quests = 2.000 Basis, mit Stufen 2.400
 let g = L.newGame(C, 7, t);
 C.regions.forEach(r => r.quests.forEach(q => { g = act(g, { type: "quest", questId: q.id }); }));
-while (g.hand.some(Boolean)) g = act(g, { type: "card", cardId: g.hand.find(Boolean) });
+while (g.open.some(Boolean)) g = act(g, { type: "stack", questId: g.open.find(Boolean) });
 sm = L.summary(g, C);
-assert.strictEqual(sm.earned, 2400); assert(sm.allExplored); assert(sm.bonusFinished);
+assert.strictEqual(sm.earned, 2400); assert(sm.allExplored); assert(sm.stackFinished);
 assert.strictEqual(sm.rankName, "Inselkönig");
+
+// Inhalte: 30 Regions-Quests, 26 Stapel-Quests (10/10/6) = 700 Punkte, Basis 2.000
+assert.strictEqual(C.regions.length, 10);
+C.regions.forEach(r => assert.strictEqual(r.quests.length, 3));
+const count = d => C.stackQuests.filter(q => q.difficulty === d).length;
+assert.deepStrictEqual([count("einfach"), count("mittel"), count("schwer")], [10, 10, 6]);
+const stackTotal = C.stackQuests.reduce((a, q) => a + L.STACK_POINTS[q.difficulty], 0);
+assert.strictEqual(stackTotal, 700);
+assert.strictEqual(10 * 100 + L.MADEIRA_BONUS + stackTotal, 2000);
+const ids = C.regions.flatMap(r => r.quests.map(q => q.id)).concat(C.stackQuests.map(q => q.id));
+assert.strictEqual(new Set(ids).size, 56);
+C.regions.forEach(r => r.quests.forEach(q => {
+  assert(q.title && q.location && q.desc && q.task.startsWith("Eure Aufgabe: "), q.id);
+  assert(Array.isArray(q.pin) && q.pin.length === 2, q.id);
+}));
+
+// Kompatibilität alter Spielstände
+assert(L.isCompatible(L.newGame(C, 1, t), C));
+assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
 
 // Belohnungen
 assert.strictEqual(L.formatReward(C.rewards[0], 350), "10 Min 30 Sek");

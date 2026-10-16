@@ -6,7 +6,8 @@
 (function (root) {
   "use strict";
 
-  const CARD_POINTS = { leicht: 15, mittel: 25, schwer: 50 };
+  const STACK_POINTS = { einfach: 15, mittel: 25, schwer: 50 };
+  const SCHEMA = 2; // Version des Spielstands (2 = finale Inhalte, Stapel-Quests)
   const PRICES = { joker: 150, swap: 10, mult: 10 };
   const MAX_MULTS = 3;
   const REGION_POINTS = { explored: 100, tier: 20 };
@@ -50,32 +51,32 @@
   // ---------------------------------------------------------------- Inhalte
   function index(content) {
     if (content._index) return content._index;
-    const quests = {}, regions = {}, cards = {};
+    const quests = {}, regions = {}, stack = {};
     content.regions.forEach((r) => {
       regions[r.id] = r;
       r.quests.forEach((q) => { quests[q.id] = Object.assign({ region: r.id }, q); });
     });
-    content.bonusCards.forEach((c) => { cards[c.id] = c; });
-    Object.defineProperty(content, "_index", { value: { quests, regions, cards }, enumerable: false });
+    content.stackQuests.forEach((s) => { stack[s.id] = s; });
+    Object.defineProperty(content, "_index", { value: { quests, regions, stack }, enumerable: false });
     return content._index;
   }
 
   // ---------------------------------------------------------------- Spielstart
   function newGame(content, seed, now) {
     const rand = mulberry32(seed);
-    const deck = content.bonusCards.map((c) => c.id);
+    const deck = content.stackQuests.map((s) => s.id);
     for (let i = deck.length - 1; i > 0; i--) {
       const j = Math.floor(rand() * (i + 1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
     }
     const rolls = [];
     for (let i = 0; i < MAX_MULTS; i++) rolls.push(rollFactor(rand));
-    const hand = deck.splice(0, 3);
-    while (hand.length < 3) hand.push(null);
+    const open = deck.splice(0, 3); // die 3 offenen Stapel-Quests
+    while (open.length < 3) open.push(null);
     return {
-      schema: 1, seed, createdAt: now,
+      schema: SCHEMA, seed, createdAt: now,
       quests: {}, joker: null,
-      deck, hand, done: {}, mults: {}, rolls,
+      deck, open, done: {}, mults: {}, rolls,
       log: [], nextLogId: 1, ended: null
     };
   }
@@ -98,12 +99,12 @@
     if (lvl >= 3) p += REGION_POINTS.tier;
     return p;
   }
-  function cardBase(content, cardId) {
-    return CARD_POINTS[index(content).cards[cardId].difficulty];
+  function stackBase(content, questId) {
+    return STACK_POINTS[index(content).stack[questId].difficulty];
   }
-  function cardPoints(state, content, cardId) {
-    const base = cardBase(content, cardId);
-    const m = state.mults[cardId];
+  function stackPoints(state, content, questId) {
+    const base = stackBase(content, questId);
+    const m = state.mults[questId];
     return m ? Math.ceil(base * m.factor - 1e-9) : base;
   }
   function activeSwaps(state) {
@@ -119,10 +120,10 @@
       regionPts += regionPoints(state, content, r.id);
     });
     const allExplored = explored === content.regions.length;
-    let cardPts = 0;
-    const doneCards = Object.keys(state.done);
-    doneCards.forEach((id) => { cardPts += cardPoints(state, content, id); });
-    const earned = regionPts + (allExplored ? MADEIRA_BONUS : 0) + cardPts;
+    let stackPts = 0;
+    const doneStack = Object.keys(state.done);
+    doneStack.forEach((id) => { stackPts += stackPoints(state, content, id); });
+    const earned = regionPts + (allExplored ? MADEIRA_BONUS : 0) + stackPts;
     const swaps = activeSwaps(state);
     const multCount = Object.keys(state.mults).length;
     const spent = (state.joker ? PRICES.joker : 0) + swaps * PRICES.swap + multCount * PRICES.mult;
@@ -132,11 +133,11 @@
     return {
       levels, explored, allExplored, earned, spent, balance: earned - spent,
       rank, rankName: RANKS[rank].name, nextRank: RANKS[rank + 1] || null,
-      regionPts, cardPts, madeiraBonus: allExplored ? MADEIRA_BONUS : 0,
-      doneCards: doneCards.length, swaps, multCount, jokerUsed: state.joker ? 1 : 0,
+      regionPts, stackPts, madeiraBonus: allExplored ? MADEIRA_BONUS : 0,
+      doneStack: doneStack.length, swaps, multCount, jokerUsed: state.joker ? 1 : 0,
       bestMult: factors.length ? Math.max.apply(null, factors) : null,
       deckLeft: state.deck.length,
-      bonusFinished: state.deck.length === 0 && state.hand.every((c) => !c),
+      stackFinished: state.deck.length === 0 && state.open.every((q) => !q),
       questsDone: Object.keys(state.quests).length
     };
   }
@@ -206,13 +207,13 @@
         entry = { type: "quest", data: { questId: q.id }, text: "Quest „" + q.title + "“ (" + ix.regions[q.region].name + ") erledigt" };
         break;
       }
-      case "card": {
-        const id = action.cardId;
-        const slot = state.hand.indexOf(id);
-        if (slot < 0) fail("Diese Karte ist nicht auf der Hand.");
+      case "stack": {
+        const id = action.questId;
+        const slot = state.open.indexOf(id);
+        if (slot < 0) fail("Diese Stapel-Quest ist gerade nicht offen.");
         state.done[id] = { by, t: now };
-        state.hand[slot] = state.deck.length ? state.deck.shift() : null;
-        entry = { type: "card", data: { cardId: id }, text: "Bonus-Karte „" + ix.cards[id].title + "“ erledigt" };
+        state.open[slot] = state.deck.length ? state.deck.shift() : null;
+        entry = { type: "stack", data: { questId: id }, text: "Stapel-Quest „" + ix.stack[id].title + "“ erledigt" };
         break;
       }
       case "joker": {
@@ -225,30 +226,30 @@
         break;
       }
       case "swap": {
-        const id = action.cardId;
-        const slot = state.hand.indexOf(id);
-        if (slot < 0) fail("Diese Karte ist nicht auf der Hand.");
-        if (state.mults[id]) fail("Eine Karte mit Multiplikator kann nicht getauscht werden.");
+        const id = action.questId;
+        const slot = state.open.indexOf(id);
+        if (slot < 0) fail("Diese Stapel-Quest ist gerade nicht offen.");
+        if (state.mults[id]) fail("Eine Stapel-Quest mit Multiplikator kann nicht getauscht werden.");
         if (!state.deck.length) fail("Der Stapel ist leer – es gibt nichts zum Tauschen.");
         requireShop(before, PRICES.swap);
         const fresh = state.deck.shift();
         // feste, zufällig wirkende Position (nicht ganz oben): gleiches Ergebnis bei Wiederholung
         const pos = state.deck.length ? 1 + (hash(state.seed + ":" + id + ":" + state.deck.length) % state.deck.length) : 0;
         state.deck.splice(pos, 0, id);
-        state.hand[slot] = fresh;
-        entry = { type: "swap", data: { oldId: id, newId: fresh }, text: "Tausch-Joker: „" + ix.cards[id].title + "“ → „" + ix.cards[fresh].title + "“" };
+        state.open[slot] = fresh;
+        entry = { type: "swap", data: { oldId: id, newId: fresh }, text: "Tausch-Joker: „" + ix.stack[id].title + "“ zurück in den Stapel, „" + ix.stack[fresh].title + "“ vom Stapel gezogen" };
         break;
       }
       case "mult": {
-        const id = action.cardId;
-        if (state.hand.indexOf(id) < 0) fail("Diese Karte ist nicht auf der Hand.");
-        if (state.mults[id]) fail("Diese Karte hat schon einen Multiplikator.");
+        const id = action.questId;
+        if (state.open.indexOf(id) < 0) fail("Diese Stapel-Quest ist gerade nicht offen.");
+        if (state.mults[id]) fail("Diese Stapel-Quest hat schon einen Multiplikator.");
         const slot = multFreeSlot(state);
         if (slot < 0) fail("Alle 3 Multiplikatoren sind schon im Einsatz.");
         requireShop(before, PRICES.mult);
         state.mults[id] = { slot, factor: state.rolls[slot], by, t: now };
         const f = state.rolls[slot];
-        entry = { type: "mult", data: { cardId: id, factor: f }, text: "Multiplikator auf „" + ix.cards[id].title + "“: " + fmtFactor(f) + (f === 5 ? " – JACKPOT!" : "") };
+        entry = { type: "mult", data: { questId: id, factor: f }, text: "Multiplikator auf „" + ix.stack[id].title + "“: " + fmtFactor(f) + (f === 5 ? " – JACKPOT!" : "") };
         break;
       }
       case "undo": {
@@ -292,13 +293,13 @@
         if (!state.quests[e.data.questId]) fail("Quest ist nicht mehr erledigt.");
         delete state.quests[e.data.questId];
         return;
-      case "card": {
-        const id = e.data.cardId;
-        if (!state.done[id]) fail("Karte ist nicht mehr erledigt.");
+      case "stack": {
+        const id = e.data.questId;
+        if (!state.done[id]) fail("Stapel-Quest ist nicht mehr erledigt.");
         delete state.done[id];
         state.deck.unshift(id); // zurück oben auf den Stapel
-        for (let i = 0; i < state.hand.length; i++) {
-          if (!state.hand[i] && state.deck.length) state.hand[i] = state.deck.shift();
+        for (let i = 0; i < state.open.length; i++) {
+          if (!state.open[i] && state.deck.length) state.open[i] = state.deck.shift();
         }
         return;
       }
@@ -308,20 +309,20 @@
         return;
       case "swap": {
         const { oldId, newId } = e.data;
-        const slot = state.hand.indexOf(newId);
+        const slot = state.open.indexOf(newId);
         const pos = state.deck.indexOf(oldId);
         if (slot < 0 || pos < 0 || state.mults[newId]) {
-          fail("Dieser Tausch lässt sich nicht mehr rückgängig machen – „" + ix.cards[newId].title + "“ muss dafür unverändert auf der Hand und „" + ix.cards[oldId].title + "“ im Stapel sein. Macht zuerst die späteren Aktionen rückgängig.");
+          fail("Dieser Tausch lässt sich nicht mehr rückgängig machen – „" + ix.stack[newId].title + "“ muss dafür unverändert offen und „" + ix.stack[oldId].title + "“ im Stapel sein. Macht zuerst die späteren Aktionen rückgängig.");
         }
         state.deck.splice(pos, 1);
         state.deck.unshift(newId);
-        state.hand[slot] = oldId;
+        state.open[slot] = oldId;
         return;
       }
       case "mult": {
-        const id = e.data.cardId;
+        const id = e.data.questId;
         if (!state.mults[id]) fail("Multiplikator ist nicht mehr aktiv.");
-        if (state.done[id]) fail("Die Karte ist schon erledigt – macht zuerst die Karte rückgängig.");
+        if (state.done[id]) fail("Die Stapel-Quest ist schon erledigt – macht zuerst die Stapel-Quest rückgängig.");
         delete state.mults[id];
         return;
       }
@@ -330,8 +331,16 @@
     }
   }
 
+  // Passt ein gespeicherter Spielstand zu den aktuellen Inhalten?
+  function isCompatible(state, content) {
+    if (!state || state.schema !== SCHEMA || !Array.isArray(state.open)) return false;
+    const ix = index(content);
+    const ids = state.deck.concat(state.open.filter(Boolean), Object.keys(state.done), Object.keys(state.mults));
+    return ids.every((id) => ix.stack[id]) && Object.keys(state.quests).every((id) => ix.quests[id]);
+  }
+
   function canUndo(entry) {
-    return !entry.undone && ["quest", "card", "joker", "swap", "mult"].indexOf(entry.type) >= 0;
+    return !entry.undone && ["quest", "stack", "joker", "swap", "mult"].indexOf(entry.type) >= 0;
   }
 
   // ---------------------------------------------------------------- Belohnungen
@@ -351,8 +360,8 @@
   }
 
   const api = {
-    CARD_POINTS, PRICES, MAX_MULTS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, GameError,
-    newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, cardBase, cardPoints,
+    STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, GameError,
+    newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible,
     canUndo, dayCount, pointsPerDay, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

@@ -73,7 +73,7 @@
     const prev = app.state;
     app.version = version;
     app.state = state;
-    if (prev && prev.seed === state.seed) {
+    if (prev && prev.seed === state.seed && L.isCompatible(prev, C) && L.isCompatible(state, C)) {
       celebrate(prev, state, own);
       if (!own) announceRemote(prev, state);
     }
@@ -160,14 +160,28 @@
 
   function render() {
     if (!app.state) { $("#view").innerHTML = '<div class="empty">Spielstand wird geladen …</div>'; return; }
+    if (!L.isCompatible(app.state, C)) { renderUpgrade(); return; }
     const s = sum();
     $("#hdr-points").textContent = fmt(s.balance) + " P";
     $("#hdr-points").classList.toggle("neg", s.balance < 0);
     $("#hdr-rank").textContent = s.rankName + " · " + fmt(s.earned) + " verdient";
     $$("#tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === app.view));
-    const views = { map: viewMap, bonus: viewBonus, shop: viewShop, log: viewLog, stats: viewStats };
-    $("#view").innerHTML = app.state.ended && app.view === "stats" ? viewEnded(s) : (views[app.view] || viewMap)(s);
+    const views = { map: viewMap, stack: viewStack, shop: viewShop, log: viewLog, stats: viewStats };
+    const view = views[app.view] ? app.view : "map";
+    $("#view").innerHTML = app.state.ended && view === "stats" ? viewEnded(s) : views[view](s);
+    if (view === "map") mountMap();
     app.modals.forEach((m) => m.refresh());
+  }
+
+  // Alter Spielstand (vor den finalen Inhalten) -> einmal neu starten
+  function renderUpgrade() {
+    closeAll();
+    $("#hdr-points").textContent = "–";
+    $("#hdr-rank").textContent = "Neue Spielinhalte";
+    $("#view").innerHTML = '<div class="panel"><h2>Neue Spielinhalte 🎉</h2>' +
+      '<p>Das Spiel hat die finalen Quests bekommen. Der gespeicherte Spielstand stammt noch von der alten Version und passt nicht mehr dazu.</p>' +
+      '<p class="muted small">Ein Neustart setzt alles auf null und mischt den Stapel neu – für alle Handys.</p>' +
+      '<button class="btn btn-primary btn-block" id="upgrade-btn">Neues Spiel starten</button></div>';
   }
 
   function go(view) {
@@ -178,37 +192,316 @@
   }
 
   // ---- Inselkarte
-  function mapSVG(levels, opts) {
-    opts = opts || {};
-    const paths = C.regions.map((r) => {
+  // Breiten-/Längengrad -> Kartenkoordinaten (UTM Zone 28N, wie die Gemeindegrenzen)
+  function toMap(lat, lon) {
+    const P = MAP.proj;
+    const a = 6378137, f = 1 / 298.257222101, e2 = f * (2 - f), k0 = 0.9996, ep2 = e2 / (1 - e2);
+    const phi = lat * Math.PI / 180, lam = lon * Math.PI / 180, lam0 = (P.zone * 6 - 183) * Math.PI / 180;
+    const N = a / Math.sqrt(1 - e2 * Math.sin(phi) ** 2), T = Math.tan(phi) ** 2, Cc = ep2 * Math.cos(phi) ** 2, A = Math.cos(phi) * (lam - lam0);
+    const M = a * ((1 - e2 / 4 - 3 * e2 ** 2 / 64 - 5 * e2 ** 3 / 256) * phi - (3 * e2 / 8 + 3 * e2 ** 2 / 32 + 45 * e2 ** 3 / 1024) * Math.sin(2 * phi) +
+      (15 * e2 ** 2 / 256 + 45 * e2 ** 3 / 1024) * Math.sin(4 * phi) - (35 * e2 ** 3 / 3072) * Math.sin(6 * phi));
+    const x = k0 * N * (A + (1 - T + Cc) * A ** 3 / 6 + (5 - 18 * T + T * T + 72 * Cc - 58 * ep2) * A ** 5 / 120) + 500000;
+    const y = k0 * (M + N * Math.tan(phi) * (A * A / 2 + (5 - T + 9 * Cc + 4 * Cc * Cc) * A ** 4 / 24 + (61 - 58 * T + T * T + 600 * Cc - 330 * ep2) * A ** 6 / 720));
+    return [(x - P.minx) * P.s + P.pad, (P.maxy - y) * P.s + P.pad];
+  }
+  const PINS = [];
+  C.regions.forEach((r) => r.quests.forEach((q, i) => PINS.push({ q, region: r, n: i + 1, xy: toMap(q.pin[0], q.pin[1]) })));
+
+  const FULL = { x: 0, y: 0, w: MAP.w, h: MAP.h };
+  const mapUI = { vb: Object.assign({}, FULL), pointers: new Map(), gesture: null };
+
+  function regionPaths(levels) {
+    return C.regions.map((r) => {
       const lvl = levels[r.id] || 0;
       const d = (MAP.regions[r.name] || []).join(" ");
       return '<path class="region-path" data-region="' + r.id + '" tabindex="0" role="button" aria-label="' + esc(r.name + ": " + L.LEVELS[lvl].name) + '" d="' + d + '" fill="' + L.LEVELS[lvl].color + '"/>';
     }).join("");
+  }
+  function mapSVG(levels, opts) {
+    opts = opts || {};
     const labels = opts.labels === false ? "" : C.regions.map((r) => {
       const p = MAP.labels[r.name];
       return p ? '<text class="region-label" x="' + p[0] + '" y="' + p[1] + '">' + esc(r.name) + "</text>" : "";
     }).join("");
-    return '<svg viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg">' + paths + labels + "</svg>";
+    return '<svg viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg">' + regionPaths(levels) + labels + "</svg>";
   }
 
-  function stars(lvl) { return "★".repeat(Math.max(0, lvl - 0)) + "☆".repeat(3 - lvl); }
+    function stars(lvl) { return "★".repeat(Math.max(0, lvl - 0)) + "☆".repeat(3 - lvl); }
 
   function viewMap(s) {
-    const legend = L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + "</span>").join("");
+    const legend = L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + "</span>").join("") +
+      '<span><i class="lg-pin"></i>offene Quest</span><span><i class="lg-pin done"></i>erledigt</span>';
     const list = C.regions.map((r) => {
       const lvl = s.levels[r.id];
       return '<button class="region-btn" data-region="' + r.id + '"><span class="dot" style="background:' + L.LEVELS[lvl].color + '"></span>' + esc(r.name) + '<span class="stars">' + stars(lvl) + "</span></button>";
     }).join("");
+    const labels = C.regions.map((r) => {
+      const p = MAP.labels[r.name];
+      return p ? '<text class="region-label" x="' + p[0] + '" y="' + p[1] + '">' + esc(r.name) + "</text>" : "";
+    }).join("");
+    const vb = mapUI.vb;
     return '' +
-      '<div class="map-wrap">' + mapSVG(s.levels) + '</div>' +
+      '<div class="map-wrap"><svg id="island" viewBox="' + [vb.x, vb.y, vb.w, vb.h].join(" ") + '" xmlns="http://www.w3.org/2000/svg">' +
+        '<g id="regions">' + regionPaths(s.levels) + '</g><g id="labels">' + labels + '</g><g id="pins"></g></svg></div>' +
+      '<div class="map-bar"><div class="map-ctrl"><button data-zoom="out" aria-label="Herauszoomen">−</button><button data-zoom="in" aria-label="Hineinzoomen">+</button><button data-zoom="reset" aria-label="Ganze Insel">⤢</button></div>' +
+      '<p class="muted small map-hint">Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region. Zahl im Kreis = mehrere Quests nah beieinander.</p></div>' +
       '<div class="legend">' + legend + '</div>' +
-      '<div class="card" style="margin-top:14px">' +
+      '<div class="panel">' +
         '<div class="row between"><strong>' + s.explored + " / " + C.regions.length + ' Regionen erkundet</strong><span class="muted small">' + (s.allExplored ? "🎉 Madeira erkundet!" : "Ziel: alle 10") + "</span></div>" +
         '<div class="progress" style="margin-top:8px"><div style="width:' + (s.explored / C.regions.length * 100) + '%"></div></div>' +
-        '<p class="muted small" style="margin:8px 0 0">Tippe auf eine Region, um ihre 3 Quests zu sehen.</p>' +
+        '<button class="btn btn-ghost btn-block" data-all-quests style="margin-top:12px">📋 Alle Quests ansehen</button>' +
       "</div>" +
       '<div class="region-list">' + list + "</div>";
+  }
+
+  // Pins: feste Bildschirmgröße. Liegen Pins zu nah beieinander, werden sie zu
+  // einer Gruppe (Kreis mit Anzahl) zusammengefasst; beim Hineinzoomen lösen sie sich auf.
+  const PIN = { r: 14, hit: 22, lift: 20, gap: 34 };
+  const MIN_W = MAP.w / 16;
+  function mountMap() {
+    const svg = $("#island");
+    if (!svg) return;
+    applyViewBox(svg);
+    if (!svg.dataset.bound) { bindMap(svg); svg.dataset.bound = "1"; }
+  }
+  function applyViewBox(svg) {
+    const vb = mapUI.vb;
+    svg.setAttribute("viewBox", [vb.x, vb.y, vb.w, vb.h].join(" "));
+    svg.style.touchAction = vb.w < MAP.w - 0.5 ? "none" : "pan-y";
+    layoutPins(svg);
+  }
+  function layoutPins(svg) {
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    const vb = mapUI.vb, k = vb.w / rect.width; // Karteneinheiten pro Bildschirmpixel
+    $$(".region-label", svg).forEach((t) => { t.style.fontSize = (11.5 * k) + "px"; t.style.strokeWidth = (3 * k) + "px"; });
+    const H = vb.h / k;
+    const pts = PINS.map((p) => ({ p, ax: (p.xy[0] - vb.x) / k, ay: (p.xy[1] - vb.y) / k }))
+      .filter((o) => o.ax > -30 && o.ax < rect.width + 30 && o.ay > -10 && o.ay < H + 40);
+    // Gruppen bilden (einfaches Zusammenlegen, bis nichts mehr überlappt)
+    // Kopf-Position (über dem Standort, am Kartenrand festgehalten)
+    const headX = (x) => Math.max(PIN.r + 2, Math.min(rect.width - PIN.r - 2, x));
+    const headY = (y) => Math.max(PIN.r + 2, Math.min(H - PIN.r - 2, y - PIN.lift));
+    let groups = pts.map((o) => ({ items: [o], x: headX(o.ax), y: headY(o.ay) }));
+    for (let merged = true; merged;) {
+      merged = false;
+      outer: for (let i = 0; i < groups.length; i++) {
+        for (let j = i + 1; j < groups.length; j++) {
+          if (Math.hypot(groups[i].x - groups[j].x, groups[i].y - groups[j].y) < PIN.gap) {
+            const items = groups[i].items.concat(groups[j].items);
+            groups[i] = { items, x: headX(items.reduce((a, o) => a + o.ax, 0) / items.length), y: headY(items.reduce((a, o) => a + o.ay, 0) / items.length) };
+            groups.splice(j, 1);
+            merged = true;
+            break outer;
+          }
+        }
+      }
+    }
+    mapUI.groups = groups;
+    const U = (px) => +(px * k).toFixed(3);
+    const X = (px) => +(vb.x + px * k).toFixed(2), Y = (py) => +(vb.y + py * k).toFixed(2);
+    const stems = [], heads = [];
+    groups.forEach((g, gi) => {
+      const hx = g.x, hy = g.y;
+      g.items.forEach((o) => {
+        stems.push('<line class="pin-stem" x1="' + X(o.ax) + '" y1="' + Y(o.ay) + '" x2="' + X(hx) + '" y2="' + Y(hy) + '" stroke-width="' + U(1.6) + '"/>' +
+          '<circle class="pin-dot" cx="' + X(o.ax) + '" cy="' + Y(o.ay) + '" r="' + U(3) + '"/>');
+      });
+      const tr = 'transform="translate(' + X(hx) + " " + Y(hy) + ") scale(" + U(1) + ')"';
+      if (g.items.length === 1) {
+        const o = g.items[0], q = o.p.q, done = !!app.state.quests[q.id];
+        heads.push('<g class="pin' + (done ? " done" : "") + '" data-pin="' + q.id + '" tabindex="0" role="button" aria-label="' + esc(q.title + " (" + o.p.region.name + ")" + (done ? ", erledigt" : "")) + '" ' + tr + ">" +
+          '<circle class="pin-hit" r="' + PIN.hit + '"/><circle class="pin-head" r="' + PIN.r + '"/>' +
+          '<text class="pin-txt" y="5">' + (done ? "✓" : o.p.n) + "</text></g>");
+      } else {
+        const nDone = g.items.filter((o) => app.state.quests[o.p.q.id]).length;
+        const all = nDone === g.items.length;
+        heads.push('<g class="pin group' + (all ? " done" : "") + '" data-group="' + gi + '" tabindex="0" role="button" aria-label="' + g.items.length + " Quests, " + nDone + ' erledigt" ' + tr + ">" +
+          '<circle class="pin-hit" r="' + (PIN.hit + 2) + '"/><circle class="pin-ring" r="' + (PIN.r + 4) + '"/><circle class="pin-head" r="' + (PIN.r + 1) + '"/>' +
+          '<text class="pin-txt" y="5">' + (all ? "✓" : g.items.length) + "</text></g>");
+      }
+    });
+    $("#pins", svg).innerHTML = stems.join("") + heads.join("");
+  }
+  // Gruppe antippen: Auswahl der Quests in der Gruppe
+  function openGroup(gi) {
+    const g = mapUI.groups && mapUI.groups[gi];
+    if (!g) return;
+    const ids = g.items.map((o) => o.p.q.id);
+    openModal(() => '<div class="modal-head"><h2>' + ids.length + ' Quests hier</h2><button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
+      '<div class="pick-list">' + ids.map((id) => {
+        const q = IX.quests[id], done = app.state.quests[id];
+        return '<button class="pick" data-open-quest="' + id + '"><span class="status ' + (done ? "on" : "") + '">' + (done ? "✓" : "") + "</span>" +
+          '<span><strong>' + esc(q.title) + '</strong><span class="muted small"> · ' + esc(IX.regions[q.region].name) + "</span></span></button>";
+      }).join("") + "</div>" +
+      '<div class="modal-actions"><button class="btn btn-ghost" id="group-zoom">🔍 Hineinzoomen</button></div>',
+    (el) => {
+      $$("[data-open-quest]", el).forEach((b) => b.addEventListener("click", () => openQuest(b.dataset.openQuest)));
+      $("#group-zoom", el).addEventListener("click", () => {
+        closeAll();
+        const xs = g.items.map((o) => o.p.xy[0]), ys = g.items.map((o) => o.p.xy[1]);
+        const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+        const vb = mapUI.vb;
+        mapUI.vb = clampVB({ x: cx - vb.w / 6, y: cy - vb.h / 6 - vb.h / 30, w: vb.w / 3 });
+        const svg = $("#island"); if (svg) applyViewBox(svg);
+      });
+    });
+  }
+  function clampVB(vb) {
+    vb.w = Math.max(MIN_W, Math.min(MAP.w, vb.w));
+    vb.h = vb.w * MAP.h / MAP.w;
+    vb.x = Math.max(0, Math.min(MAP.w - vb.w, vb.x));
+    vb.y = Math.max(0, Math.min(MAP.h - vb.h, vb.y));
+    return vb;
+  }
+  function zoomAt(factor, cx, cy) {
+    const vb = mapUI.vb;
+    const nw = Math.max(MIN_W, Math.min(MAP.w, vb.w / factor));
+    const f = nw / vb.w;
+    mapUI.vb = clampVB({ x: cx - (cx - vb.x) * f, y: cy - (cy - vb.y) * f, w: nw });
+    const svg = $("#island");
+    if (svg) applyViewBox(svg);
+  }
+  function svgPoint(svg, clientX, clientY) {
+    const r = svg.getBoundingClientRect(), vb = mapUI.vb;
+    return [vb.x + (clientX - r.left) / r.width * vb.w, vb.y + (clientY - r.top) / r.height * vb.h];
+  }
+  function bindMap(svg) {
+    const P = mapUI.pointers;
+    svg.addEventListener("pointerdown", (ev) => {
+      P.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      if (P.size === 1) mapUI.gesture = { type: "tap", sx: ev.clientX, sy: ev.clientY, vb: Object.assign({}, mapUI.vb), target: ev.target };
+      else if (P.size === 2) {
+        const [a, b] = Array.from(P.values());
+        const mid = svgPoint(svg, (a.x + b.x) / 2, (a.y + b.y) / 2);
+        mapUI.gesture = { type: "pinch", d: Math.hypot(a.x - b.x, a.y - b.y), vb: Object.assign({}, mapUI.vb), mid };
+      }
+    });
+    svg.addEventListener("pointermove", (ev) => {
+      if (!P.has(ev.pointerId)) return;
+      P.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+      const g = mapUI.gesture;
+      if (!g) return;
+      const rect = svg.getBoundingClientRect();
+      if (g.type === "pinch" && P.size === 2) {
+        const [a, b] = Array.from(P.values());
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const nw = Math.max(MIN_W, Math.min(MAP.w, g.vb.w * g.d / Math.max(d, 1)));
+        const f = nw / g.vb.w;
+        mapUI.vb = clampVB({ x: g.mid[0] - (g.mid[0] - g.vb.x) * f, y: g.mid[1] - (g.mid[1] - g.vb.y) * f, w: nw });
+        applyViewBox(svg);
+      } else if (g.type === "tap" || g.type === "pan") {
+        const dx = ev.clientX - g.sx, dy = ev.clientY - g.sy;
+        if (g.type === "tap" && Math.hypot(dx, dy) > 8) g.type = "pan";
+        if (g.type === "pan" && g.vb.w < MAP.w - 0.5) {
+          const k = g.vb.w / rect.width;
+          mapUI.vb = clampVB({ x: g.vb.x - dx * k, y: g.vb.y - dy * k, w: g.vb.w });
+          applyViewBox(svg);
+        }
+      }
+    });
+    const end = (ev) => {
+      const g = mapUI.gesture;
+      P.delete(ev.pointerId);
+      if (ev.type === "pointerup" && g && g.type === "tap" && P.size === 0) {
+        const el = document.elementFromPoint(ev.clientX, ev.clientY) || g.target;
+        const pin = el.closest && el.closest("[data-pin]");
+        const grp = el.closest && el.closest("[data-group]");
+        const reg = el.closest && el.closest("[data-region]");
+        // Den "Geister-Klick" nach dem Antippen abfangen, sonst schließt er das neue Fenster sofort
+        if (pin || grp || reg) mapUI.ghostUntil = Date.now() + 500;
+        if (pin) openQuest(pin.dataset.pin);
+        else if (grp) openGroup(+grp.dataset.group);
+        else if (reg) openRegion(reg.dataset.region);
+      }
+      if (P.size === 0) mapUI.gesture = null;
+    };
+    svg.addEventListener("pointerup", end);
+    svg.addEventListener("pointercancel", end);
+    svg.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      const pt = svgPoint(svg, ev.clientX, ev.clientY);
+      zoomAt(ev.deltaY < 0 ? 1.25 : 0.8, pt[0], pt[1]);
+    }, { passive: false });
+  }
+  document.addEventListener("click", (ev) => {
+    if (mapUI.ghostUntil && Date.now() < mapUI.ghostUntil) { ev.stopPropagation(); ev.preventDefault(); mapUI.ghostUntil = 0; }
+  }, true);
+  window.addEventListener("resize", () => { const svg = $("#island"); if (svg) layoutPins(svg); });
+
+  // ---- Quests anzeigen
+  function taskHTML(q) {
+    const PRE = "Eure Aufgabe:";
+    const body = q.task.indexOf(PRE) === 0 ? q.task.slice(PRE.length).replace(/^\s+/, "") : q.task;
+    let html = esc(body);
+    if (q.link) html = html.replace(esc(q.link.text), '<a href="' + esc(q.link.href) + '" target="_blank" rel="noopener noreferrer">' + esc(q.link.text) + "</a>");
+    return '<p class="task"><strong>' + PRE + "</strong> " + html + "</p>";
+  }
+  function regionQuestHTML(q, interactive) {
+    const done = app.state.quests[q.id];
+    return '<div class="quest">' +
+      (interactive ? '<button class="check ' + (done ? "on" : "") + '" data-quest="' + q.id + '" aria-label="' + (done ? "Erledigt – rückgängig machen" : "Als erledigt abhaken") + '">' + (done ? "✓" : "") + "</button>"
+        : '<span class="status ' + (done ? "on" : "") + '" aria-label="' + (done ? "erledigt" : "offen") + '">' + (done ? "✓" : "") + "</span>") +
+      '<div class="quest-body"><h4>' + esc(q.title) + "</h4>" +
+      '<div class="loc">📍 ' + esc(q.location) + "</div>" +
+      '<p class="desc">' + esc(q.desc) + "</p>" + taskHTML(q) +
+      (done ? '<div class="by">✓ erledigt von ' + esc(done.by) + " · " + when(done.t) + "</div>" : "") + "</div></div>";
+  }
+  function levelPill(lvl) {
+    return '<span class="pill" style="background:' + L.LEVELS[lvl].color + ";color:" + (lvl <= 1 ? "#1d2a30" : "#fff") + '">' + L.LEVELS[lvl].name + "</span>";
+  }
+  function bindQuestChecks(el) {
+    $$("[data-quest]", el).forEach((b) => b.addEventListener("click", () => toggleQuest(b.dataset.quest, b)));
+  }
+
+  function openQuest(questId) {
+    const q = IX.quests[questId];
+    const r = IX.regions[q.region];
+    openModal(() => {
+      const lvl = sum().levels[r.id];
+      return '<div class="modal-head"><div><div class="muted small">Regions-Quest · ' + esc(r.name) + "</div>" + levelPill(lvl) + ' <span class="stars" style="font-size:1rem">' + stars(lvl) + "</span></div>" +
+        '<button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
+        regionQuestHTML(q, true) +
+        '<div class="modal-actions"><button class="btn btn-ghost" id="to-region">Alle 3 Quests in ' + esc(r.name) + "</button></div>";
+    }, (el) => {
+      bindQuestChecks(el);
+      $("#to-region", el).addEventListener("click", () => openRegion(r.id));
+    });
+  }
+
+  // Übersicht über alle 56 Quests – nur zum Ansehen
+  function openAllQuests() {
+    openModal(() => {
+      const s = sum();
+      const regionsHTML = C.regions.map((r) => {
+        const lvl = s.levels[r.id];
+        return '<div class="ov-group"><div class="row between"><h3>' + esc(r.name) + "</h3>" + levelPill(lvl) + "</div>" +
+          r.quests.map((q) => regionQuestHTML(q, false)).join("") + "</div>";
+      }).join("");
+      const diffs = [["einfach", "Einfach"], ["mittel", "Mittel"], ["schwer", "Schwer"]];
+      const stackHTML = diffs.map(([d, label]) => {
+        const qs = C.stackQuests.filter((q) => q.difficulty === d);
+        return '<div class="ov-group"><h3>' + label + " · " + L.STACK_POINTS[d] + " Punkte</h3>" + qs.map((q) => {
+          const done = app.state.done[q.id];
+          const isOpen = app.state.open.indexOf(q.id) >= 0;
+          return '<div class="quest"><span class="status ' + (done ? "on" : "") + '" aria-label="' + (done ? "erledigt" : "offen") + '">' + (done ? "✓" : "") + "</span>" +
+            '<div class="quest-body"><h4>' + esc(q.title) + (isOpen && !done ? ' <span class="pill pill-open">gerade offen</span>' : "") + "</h4>" + taskHTML(q) +
+            (done ? '<div class="by">✓ erledigt von ' + esc(done.by) + " · " + when(done.t) + " · +" + L.stackPoints(app.state, C, q.id) + " Punkte</div>" : "") + "</div></div>";
+        }).join("") + "</div>";
+      }).join("");
+      return '<div class="modal-head"><h2>Alle Quests</h2><button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
+        '<p class="muted small">Nur zum Ansehen. Abgehakt wird über die Inselkarte (Pin oder Region) bzw. bei den 3 offenen Stapel-Quests.</p>' +
+        '<div class="ov-jump"><a href="#ov-region">Regions-Quests · ' + s.questsDone + "/30 erledigt</a>" +
+        '<a href="#ov-stack">Stapel-Quests · ' + s.doneStack + "/" + C.stackQuests.length + " erledigt</a></div>" +
+        '<h2 id="ov-region" class="ov-title">Regions-Quests</h2>' + regionsHTML +
+        '<h2 id="ov-stack" class="ov-title">Stapel-Quests</h2>' + stackHTML;
+    }, (el) => {
+      $$(".ov-jump a", el).forEach((a) => a.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const t = $(a.getAttribute("href"), el);
+        if (t) el.scrollTo({ top: t.offsetTop - 10, behavior: "smooth" });
+      }));
+    });
   }
 
   function openRegion(regionId) {
@@ -217,24 +510,14 @@
       const s = sum();
       const lvl = s.levels[r.id];
       const joker = app.state.joker && app.state.joker.region === r.id;
-      const quests = r.quests.map((q) => {
-        const done = app.state.quests[q.id];
-        return '<div class="quest">' +
-          '<button class="check ' + (done ? "on" : "") + '" data-quest="' + q.id + '" aria-label="' + (done ? "Erledigt – rückgängig machen" : "Als erledigt abhaken") + '">' + (done ? "✓" : "") + "</button>" +
-          "<div><h4>" + esc(q.title) + "</h4><p>" + esc(q.text) + "</p>" +
-          (done ? '<div class="by">✓ ' + esc(done.by) + " · " + when(done.t) + "</div>" : "") + "</div></div>";
-      }).join("");
       const next = lvl === 0 ? "Erste Quest: Region erkundet (+100)" : lvl < 3 ? "Nächste Quest: " + L.LEVELS[lvl + 1].name + " (+20)" : "Höchste Stufe erreicht!";
-      return '<div class="modal-head"><div><h2>' + esc(r.name) + "</h2>" +
-        '<span class="pill" style="background:' + L.LEVELS[lvl].color + ";color:" + (lvl === 1 || lvl === 0 ? "#1d2a30" : "#fff") + '">' + L.LEVELS[lvl].name + "</span> " +
+      return '<div class="modal-head"><div><h2>' + esc(r.name) + "</h2>" + levelPill(lvl) + " " +
         '<span class="stars" style="font-size:1rem">' + stars(lvl) + "</span>" +
         (joker ? ' <span class="pill" style="background:var(--ocean)">Region-Joker</span>' : "") +
         '</div><button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
         '<p class="muted small">' + next + " · Punkte hier: " + fmt(L.regionPoints(app.state, C, r.id)) + "</p>" +
-        quests;
-    }, (el) => {
-      $$("[data-quest]", el).forEach((b) => b.addEventListener("click", () => toggleQuest(b.dataset.quest, b)));
-    });
+        r.quests.map((q) => regionQuestHTML(q, true)).join("");
+    }, bindQuestChecks);
   }
 
   async function toggleQuest(questId, btn) {
@@ -255,17 +538,18 @@
     return null;
   }
 
-  // ---- Bonus-Karten
-  function cardHTML(id, s, i) {
-    const c = IX.cards[id];
+  // ---- Stapel-Quests
+  function diffLabel(d) { return { einfach: "Einfach", mittel: "Mittel", schwer: "Schwer" }[d] || d; }
+  function stackQuestHTML(id, s) {
+    const q = IX.stack[id];
     const m = app.state.mults[id];
-    const base = L.cardBase(C, id);
-    const pts = L.cardPoints(app.state, C, id);
+    const base = L.stackBase(C, id);
+    const pts = L.stackPoints(app.state, C, id);
     const shopOk = s.balance >= 0;
-    return '<div class="bcard ' + c.difficulty + '" data-card-box="' + id + '">' +
-      '<div class="row between"><span class="pill diff-' + c.difficulty + '">' + cap(c.difficulty) + "</span>" +
+    return '<div class="squest ' + q.difficulty + '">' +
+      '<div class="row between"><span class="pill diff-' + q.difficulty + '">' + diffLabel(q.difficulty) + "</span>" +
       (m ? '<span class="pill mult-badge">' + L.fmtFactor(m.factor) + (m.factor === 5 ? " Jackpot" : "") + "</span>" : "") + "</div>" +
-      "<h3>" + esc(c.title) + "</h3><p>" + esc(c.text) + "</p>" +
+      "<h3>" + esc(q.title) + "</h3>" + taskHTML(q) +
       '<div class="pts">' + (m && pts !== base ? "<s>" + base + "</s>" : "") + pts + " Punkte</div>" +
       '<div class="actions">' +
         '<button class="btn btn-good" data-done="' + id + '">✓ Erledigt</button>' +
@@ -274,41 +558,43 @@
       "</div></div>";
   }
 
-  function viewBonus(s) {
-    const hand = app.state.hand.filter(Boolean);
-    const cards = hand.length ? hand.map((id, i) => cardHTML(id, s, i)).join("") :
-      '<div class="card empty">🎉 Alle Bonus-Karten erledigt – der Bonus-Teil ist abgeschlossen!</div>';
-    const done = app.state.log.filter((e) => e.type === "card" && !e.undone).slice().reverse();
+  function viewStack(s) {
+    const open = app.state.open.filter(Boolean);
+    const quests = open.length ? open.map((id) => stackQuestHTML(id, s)).join("") :
+      '<div class="panel empty">🎉 Alle Stapel-Quests erledigt!</div>';
+    const done = app.state.log.filter((e) => e.type === "stack" && !e.undone).slice().reverse();
     const doneList = done.length ? done.map((e) => {
-      const id = e.data.cardId;
-      return '<div class="list-item"><div class="grow"><div class="txt"><strong>' + esc(IX.cards[id].title) + "</strong></div>" +
-        '<div class="meta">' + cap(IX.cards[id].difficulty) + " · " + esc(e.by) + " · " + when(e.t) + "</div></div>" +
-        '<span class="delta plus">+' + L.cardPoints(app.state, C, id) + "</span>" +
+      const id = e.data.questId;
+      return '<div class="list-item"><div class="grow"><div class="txt"><strong>' + esc(IX.stack[id].title) + "</strong></div>" +
+        '<div class="meta">' + diffLabel(IX.stack[id].difficulty) + " · " + esc(e.by) + " · " + when(e.t) + "</div></div>" +
+        '<span class="delta plus">+' + L.stackPoints(app.state, C, id) + "</span>" +
         '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">↩</button></div>';
-    }).join("") : '<p class="muted small" style="margin:0">Noch keine Bonus-Karte erledigt.</p>';
+    }).join("") : '<p class="muted small" style="margin:0">Noch keine Stapel-Quest erledigt.</p>';
     return '' +
-      '<div class="card deck-info"><div class="deck-stack"></div><div><strong>' + s.deckLeft + " Karten im Stapel</strong>" +
-      '<div class="muted small">' + s.doneCards + " von " + C.bonusCards.length + " erledigt · Multiplikatoren " + s.multCount + "/" + L.MAX_MULTS +
+      '<div class="panel deck-info"><div class="deck-stack"></div><div><strong>' + s.deckLeft + " Stapel-Quests verdeckt im Stapel</strong>" +
+      '<div class="muted small">3 sind offen · ' + s.doneStack + " von " + C.stackQuests.length + " erledigt · Multiplikatoren " + s.multCount + "/" + L.MAX_MULTS +
       (s.balance < 0 ? " · <strong style='color:var(--hibiscus)'>Shop gesperrt</strong>" : "") + "</div></div></div>" +
-      cards +
-      '<div class="section-title"><h3>Erledigt</h3></div><div class="card">' + doneList + "</div>";
+      '<h2 class="section-h">Offene Stapel-Quests</h2>' +
+      quests +
+      '<button class="btn btn-ghost btn-block" data-all-quests style="margin-bottom:14px">📋 Alle Quests ansehen</button>' +
+      '<div class="section-title"><h3>Erledigt</h3></div><div class="panel">' + doneList + "</div>";
   }
 
   async function doSwap(id) {
-    if (await confirmBox("Tausch-Joker kaufen?", "Für " + L.PRICES.swap + " Punkte geht „" + IX.cards[id].title + "“ zurück in den Stapel und eine neue Karte kommt auf die Hand.", "Tauschen (" + L.PRICES.swap + ")")) {
-      if (await act({ type: "swap", cardId: id })) {
+    if (await confirmBox("Tausch-Joker kaufen?", "Für " + L.PRICES.swap + " Punkte geht „" + IX.stack[id].title + "“ zurück in den Stapel und eine neue Stapel-Quest wird vom Stapel gezogen.", "Tauschen (" + L.PRICES.swap + ")")) {
+      if (await act({ type: "swap", questId: id })) {
         const e = lastEntry((x) => x.type === "swap");
-        if (e) toast("Neue Karte: „" + IX.cards[e.data.newId].title + "“");
+        if (e) toast("Neu vom Stapel gezogen: „" + IX.stack[e.data.newId].title + "“");
       }
     }
   }
   async function doMult(id) {
-    const base = L.cardBase(C, id);
-    if (await confirmBox("Multiplikator kaufen?", "Für " + L.PRICES.mult + " Punkte bekommt „" + IX.cards[id].title + "“ (" + base + " P) einen zufälligen Faktor: ×0,5 bis ×2,0 – mit 5 % Chance Jackpot ×5. Danach kann die Karte nicht mehr getauscht werden." + (base === 15 ? " Tipp: Auf leichten Karten lohnt er sich eher nicht." : ""), "Würfeln (" + L.PRICES.mult + ")")) {
-      if (await act({ type: "mult", cardId: id })) {
+    const base = L.stackBase(C, id);
+    if (await confirmBox("Multiplikator kaufen?", "Für " + L.PRICES.mult + " Punkte bekommt „" + IX.stack[id].title + "“ (" + base + " P) einen zufälligen Faktor: ×0,5 bis ×2,0 – mit 5 % Chance Jackpot ×5. Danach kann diese Stapel-Quest nicht mehr getauscht werden." + (base === 15 ? " Tipp: Bei einfachen Stapel-Quests lohnt er sich eher nicht." : ""), "Würfeln (" + L.PRICES.mult + ")")) {
+      if (await act({ type: "mult", questId: id })) {
         const m = app.state.mults[id];
         if (m) {
-          banner(m.factor === 5 ? "💥 JACKPOT ×5!" : L.fmtFactor(m.factor), "„" + IX.cards[id].title + "“ ist jetzt " + L.cardPoints(app.state, C, id) + " Punkte wert");
+          banner(m.factor === 5 ? "💥 JACKPOT ×5!" : L.fmtFactor(m.factor), "„" + IX.stack[id].title + "“ ist jetzt " + L.stackPoints(app.state, C, id) + " Punkte wert");
           if (m.factor >= 1.5) confetti(m.factor === 5 ? 160 : 60);
         }
       }
@@ -326,22 +612,22 @@
         '<div class="row"><select id="joker-region">' + unexplored.map((r) => '<option value="' + r.id + '">' + esc(r.name) + "</option>").join("") + "</select>" +
         '<button class="btn btn-primary" id="buy-joker" ' + (locked || s.balance < L.PRICES.joker ? "disabled" : "") + ">Kaufen</button></div>" :
         '<p class="muted small" style="margin:0">Alle Regionen sind schon erkundet.</p>';
-    const handBtns = (attr, disabledFn) => app.state.hand.filter(Boolean).map((id) =>
+    const openBtns = (attr, disabledFn) => app.state.open.filter(Boolean).map((id) =>
       '<button class="btn btn-ghost btn-small" style="justify-content:space-between" ' + attr + '="' + id + '" ' + (disabledFn(id) ? "disabled" : "") + ">" +
-      "<span>" + esc(IX.cards[id].title) + "</span><span class='muted'>" + L.cardBase(C, id) + " P" + (app.state.mults[id] ? " · " + L.fmtFactor(app.state.mults[id].factor) : "") + "</span></button>").join("");
+      "<span>" + esc(IX.stack[id].title) + "</span><span class='muted'>" + L.stackBase(C, id) + " P" + (app.state.mults[id] ? " · " + L.fmtFactor(app.state.mults[id].factor) : "") + "</span></button>").join("");
     return '' +
-      '<div class="card row between"><div><div class="muted small">Kontostand</div><div class="rank-big" style="color:' + (locked ? "var(--hibiscus)" : "inherit") + '">' + fmt(s.balance) + ' P</div></div>' +
+      '<div class="panel row between"><div><div class="muted small">Kontostand</div><div class="rank-big" style="color:' + (locked ? "var(--hibiscus)" : "inherit") + '">' + fmt(s.balance) + ' P</div></div>' +
       '<div class="muted small" style="text-align:right">verdient ' + fmt(s.earned) + "<br>ausgegeben " + fmt(s.spent) + "</div></div>" +
       (locked ? '<div class="locked">Der Kontostand ist negativ – der Shop ist gesperrt, bis wieder Punkte reinkommen.</div>' : "") +
       '<p class="muted small">Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen.</p>' +
-      '<div class="card shop-item"><div class="row between"><h3 style="margin:0">🧭 Region-Joker</h3><span class="price">' + L.PRICES.joker + " P</span></div>" +
+      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">🧭 Region-Joker</h3><span class="price">' + L.PRICES.joker + " P</span></div>" +
       '<p class="muted small" style="margin:0">Eine Region gilt als erkundet, bringt aber keine 100 Punkte. Sie kann danach normal mit Quests auf Erobert und Erschlossen gebracht werden. <strong>Einmal pro Spiel.</strong></p>' + jokerBody + "</div>" +
-      '<div class="card shop-item"><div class="row between"><h3 style="margin:0">⇄ Tausch-Joker</h3><span class="price">' + L.PRICES.swap + " P</span></div>" +
-      '<p class="muted small" style="margin:0">Eine Handkarte geht zurück in den Stapel, eine neue kommt auf die Hand. So oft ihr wollt (' + s.swaps + "× genutzt).</p>" +
-      '<div class="hand-pick">' + handBtns("data-swap", (id) => locked || app.state.mults[id] || !app.state.deck.length) + "</div></div>" +
-      '<div class="card shop-item"><div class="row between"><h3 style="margin:0">✦ Multiplikator</h3><span class="price">' + L.PRICES.mult + " P</span></div>" +
-      '<p class="muted small" style="margin:0">Zufälliger Faktor auf eine Handkarte: 95 % ×0,5–×2,0, 5 % Jackpot ×5. Ergebnis wird aufgerundet. Lohnt sich vor allem auf schweren Karten. <strong>' + (L.MAX_MULTS - s.multCount) + " von 3 übrig.</strong></p>" +
-      '<div class="hand-pick">' + handBtns("data-mult", (id) => locked || app.state.mults[id] || s.multCount >= L.MAX_MULTS) + "</div></div>";
+      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">⇄ Tausch-Joker</h3><span class="price">' + L.PRICES.swap + " P</span></div>" +
+      '<p class="muted small" style="margin:0">Eine offene Stapel-Quest geht zurück in den Stapel, eine neue wird vom Stapel gezogen. So oft ihr wollt (' + s.swaps + "× genutzt).</p>" +
+      '<div class="open-pick">' + openBtns("data-swap", (id) => locked || app.state.mults[id] || !app.state.deck.length) + "</div></div>" +
+      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">✦ Multiplikator</h3><span class="price">' + L.PRICES.mult + " P</span></div>" +
+      '<p class="muted small" style="margin:0">Zufälliger Faktor auf eine offene Stapel-Quest: 95 % ×0,5–×2,0, 5 % Jackpot ×5. Ergebnis wird aufgerundet. Lohnt sich vor allem bei schweren Stapel-Quests. <strong>' + (L.MAX_MULTS - s.multCount) + " von 3 übrig.</strong></p>" +
+      '<div class="open-pick">' + openBtns("data-mult", (id) => locked || app.state.mults[id] || s.multCount >= L.MAX_MULTS) + "</div></div>";
   }
 
   // ---- Logbuch
@@ -354,7 +640,7 @@
         (L.canUndo(e) && !app.state.ended ? '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">↩</button>' : "") + "</div>";
     }).join("");
     return '<h2>Logbuch</h2><p class="muted small">Alle Aktionen mit Uhrzeit und Name. Mit ↩ lässt sich gezielt etwas rückgängig machen – keine Aufgabe bringt je zweimal Punkte.</p>' +
-      '<div class="card">' + (items || '<p class="muted" style="margin:0">Noch nichts passiert. Auf geht\'s!</p>') + "</div>";
+      '<div class="panel">' + (items || '<p class="muted" style="margin:0">Noch nichts passiert. Auf geht\'s!</p>') + "</div>";
   }
 
   async function undo(logId) {
@@ -371,22 +657,23 @@
     const lvlCounts = [0, 0, 0, 0];
     C.regions.forEach((r) => lvlCounts[s.levels[r.id]]++);
     return '' +
-      '<div class="card rank-card"><div class="muted small">Team-Rang</div><div class="rank-big">' + esc(s.rankName) + "</div>" +
+      '<div class="panel rank-panel"><div class="muted small">Team-Rang</div><div class="rank-big">' + esc(s.rankName) + "</div>" +
       '<div class="progress" style="margin:10px 0 6px"><div style="width:' + pct + '%"></div></div>' +
       '<div class="small muted">' + (s.nextRank ? "Noch " + fmt(s.nextRank.min - s.earned) + " Punkte bis „" + s.nextRank.name + "“" : "Höchster Rang erreicht!") + "</div></div>" +
       '<div class="kpis">' +
         kpi(fmt(s.earned), "Punkte verdient") + kpi(fmt(s.balance), "Kontostand") +
         kpi(Math.round(s.earned / L.MAX_POINTS * 100) + " %", "von 2.400 möglichen") + kpi(s.bestMult ? L.fmtFactor(s.bestMult) : "–", "bester Multiplikator") +
         kpi(days, days === 1 ? "Tag" : "Tage") + kpi(fmt(s.earned / days), "Punkte pro Tag") +
-        kpi(s.questsDone + "/30", "Quests erledigt") + kpi(s.doneCards + "/" + C.bonusCards.length, "Bonus-Karten") +
+        kpi(s.questsDone + "/30", "Regions-Quests") + kpi(s.doneStack + "/" + C.stackQuests.length, "Stapel-Quests") +
       "</div>" +
-      '<div class="section-title"><h3>Punkte pro Tag</h3></div><div class="card chart">' + barChart(perDay) + "</div>" +
-      '<div class="section-title"><h3>Woher die Punkte kommen</h3></div><div class="card">' +
-        breakdown([["Regionen & Stufen", s.regionPts, "var(--laurel)"], ["Madeira-Bonus", s.madeiraBonus, "var(--gold)"], ["Bonus-Karten", s.cardPts, "var(--medium)"]], s.earned) +
+      '<div class="section-title"><h3>Punkte pro Tag</h3></div><div class="panel chart">' + barChart(perDay) + "</div>" +
+      '<div class="section-title"><h3>Woher die Punkte kommen</h3></div><div class="panel">' +
+        breakdown([["Regionen & Stufen", s.regionPts, "var(--laurel)"], ["Insel-Bonus", s.madeiraBonus, "var(--gold)"], ["Stapel-Quests", s.stackPts, "var(--medium)"]], s.earned) +
         '<div class="legend" style="margin-top:10px">' + L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + ": " + lvlCounts[i] + "</span>").join("") + "</div>" +
         '<p class="muted small" style="margin:8px 0 0">Joker: Region-Joker ' + s.jokerUsed + "/1 · Tausch " + s.swaps + "× · Multiplikator " + s.multCount + "/3 · ausgegeben " + fmt(s.spent) + " P</p></div>" +
       '<div class="section-title"><h3>Spiel</h3></div>' +
-      '<div class="card" style="display:grid;gap:10px">' +
+      '<div class="panel" style="display:grid;gap:10px">' +
+        '<button class="btn btn-ghost btn-block" data-all-quests>📋 Alle Quests ansehen</button>' +
         '<button class="btn btn-gold btn-block" id="end-btn">🏁 Urlaub beenden & Belohnungen</button>' +
         '<button class="btn btn-ghost btn-block" id="help-btn2">? Spielanleitung</button>' +
         '<div class="grid2"><button class="btn btn-ghost" id="rename-btn">Name: ' + esc(app.name) + '</button><button class="btn btn-ghost" id="logout-btn">Abmelden</button></div>' +
@@ -486,11 +773,11 @@
     const lines = C.rewards.filter((r) => alloc[r.id] > 0).map((r) =>
       '<div class="list-item"><div class="grow"><strong>Gutschein: ' + L.formatReward(r, alloc[r.id]) + " " + esc(r.voucher) + '</strong><div class="meta">' + fmt(alloc[r.id]) + " Punkte</div></div></div>").join("");
     return '<h2>🏁 Urlaub beendet</h2>' +
-      '<div class="card rank-card"><div class="muted small">Euer Rang</div><div class="rank-big">' + esc(s.rankName) + '</div><div class="small">' + fmt(s.earned) + " von 2.400 Punkten (" + Math.round(s.earned / L.MAX_POINTS * 100) + " %)</div></div>" +
-      '<div class="card"><h3>Eure Belohnungen</h3>' + (lines || '<p class="muted" style="margin:0">Keine Restpunkte verteilt.</p>') + "</div>" +
-      '<div class="card"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG()) + '">' +
+      '<div class="panel rank-panel"><div class="muted small">Euer Rang</div><div class="rank-big">' + esc(s.rankName) + '</div><div class="small">' + fmt(s.earned) + " von 2.400 Punkten (" + Math.round(s.earned / L.MAX_POINTS * 100) + " %)</div></div>" +
+      '<div class="panel"><h3>Eure Belohnungen</h3>' + (lines || '<p class="muted" style="margin:0">Keine Restpunkte verteilt.</p>') + "</div>" +
+      '<div class="panel"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG()) + '">' +
       '<button class="btn btn-primary btn-block" id="pdf-btn" style="margin-top:12px">📄 Zertifikat als PDF herunterladen</button></div>' +
-      '<div class="card" style="display:grid;gap:10px"><button class="btn btn-ghost btn-block" id="reopen-btn">Urlaub fortsetzen (Verteilung aufheben)</button>' +
+      '<div class="panel" style="display:grid;gap:10px"><button class="btn btn-ghost btn-block" id="reopen-btn">Urlaub fortsetzen (Verteilung aufheben)</button>' +
       '<button class="btn btn-ghost btn-block" id="tab-stats-btn">Statistiken ansehen</button></div>';
   }
 
@@ -508,7 +795,7 @@
     const mapScale = 0.5;
     const mapG = '<g transform="translate(' + (W / 2 - MAP.w * mapScale / 2) + ',300) scale(' + mapScale + ')">' +
       C.regions.map((r) => '<path d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[s.levels[r.id]].color + '" stroke="#fff" stroke-width="3"/>').join("") + "</g>";
-    const statsLine = s.doneCards + " Bonus-Karten · bester Multiplikator " + (s.bestMult ? L.fmtFactor(s.bestMult) : "–") +
+    const statsLine = s.questsDone + " Regions-Quests · " + s.doneStack + " Stapel-Quests · bester Multiplikator " + (s.bestMult ? L.fmtFactor(s.bestMult) : "–") +
       " · " + (s.jokerUsed + s.swaps + s.multCount) + " Joker eingesetzt · " + days + (days === 1 ? " Tag" : " Tage");
     const date = new Date(st.ended ? st.ended.at : Date.now()).toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" });
     let vy = 640;
@@ -558,14 +845,15 @@
   function openHelp() {
     openModal(() => '<div class="modal-head"><h2>Spielanleitung</h2><button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
       '<div class="help">' +
-      "<h3>🎯 Ziel</h3><p>Ihr spielt als <strong>ein Team</strong>: Erkundet alle 10 Regionen Madeiras und sammelt Punkte mit Bonus-Karten. Alle Punkte gehören dem Team – wir vertrauen uns, es gibt keine Beweisfotos.</p>" +
-      "<h3>🗺️ Regionen und Stufen</h3><p>Jede Region hat 3 Quests. Eine erledigte Quest erkundet die Region, jede weitere hebt sie eine Stufe.</p>" +
+      "<h3>🎯 Ziel</h3><p>Ihr spielt als <strong>ein Team</strong>: Erkundet alle 10 Regionen Madeiras mit Regions-Quests und sammelt zusätzlich Punkte mit Stapel-Quests. Alle Punkte gehören dem Team – wir vertrauen uns, es gibt keine Beweisfotos.</p>" +
+      "<h3>🗺️ Regions-Quests und Stufen</h3><p>Jede Region hat 3 Regions-Quests an festen Orten – auf der Inselkarte als Pins markiert. Pin antippen öffnet die Quest, Region antippen zeigt alle 3. Eine erledigte Regions-Quest erkundet die Region, jede weitere hebt sie eine Stufe.</p>" +
       "<table><tr><th>Stufe</th><th>Quests</th><th>Punkte</th></tr><tr><td>Erkundet</td><td>1</td><td>100</td></tr><tr><td>Erobert</td><td>2</td><td>+20</td></tr><tr><td>Erschlossen</td><td>3</td><td>+20</td></tr></table>" +
-      "<p>Alle 10 Regionen erkundet: <strong>„Madeira erkundet!“ +300 Bonus</strong>. Danach geht das Spiel weiter.</p>" +
-      "<h3>🃏 Bonus-Karten</h3><p>26 Karten, überall machbar (leicht 15, mittel 25, schwer 50 Punkte). 3 liegen offen auf der Hand; nach dem Erledigen wird automatisch nachgezogen. Bonus-Karten erkunden keine Region.</p>" +
+      "<p>Alle 10 Regionen erkundet: <strong>„Madeira erkundet!“ +300 Insel-Bonus</strong>. Danach geht das Spiel weiter.</p>" +
+      "<h3>📚 Stapel-Quests</h3><p>26 Stapel-Quests, überall auf der Insel machbar (einfach 15, mittel 25, schwer 50 Punkte). Sie liegen gemischt in einem Stapel; immer 3 sind offen, der Rest bleibt verdeckt. Ist eine erledigt, wird automatisch eine neue vom Stapel gezogen. Stapel-Quests erkunden keine Region.</p>" +
+      "<p>„📋 Alle Quests“ zeigt alle 56 Quests zum Ansehen.</p>" +
       "<h3>🛒 Shop</h3><ul><li><strong>Region-Joker (150):</strong> Region gilt als erkundet, ohne die 100 Punkte. Einmal pro Spiel.</li>" +
-      "<li><strong>Tausch-Joker (10):</strong> Handkarte zurück in den Stapel, neue Karte auf die Hand.</li>" +
-      "<li><strong>Multiplikator (10):</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine Handkarte, aufgerundet. 3 pro Spiel, einer pro Karte; die Karte kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Karten.</li></ul>" +
+      "<li><strong>Tausch-Joker (10):</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen.</li>" +
+      "<li><strong>Multiplikator (10):</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. 3 pro Spiel, einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt.</p>" +
       "<h3>🏆 Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<h3>↩ Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder im Logbuch ↩). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
@@ -713,14 +1001,14 @@
       if (up) setTimeout(() => banner("⭐ " + up.name + ": " + L.LEVELS[b.levels[up.id]].name + "!", "+20 Punkte"), own ? 400 : 0);
     }
     if (b.rank > a.rank) setTimeout(() => { banner("🏆 Neuer Rang: " + b.rankName, fmt(b.earned) + " Punkte verdient"); confetti(80); }, 2800);
-    if (!a.bonusFinished && b.bonusFinished) setTimeout(() => banner("🃏 Bonus-Teil abgeschlossen!", "Alle 26 Karten erledigt"), 1200);
+    if (!a.stackFinished && b.stackFinished) setTimeout(() => banner("📚 Stapel geschafft!", "Alle 26 Stapel-Quests erledigt"), 1200);
   }
   function bigCelebration(s) {
     closeAll();
     const o = document.createElement("div");
     o.className = "big-celebration";
     o.innerHTML = '<div><div class="sub">Alle 10 Regionen erkundet</div><h1>Madeira erkundet!</h1>' + mapSVG(s.levels, { labels: false }) +
-      '<div class="bonus">+300 Bonuspunkte</div><button class="btn btn-gold">Weiter geht\'s!</button></div>';
+      '<div class="bonus">+300 Insel-Bonus</div><button class="btn btn-gold">Weiter geht\'s!</button></div>';
     document.body.appendChild(o);
     $("button", o).addEventListener("click", () => o.remove());
     confetti(220);
@@ -745,11 +1033,21 @@
   document.addEventListener("click", (ev) => {
     const t = ev.target.closest("button, [data-region]");
     if (!t || !app.state) return;
+    if (t.id === "upgrade-btn") return confirmBox("Neues Spiel starten?", "Alles wird auf null gesetzt und der Stapel neu gemischt – für alle Handys.", "Neu starten", true)
+      .then((ok) => ok && act({ type: "reset", seed: Math.floor(Math.random() * 2 ** 31) }));
+    if (!L.isCompatible(app.state, C)) return;
     if (t.closest(".modal")) return; // Modals binden selbst
+    if (t.closest("#island")) return; // Inselkarte: eigene Zeiger-Steuerung
+    if (t.dataset.zoom) {
+      if (t.dataset.zoom === "reset") { mapUI.vb = Object.assign({}, FULL); const svg = $("#island"); if (svg) applyViewBox(svg); return; }
+      const vb = mapUI.vb;
+      return zoomAt(t.dataset.zoom === "in" ? 1.6 : 1 / 1.6, vb.x + vb.w / 2, vb.y + vb.h / 2);
+    }
+    if (t.hasAttribute("data-all-quests")) return openAllQuests();
     if (t.dataset.view) return go(t.dataset.view);
     if (t.dataset.go) return go(t.dataset.go);
     if (t.dataset.region) return openRegion(t.dataset.region);
-    if (t.dataset.done) return act({ type: "card", cardId: t.dataset.done }, { fxFrom: t });
+    if (t.dataset.done) return act({ type: "stack", questId: t.dataset.done }, { fxFrom: t });
     if (t.dataset.swap) return doSwap(t.dataset.swap);
     if (t.dataset.mult) return doMult(t.dataset.mult);
     if (t.dataset.undo) return undo(Number(t.dataset.undo));
@@ -773,7 +1071,11 @@
   });
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") closeModal();
-    if ((ev.key === "Enter" || ev.key === " ") && ev.target.classList && ev.target.classList.contains("region-path")) { ev.preventDefault(); openRegion(ev.target.dataset.region); }
+    if ((ev.key === "Enter" || ev.key === " ") && ev.target.dataset) {
+      if (ev.target.dataset.pin) { ev.preventDefault(); openQuest(ev.target.dataset.pin); }
+      else if (ev.target.dataset.group) { ev.preventDefault(); openGroup(+ev.target.dataset.group); }
+      else if (ev.target.classList.contains("region-path")) { ev.preventDefault(); openRegion(ev.target.dataset.region); }
+    }
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
   setInterval(() => { if (!document.hidden) poll(); }, 4000);
