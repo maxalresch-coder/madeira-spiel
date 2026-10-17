@@ -55,9 +55,10 @@
       <button class="rank-badge" data-go="stats" aria-label="Teamrang und Kontostand – zur Statistik">
         <span class="rb-fig" id="rb-fig" aria-hidden="true"></span><span id="hdr-rank"></span><span class="rb-sep" aria-hidden="true">·</span><span id="hdr-points" class="hdr-points"></span>
       </button>
+      <div id="offline" class="offline" role="status" hidden><span data-icon="wifi-off"></span> Offline – Änderungen werden nicht gespeichert</div>
     </header>
-    <div id="offline" class="offline" hidden>Keine Verbindung – Änderungen können gerade nicht gespeichert werden.</div>
     <main id="view" class="view"></main>
+    <input type="file" id="restore-file" accept=".json,application/json" hidden>
   </div>
 
   <div id="modal-root"></div>

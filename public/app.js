@@ -24,40 +24,61 @@
     version: -1,
     state: null,
     online: true,
+    polling: false,
     busy: false,
     modals: [] // offene Fenster (oberstes zuletzt)
   };
 
   // ------------------------------------------------------------------ API
+  // Ohne Netz hängt eine Anfrage sonst sehr lange – nach einer Weile abbrechen (= keine Verbindung).
   async function api(path, opts) {
     opts = opts || {};
-    const res = await fetch("api/" + path, {
-      method: opts.method || "GET",
-      headers: Object.assign({ "Content-Type": "application/json" }, app.token ? { Authorization: "Bearer " + app.token } : {}),
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-      cache: "no-store"
-    });
+    const ctrl = window.AbortController ? new AbortController() : null;
+    const timer = ctrl && setTimeout(() => ctrl.abort(), opts.method === "POST" ? 20000 : 10000);
+    let res;
+    try {
+      res = await fetch("api/" + path, {
+        method: opts.method || "GET",
+        headers: Object.assign({ "Content-Type": "application/json" }, app.token ? { Authorization: "Bearer " + app.token } : {}),
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        cache: "no-store",
+        signal: ctrl ? ctrl.signal : undefined
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
     let data = null;
     try { data = await res.json(); } catch (e) { /* leer */ }
     if (res.status === 401 && path !== "login") { logout(); throw new Error("Bitte neu anmelden."); }
     return { status: res.status, data };
   }
 
+  // Offline-Anzeige: Streifen unter der Kopfzeile; speichernde Knöpfe sind gesperrt.
   function setOnline(on) {
+    const was = app.online;
     app.online = on;
     $("#offline").hidden = on;
+    document.body.classList.toggle("is-offline", !on);
+    if (on && !was) toast("Wieder online – Spielstand ist aktuell.");
   }
 
+  // Server nicht erreichbar oder Fehlerseite (z. B. 502) zählt als offline.
   async function poll() {
-    if (!app.token) return;
+    if (!app.token || app.polling) return;
+    app.polling = true;
     try {
-      const r = await api("state?since=" + app.version);
-      setOnline(true);
-      if (r.status !== 200 || r.data.unchanged) return;
-      if (!r.data.state) { await createGame(); return; }
+      const wasOffline = !app.online;
+      // Nach einer Funkstille den kompletten Spielstand neu laden
+      const r = await api("state" + (wasOffline ? "" : "?since=" + app.version));
+      if (r.status !== 200 || !r.data) throw new Error("Server nicht erreichbar");
+      if (r.data.unchanged) { setOnline(true); return; }
+      if (!r.data.state) { await createGame(); setOnline(true); return; }
       receive(r.data.version, r.data.state, false);
+      setOnline(true);
     } catch (e) {
       setOnline(false);
+    } finally {
+      app.polling = false;
     }
   }
 
@@ -84,6 +105,10 @@
   async function act(action, opts) {
     opts = opts || {};
     if (app.busy) return false;
+    if (!app.online) {
+      await poll(); // vielleicht ist das Netz gerade zurück
+      if (!app.online) { toast(OFFLINE_MSG, true); return false; }
+    }
     app.busy = true;
     try {
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -99,7 +124,12 @@
           r = await api("state", { method: "POST", body: { baseVersion: app.version, state: next } });
         } catch (e) {
           setOnline(false);
-          toast("Keine Verbindung – nicht gespeichert. Bitte nochmal versuchen.", true);
+          toast("Speichern fehlgeschlagen: keine Verbindung. Die Aktion wurde NICHT ausgeführt.", true);
+          return false;
+        }
+        if (r.status >= 500) {
+          setOnline(false);
+          toast("Speichern fehlgeschlagen: Server nicht erreichbar. Die Aktion wurde NICHT ausgeführt.", true);
           return false;
         }
         setOnline(true);
@@ -109,15 +139,77 @@
           return true;
         }
         if (r.status === 409) { receive(r.data.version, r.data.state, false); continue; }
-        toast((r.data && r.data.error) || "Fehler beim Speichern", true);
+        toast("Speichern fehlgeschlagen" + (r.data && r.data.error ? " (" + r.data.error + ")" : "") + ". Die Aktion wurde NICHT ausgeführt.", true);
         return false;
       }
-      toast("Gerade sehr viel los – bitte nochmal versuchen.", true);
+      toast("Gerade sehr viel los – nicht gespeichert, bitte nochmal versuchen.", true);
       return false;
     } finally {
       app.busy = false;
     }
   }
+
+  const OFFLINE_MSG = "Offline – Abhaken, Rückgängig und Käufe gehen erst wieder mit Netz.";
+  // Knöpfe, die etwas speichern würden (offline gesperrt)
+  const SAVING_BUTTONS = "[data-done], [data-swap], [data-mult], [data-undo], [data-quest], #buy-joker, #end-btn, #reset-btn, #reopen-btn, #restore-btn, #upgrade-btn, #finish";
+
+  // ------------------------------------------------------------------ Spielstand sichern / wiederherstellen
+  function localDate(d) {
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
+  function downloadBackup() {
+    const doc = { app: "operacao-madeira", savedAt: new Date().toISOString(), savedBy: app.name, version: app.version, state: app.state };
+    const blob = new Blob([JSON.stringify(doc, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "operacao-madeira-" + localDate(new Date()) + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast("Spielstand gesichert: " + a.download);
+  }
+  // Prüft eine Sicherungsdatei; liefert den Spielstand oder wirft einen Fehlertext.
+  function parseBackup(text) {
+    let doc;
+    try { doc = JSON.parse(text); } catch (e) { throw "Die Datei ist keine gültige Sicherung."; }
+    const st = doc && doc.state;
+    if (!st || typeof st !== "object" || !Array.isArray(st.log) || !st.seed) throw "Die Datei ist keine Sicherung von Operação Madeira.";
+    if (!L.isCompatible(st, C)) throw "Die Sicherung passt nicht zu dieser Spielversion.";
+    try { L.summary(st, C); } catch (e) { throw "Die Sicherung ist beschädigt."; }
+    return { state: st, savedAt: doc.savedAt };
+  }
+  async function restoreBackup(file) {
+    let b;
+    try { b = parseBackup(await file.text()); } catch (e) { toast(typeof e === "string" ? e : "Datei konnte nicht gelesen werden.", true); return; }
+    const from = b.savedAt ? " vom " + new Date(b.savedAt).toLocaleString("de-DE", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+    const ok = await confirmBox("Spielstand wiederherstellen?", "Achtung: Der aktuelle Spielstand wird für ALLE drei Handys durch die Sicherung" + from +
+      " ersetzt (" + fmt(L.summary(b.state, C).earned) + " Punkte verdient). Alles, was seitdem passiert ist, geht verloren.", "Überschreiben", true);
+    if (!ok) return;
+    if (!app.online) await poll();
+    if (!app.online) { toast(OFFLINE_MSG, true); return; }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let r;
+      try {
+        r = await api("state", { method: "POST", body: { baseVersion: app.version, state: b.state } });
+      } catch (e) {
+        setOnline(false);
+        toast("Wiederherstellen fehlgeschlagen: keine Verbindung. Es wurde nichts geändert.", true);
+        return;
+      }
+      if (r.status === 200) { receive(r.data.version, b.state, true); toast("Spielstand wiederhergestellt."); return; }
+      if (r.status === 409) { app.version = r.data.version; continue; } // bewusst überschreiben
+      if (r.status >= 500) setOnline(false);
+      toast("Wiederherstellen fehlgeschlagen. Es wurde nichts geändert.", true);
+      return;
+    }
+    toast("Gerade sehr viel los – bitte nochmal versuchen.", true);
+  }
+  $("#restore-file").addEventListener("change", (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    ev.target.value = "";
+    if (f) restoreBackup(f);
+  });
 
   // ------------------------------------------------------------------ Login
   function showLogin() {
@@ -765,6 +857,12 @@
         '<button class="btn btn-ghost btn-block" id="help-btn2">' + icon("circle-help") + ' Spielanleitung</button>' +
         '<div class="grid2"><button class="btn btn-ghost" id="rename-btn">Name: ' + esc(app.name) + '</button><button class="btn btn-ghost" id="logout-btn">Abmelden</button></div>' +
         '<button class="btn btn-danger btn-block" id="reset-btn">Kompletter Reset</button>' +
+      "</div>" +
+      '<div class="section-title"><h3>Spielstand sichern</h3></div>' +
+      '<div class="panel" style="display:grid;gap:10px">' +
+        '<p class="muted small" style="margin:0">Lädt den kompletten Spielstand als Datei auf dieses Handy – zur Sicherheit, falls etwas schiefgeht.</p>' +
+        '<button class="btn btn-primary btn-block" id="backup-btn">' + icon("download") + ' Spielstand sichern</button>' +
+        '<button class="btn btn-ghost btn-block" id="restore-btn">' + icon("upload") + ' Spielstand wiederherstellen</button>' +
       "</div>";
   }
   // "Maximum: 2.430 (Basis 2.400, Multiplikatoren +30)" bzw. nur "Maximum: 2.400"
@@ -1177,6 +1275,8 @@
       }
       case "end-btn": return startEnd();
       case "reset-btn": return doReset();
+      case "backup-btn": return downloadBackup();
+      case "restore-btn": return $("#restore-file").click();
       case "logout-btn": return logout();
       case "rename-btn": return promptBox("Name ändern", "Unter diesem Namen erscheinen deine Aktionen im Logbuch.", app.name).then((n) => {
         if (n) { app.name = n.slice(0, 24); store.set("name", app.name); render(); }
@@ -1194,6 +1294,16 @@
       else if (ev.target.classList.contains("region-path")) { ev.preventDefault(); openRegion(ev.target.dataset.region); }
     }
   });
+  // Offline: speichernde Knöpfe abfangen, bevor ein Fenster aufgeht (Capture-Phase)
+  document.addEventListener("click", (ev) => {
+    if (app.online || !ev.target.closest || !ev.target.closest(SAVING_BUTTONS)) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    toast(OFFLINE_MSG, true);
+    poll();
+  }, true);
+  window.addEventListener("offline", () => setOnline(false));
+  window.addEventListener("online", () => poll());
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
   setInterval(() => { if (!document.hidden) poll(); }, 4000);
 
