@@ -19,7 +19,7 @@
   <!-- Login -->
   <section id="login" class="login" hidden>
     <div class="login-box">
-      <div class="login-logo" aria-hidden="true">🌺</div>
+      <div class="login-logo" aria-hidden="true" data-icon="flower-2"></div>
       <h1>Madeira-Spiel</h1>
       <p class="muted">Drei Entdecker, zehn Regionen, eine Insel.</p>
       <form id="login-form" autocomplete="on">
@@ -43,10 +43,10 @@
         <span class="brand-rank"><span id="hdr-points" class="hdr-points"></span><span id="hdr-rank"></span></span>
       </div>
       <nav class="hdr-nav" aria-label="Bereiche">
-        <button class="hdr-btn" data-go="shop" aria-label="Shop" title="Shop"><span class="hdr-ic" aria-hidden="true">🛒</span><span class="hdr-lbl">Shop</span></button>
-        <button class="hdr-btn" data-go="log" aria-label="Logbuch" title="Logbuch"><span class="hdr-ic" aria-hidden="true">📜</span><span class="hdr-lbl">Logbuch</span></button>
-        <button class="hdr-btn" data-go="stats" aria-label="Statistik" title="Statistik: Regionen, Fortschritt, Urlaub beenden, Reset"><span class="hdr-ic" aria-hidden="true">📊</span><span class="hdr-lbl">Statistik</span></button>
-        <button class="hdr-btn" id="help-btn" aria-label="Spielanleitung" title="Spielanleitung"><span class="hdr-ic" aria-hidden="true">❓</span><span class="hdr-lbl">Hilfe</span></button>
+        <button class="hdr-btn" data-go="shop" aria-label="Shop" title="Shop"><span class="hdr-ic" aria-hidden="true" data-icon="shopping-bag"></span><span class="hdr-lbl">Shop</span></button>
+        <button class="hdr-btn" data-go="log" aria-label="Logbuch" title="Logbuch"><span class="hdr-ic" aria-hidden="true" data-icon="book-open"></span><span class="hdr-lbl">Logbuch</span></button>
+        <button class="hdr-btn" data-go="stats" aria-label="Statistik" title="Statistik: Regionen, Fortschritt, Urlaub beenden, Reset"><span class="hdr-ic" aria-hidden="true" data-icon="chart-column"></span><span class="hdr-lbl">Statistik</span></button>
+        <button class="hdr-btn" id="help-btn" aria-label="Spielanleitung" title="Spielanleitung"><span class="hdr-ic" aria-hidden="true" data-icon="circle-help"></span><span class="hdr-lbl">Hilfe</span></button>
       </nav>
     </header>
     <div id="offline" class="offline" hidden>Keine Verbindung – Änderungen können gerade nicht gespeichert werden.</div>
@@ -60,6 +60,7 @@
   <script src="content.js"></script>
   <script src="map-data.js"></script>
   <script src="logic.js"></script>
+  <script src="icons.js"></script>
   <script src="vendor/jspdf.umd.min.js" defer></script>
   <script src="app.js"></script>
 </body>

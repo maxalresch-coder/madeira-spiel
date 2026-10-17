@@ -1,7 +1,7 @@
 // ============================================================================
-//  INHALTE DES SPIELS – Regions-Quests, Stapel-Quests und Belohnungen.
+//  INHALTE DES SPIELS – regionale Quests, Stapel-Quests und Belohnungen.
 //
-//  Regions-Quests: je 3 pro Region, an einen Ort gebunden.
+//  Regionale Quests: je 3 pro Region, an einen Ort gebunden.
 //    title    Titel
 //    location Standort (wird angezeigt)
 //    pin      [Breitengrad, Längengrad] der Markierung auf der Inselkarte

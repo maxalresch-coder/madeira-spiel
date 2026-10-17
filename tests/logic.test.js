@@ -99,7 +99,7 @@ sm = L.summary(g, C);
 assert.strictEqual(sm.earned, 2400); assert(sm.allExplored); assert(sm.stackFinished);
 assert.strictEqual(sm.rankName, "Inselkönig");
 
-// Inhalte: 30 Regions-Quests, 26 Stapel-Quests (10/10/6) = 700 Punkte, Basis 2.000
+// Inhalte: 30 regionale Quests, 26 Stapel-Quests (10/10/6) = 700 Punkte, Basis 2.000
 assert.strictEqual(C.regions.length, 10);
 C.regions.forEach(r => assert.strictEqual(r.quests.length, 3));
 const count = d => C.stackQuests.filter(q => q.difficulty === d).length;

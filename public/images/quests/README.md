@@ -1,6 +1,6 @@
-# Bilder für die Regions-Quests
+# Bilder für die regionalen Quests
 
-Hier kommt pro Regions-Quest **ein Bild** hinein. Der Dateiname muss **genau** so
+Hier kommt pro regionaler Quest **ein Bild** hinein. Der Dateiname muss **genau** so
 lauten wie unten (klein geschrieben, Endung `.jpg`). Ist ein Bild da, erscheint es
 oben im Quest-Fenster. Fehlt es, wird einfach kein Bild angezeigt.
 

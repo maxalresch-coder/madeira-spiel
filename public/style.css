@@ -376,3 +376,25 @@ input:focus, select:focus { outline: 2px solid var(--ocean); outline-offset: 1px
 .hdr-nav { gap: 3px; }
 .hdr-btn { width: 49px; }
 .hdr-lbl { font-size: .6rem; }
+
+/* ---------- Icons (Lucide, Inline-SVG) ---------- */
+.ic { width: 1.15em; height: 1.15em; stroke-width: 2; vertical-align: -0.2em; flex: 0 0 auto; }
+h2 .ic, h3 .ic { width: 1em; height: 1em; vertical-align: -0.12em; }
+.hdr-ic .ic { width: 22px; height: 22px; vertical-align: 0; display: block; }
+.login-logo .ic { width: 52px; height: 52px; color: var(--hibiscus); stroke-width: 1.6; }
+.check .ic { width: 20px; height: 20px; stroke-width: 3; vertical-align: 0; }
+.status .ic { width: 15px; height: 15px; stroke-width: 3; vertical-align: 0; }
+.modal-close .ic { width: 18px; height: 18px; vertical-align: -0.2em; }
+.loc .ic { width: 1em; height: 1em; }
+.loc-ext .ic { width: .85em; height: .85em; }
+.back-btn .ic { width: 1.05em; height: 1.05em; }
+.banner .b-title .ic { width: .9em; height: .9em; vertical-align: -0.08em; color: var(--ocean); }
+.help h3 .ic { color: var(--ocean); }
+@media (prefers-color-scheme: dark) { .banner .b-title .ic, .help h3 .ic { color: #6fd0ea; } }
+
+/* ---------- Überschrift über der Inselkarte (wie bei den Stapel-Quests) ---------- */
+.region-zone { background: var(--sea); border-radius: 22px; padding: 16px 14px 10px; box-shadow: var(--shadow); }
+.region-zone .zone-head h2 { color: var(--ocean-deep); }
+.region-zone .zone-sub { color: var(--ocean-deep); opacity: .8; }
+.region-zone .map-wrap { box-shadow: none; border-radius: 14px; }
+@media (prefers-color-scheme: dark) { .region-zone .zone-head h2, .region-zone .zone-sub { color: var(--ink); } }
