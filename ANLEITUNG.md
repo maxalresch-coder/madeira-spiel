@@ -56,7 +56,8 @@ cd ~/madeira-spiel && git pull
 ```
 
 und danach auf der Web-Seite **Reload** klicken. Der Spielstand liegt in
-`~/madeira-spiel/data/state.json` und bleibt dabei erhalten.
+`~/madeira-spiel/data/state.json` und bleibt dabei erhalten, ebenso die Erinnerungsfotos
+(`~/madeira-spiel/data/memories/`, Liste in `data/memories.json`) – die löscht nur der komplette Reset.
 
 > Hinweis: Kostenlose PythonAnywhere-Apps muss man alle 3 Monate einmal per
 > Knopfdruck („Run until 3 months from today“) verlängern – für einen Urlaub

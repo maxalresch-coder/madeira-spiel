@@ -26,6 +26,18 @@ assert.strictEqual(L.summary(s, C).earned, 140);
 assert.strictEqual(L.summary(s, C).levels.calheta, 3);
 assert.throws(() => act(s, { type: "quest", questId: "q-cal-1" }));
 
+// Datum und Uhrzeit jeder erledigten Quest (für Erinnerungsfotos/Rückblick): regional und Stapel, mit Namen
+{
+  let ds = L.newGame(C, 9, 1000);
+  ds = L.apply(ds, C, { type: "quest", questId: "q-fun-1" }, "Ana", 5000);
+  assert.deepStrictEqual(ds.quests["q-fun-1"], { by: "Ana", t: 5000 });
+  const sq = ds.open[0];
+  ds = L.apply(ds, C, { type: "stack", questId: sq }, "Bo", 7000);
+  assert.deepStrictEqual(ds.done[sq], { by: "Bo", t: 7000 });
+  ds = L.apply(ds, C, { type: "undo", logId: ds.log[ds.log.length - 1].id }, "Bo", 8000);
+  assert(!ds.done[sq], "Rückgängig: Stapel-Quest nicht mehr erledigt (Foto ausgeblendet)");
+}
+
 // Shop-Sperre bei zu wenig Punkten
 assert.throws(() => act(s, { type: "joker", regionId: "funchal" }), /Nicht genug/);
 

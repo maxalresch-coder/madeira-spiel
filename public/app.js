@@ -40,6 +40,10 @@
     const timer = ctrl && setTimeout(() => ctrl.abort(), opts.method === "POST" ? 20000 : 10000);
     let res;
     const t0 = Date.now();
+    // Fehlerprotokoll: fehlgeschlagene Server-Anfragen (nicht das Melden selbst, nicht das falsche Passwort,
+    // nicht der normale Konflikt 409; das regelmäßige Abholen des Spielstands meldet poll als „Synchronisierung“)
+    const label = (opts.method || "GET") + " api/" + path.split("?")[0];
+    const logIt = !/^client-error/.test(path) && !(path.indexOf("state") === 0 && !opts.method);
     try {
       res = await fetch("api/" + path, {
         method: opts.method || "GET",
@@ -48,6 +52,10 @@
         cache: "no-store",
         signal: ctrl ? ctrl.signal : undefined
       });
+    } catch (e) {
+      if (logIt) reportError("Server-Anfrage", { name: e && e.name === "AbortError" ? "Zeitüberschreitung" : (e && e.name) || "Netzwerkfehler", message: label + ": keine Antwort" + (e && e.message ? " (" + e.message + ")" : "") });
+      if (e) e.logged = true;
+      throw e;
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -57,6 +65,10 @@
     if (data && typeof data.now === "number" && t1 - t0 < 3000) app.clockOffset = data.now - (t0 + t1) / 2;
     if (data && Array.isArray(data.players)) app.players = data.players;
     if (data && data.team && Array.isArray(data.team.names)) app.team = data.team;
+    if (data && typeof data.memv === "number" && data.memv !== app.memv && app.token) loadMemories(data.memv); // Erinnerungsfotos geändert
+    if (logIt && res.status >= 400 && res.status !== 409 && !(res.status === 401 && path === "login")) {
+      reportError("Server-Anfrage", { name: "HTTP " + res.status, message: label + (data && data.error ? ": " + data.error : "") });
+    }
     if (res.status === 401 && path !== "login") { logout(); throw new Error("Bitte neu anmelden."); }
     return { status: res.status, data };
   }
@@ -67,7 +79,7 @@
     app.online = on;
     $("#offline").hidden = on;
     document.body.classList.toggle("is-offline", !on);
-    if (on && !was) toast("Wieder online – Spielstand ist aktuell.");
+    if (on && !was) { toast("Wieder online – Spielstand ist aktuell."); sendErrors(); } // gemerkte Fehler nachschicken
     if (on !== was && app.state) rerenderTools(); // z. B. Foto-Knöpfe sperren/freigeben
   }
 
@@ -81,12 +93,13 @@
       const wasOffline = !app.online;
       // Nach einer Funkstille den kompletten Spielstand neu laden
       const r = await api("state" + (wasOffline ? "" : "?since=" + app.version));
-      if (r.status !== 200 || !r.data) throw new Error("Server nicht erreichbar");
+      if (r.status !== 200 || !r.data) throw Object.assign(new Error("Server nicht erreichbar (HTTP " + r.status + ")"), { name: "Abholen fehlgeschlagen" });
       if (r.data.unchanged) { setOnline(true); return; }
       if (!r.data.state) { await createGame(); setOnline(true); return; }
       receive(r.data.version, r.data.state, false);
       setOnline(true);
     } catch (e) {
+      if (!e || !e.logged) reportError("Synchronisierung", e);
       setOnline(false);
     } finally {
       app.polling = false;
@@ -111,7 +124,10 @@
       if (!own) announceRemote(prev, state);
     }
     render();
-    if (!prev && L.isCompatible(state, C)) { restoreOpenTool(); checkPhotoPickReload(); sendErrors(); } // erster Stand nach dem (Neu-)Laden
+    if (!prev && L.isCompatible(state, C)) { // erster Stand nach dem (Neu-)Laden
+      restoreOpenTool(); checkPhotoPickReload(); sendErrors(); loadMemories();
+      if (!store.get("tourDone") && !app.modals.length) setTimeout(startTour, 500); // Einführung: einmal pro Handy
+    }
   }
 
   // Aktion ausführen: lokal anwenden, an Server senden, bei Konflikt neu versuchen.
@@ -127,7 +143,7 @@
       for (let attempt = 0; attempt < 4; attempt++) {
         let next;
         try {
-          next = L.apply(app.state, C, action, app.name, Date.now());
+          next = L.apply(app.state, C, action, app.name, Math.round(serverNow())); // Serverzeit: Datum/Uhrzeit für alle Handys gleich
         } catch (e) {
           if (e instanceof L.GameError) { toast(e.message, true); return false; }
           throw e;
@@ -155,6 +171,7 @@
         toast("Speichern fehlgeschlagen" + (r.data && r.data.error ? " (" + r.data.error + ")" : "") + ". Die Aktion wurde NICHT ausgeführt.", true);
         return false;
       }
+      reportError("Synchronisierung", { name: "Konflikt", message: "Aktion „" + action.type + "“ nach 4 Versuchen nicht gespeichert" });
       toast("Gerade sehr viel los – nicht gespeichert, bitte nochmal versuchen.", true);
       return false;
     } finally {
@@ -290,10 +307,11 @@
     if (!(typing && app.view === "team")) $("#view").innerHTML = pageHTML(view, s);
     if (view === "home") mountMap();
     app.modals.forEach((m) => m.refresh());
+    if (tour.on) requestAnimationFrame(tourPlace); // Einführung: Hervorhebung an die neu gezeichnete Seite anpassen
   }
 
   const VIEWS = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats, settings: viewSettings,
-    help: viewHelp, player: viewPlayer, team: viewTeam, backup: viewBackup, errors: viewErrors, end: viewEnd, reset: viewReset };
+    help: viewHelp, player: viewPlayer, team: viewTeam, backup: viewBackup, errors: viewErrors, photos: viewPhotos, end: viewEnd, reset: viewReset };
   // Inhalt einer Seite (auch für die Vorschau beim Wischen)
   function pageHTML(view, s) {
     const body = app.state.ended && view === "stats" ? viewEnded(s) : VIEWS[view](s);
@@ -406,7 +424,7 @@
   }
 
   // Unterseiten der Einstellungen (Abbrechen einer Sicherheitsabfrage führt dorthin zurück)
-  const SETTINGS_PAGES = ["help", "player", "team", "backup", "errors", "end", "reset"];
+  const SETTINGS_PAGES = ["help", "player", "team", "backup", "photos", "errors", "end", "reset"];
   const backToSettings = (view) => { if (app.view === view) go("settings"); };
 
   // Bereiche (Shop, Erfolge, Aktivitäten, Einstellungen und ihre Unterseiten) öffnen sich als eigene Seite; die Zurück-Taste
@@ -426,6 +444,7 @@
     window.scrollTo(0, 0);
     render();
     if (view === "errors") loadErrorLog();
+    if (view === "photos") loadMemories(); // Speicherplatz aktuell
   }
   window.addEventListener("popstate", (ev) => { closeAll(); show((ev.state && ev.state.view) || "home"); });
 
@@ -994,7 +1013,7 @@
       '<div class="quest-body"><h4>' + esc(q.title) + "</h4>" +
       '<a class="loc" href="' + esc(mapsUrl(q)) + '" target="_blank" rel="noopener noreferrer" title="In Google Maps öffnen">' + icon("map-pin") + ' ' + esc(q.location) + ' <span class="loc-ext" aria-hidden="true">' + icon("external-link") + '</span></a>' +
       '<p class="desc">' + esc(q.desc) + "</p>" + taskHTML(q) + (interactive ? toolHTML(q.id) : "") +
-      (done ? '<div class="by">' + icon("check") + ' erledigt von ' + esc(done.by) + " · " + when(done.t) + "</div>" : "") + "</div></div>";
+      (done ? '<div class="by">' + icon("check") + ' erledigt von ' + esc(done.by) + " · " + when(done.t) + "</div>" + (interactive ? memLine(q.id) : "") : "") + "</div></div>";
   }
   function levelPill(lvl) {
     return '<span class="pill" style="background:' + L.LEVELS[lvl].color + ";color:" + (lvl <= 1 ? "#1d2a30" : "#fff") + '">' + L.LEVELS[lvl].name + "</span>";
@@ -1002,6 +1021,7 @@
   function bindQuestChecks(el) {
     bindQuestImages(el);
     $$("[data-quest]", el).forEach((b) => b.addEventListener("click", () => toggleQuest(b.dataset.quest, b)));
+    $$("[data-mem]", el).forEach((b) => b.addEventListener("click", () => openMemory(b.dataset.mem)));
     bindTools(el);
   }
 
@@ -1115,7 +1135,7 @@
     const m = openModal(() => '<div class="modal-head"><h2 class="tool-title">' + icon(cfg.icon) + " " + esc(cfg.label) + "</h2>" +
       '<button class="modal-close" data-close aria-label="Schließen">' + icon("x") + "</button></div>" +
       '<p class="muted small tool-sub-title">' + esc((IX.quests[qid] || IX.stack[qid]).title) + " · freiwillig – abhaken macht ihr selbst</p>" +
-      '<div class="tool" data-tool="' + qid + '"><div class="tool-body">' + toolBody(qid) + "</div></div>", bindTools, { stack: true });
+      '<div class="tool" data-tool="' + qid + '"><div class="tool-body">' + toolBody(qid) + "</div></div>", bindTools, { stack: true, where: "Hilfsmittel: " + cfg.label + " (" + (IX.quests[qid] || IX.stack[qid]).title + ")" });
     // Während eine Liste gezogen wird, nicht neu zeichnen (sonst reißt das Ziehen ab)
     const refresh = m.refresh;
     m.refresh = () => { if (toolUI.dragging || typingIn(m.el) || photoBusy(qid)) toolUI.refreshPending = true; else refresh(); };
@@ -1163,6 +1183,7 @@
   }
 
   function toolBody(qid) {
+    if (isMem(qid)) return memoryBody(qid); // Erinnerungsfoto (nutzt die Foto-Grundlage der Hilfsmittel)
     const cfg = tcfg(qid), ts = toolState(qid), now = serverNow();
     const left = T.penaltyLeft(ts, now);
     if (left) {
@@ -2107,7 +2128,7 @@
       toolUI.photoFailed[qid] = (toolUI.photoFailed[qid] || []).filter((j) => j.lid !== replace.lid);
       jobs[0].at = replace.at;
     } else {
-      const ts = toolState(qid), base = ts && ts.draft ? ts.draft.length : 0;
+      const ts = isMem(qid) ? null : toolState(qid), base = ts && ts.draft ? ts.draft.length : 0;
       jobs.forEach((j, i) => { j.slot = base + i; }); // gewünschter Platz, falls das Foto später neu gewählt werden muss
     }
     processPhotos(qid, jobs).finally(() => el.remove()); // Feld erst entfernen, wenn alles gelesen und verarbeitet ist
@@ -2164,6 +2185,7 @@
     }
     if (!job.data) throw new PhotoError("read", "Datei nicht mehr verfügbar", "", READ_HINT);
     const small = job.small ? job.data : await shrinkPhoto(job.data, job.notes);
+    if (isMem(qid)) { await saveMemory(qid.slice(4), small); job.data = null; job.file = null; return; } // Erinnerungsfoto: dauerhaft
     const id = await uploadPhoto(small);
     const op = { type: "addPhoto", photo: id, key: newKey() };
     if (job.at != null) op.at = job.at;
@@ -2313,7 +2335,7 @@
         if (!blob || blob.size < 200 || !(await isJpeg(blob))) throw new PhotoError("capture", "LeeresBild", "Aus dem Videobild entstand kein gültiges Foto", "Bitte nochmal auslösen.");
         job.data = blob; job.size = blob.size;
         await addPhotoJob(qid, job);
-        rerenderTools(qid); // Foto erscheint sofort in der Liste (die Kamera wird danach wieder eingehängt)
+        rerenderTools(qid); // Foto erscheint sofort in der Liste (die Kamera wird danach wieder eingehängt; beim Erinnerungsfoto geschlossen)
       } catch (e) {
         failPhotoJob(qid, job, e);
         updatePhotoZone(qid);
@@ -2353,6 +2375,55 @@
       }
     } finally { app.sendingErrors = false; }
   }
+  // ---- Fehlerprotokoll allgemein: unerwartete Fehler (window.onerror, unhandledrejection), fehlgeschlagene Server-Anfragen
+  // und Synchronisierungsfehler – mit Ort (Seite/Quest/Hilfsmittel), Spieler und Gerät. Derselbe Fehler wird höchstens
+  // einmal pro Minute gemeldet; Wiederholungen dazwischen werden gezählt und als „count“ nachgereicht. Der Server fasst
+  // gleiche Fehler zusätzlich zusammen (10 min) und behält höchstens 500 Einträge.
+  const ERR_WINDOW = 60000;
+  const errSeen = {};
+  const PAGE_NAMES = { home: "Startseite", shop: "Shop", stats: "Erfolge", log: "Aktivitäten", settings: "Einstellungen", help: "Spielanleitung",
+    player: "Spieler", team: "Mitspieler", backup: "Spielstand sichern", errors: "Fehlerprotokoll", photos: "Erinnerungsfotos", end: "Urlaub beenden", reset: "Reset" };
+  function whereNow() {
+    const top = app.modals.slice().reverse().find((m) => m.where);
+    return "Seite: " + (PAGE_NAMES[app.view] || app.view) + (top ? " · " + top.where : "") + (tour.on ? " · Einführung" : "");
+  }
+  function reportError(stage, e, extra) {
+    try {
+      const name = String((e && (e.name || e.errName)) || "Fehler").slice(0, 120);
+      const message = String((e && e.message) || (typeof e === "string" ? e : "") || "").slice(0, 400);
+      const where = whereNow(), key = [stage, name, message, where].join("|"), now = Date.now();
+      const entry = Object.assign({ kind: "general", stage, name, message, where, player: app.name || "",
+        stack: e && e.stack ? String(e.stack).split("\n").slice(0, 6).join(" | ").slice(0, 500) : "",
+        detail: [navigator.onLine === false ? "Handy offline" : "", navigator.deviceMemory ? "RAM ~" + navigator.deviceMemory + " GB" : "",
+          screen.width + "×" + screen.height, new Date().toISOString()].filter(Boolean).join(" · ") }, extra || {});
+      const seen = errSeen[key];
+      if (seen && now - seen.t < ERR_WINDOW) { // kurz hintereinander: nur zählen, nach Ablauf der Minute nachreichen
+        if (!seen.n++) setTimeout(() => { const s = errSeen[key]; if (s && s.n) { queueError(Object.assign(s.entry, { count: s.n })); errSeen[key] = { t: Date.now(), n: 0, entry: s.entry }; } }, ERR_WINDOW - (now - seen.t));
+        return;
+      }
+      errSeen[key] = { t: now, n: 0, entry };
+      queueError(Object.assign({}, entry, { count: 1 }));
+    } catch (x) { /* Melden darf nie selbst stören */ }
+  }
+  function queueError(entry) {
+    let q = [];
+    try { q = JSON.parse(store.get("errQueue") || "[]"); } catch (x) { q = []; }
+    const same = q.find((x) => x.kind === "general" && x.stage === entry.stage && x.name === entry.name && x.message === entry.message && x.where === entry.where);
+    if (same) same.count = (same.count || 1) + (entry.count || 1); // noch nicht gesendet (offline): zusammenfassen
+    else q.push(entry);
+    store.set("errQueue", JSON.stringify(q.slice(-30)));
+    if (app.online) sendErrors();
+  }
+  window.addEventListener("error", (ev) => {
+    const e = ev.error || { name: "Fehler", message: ev.message };
+    reportError("Unerwarteter Fehler", { name: e.name || "Fehler", message: (e.message || ev.message || "") + (ev.filename ? " (" + String(ev.filename).split("/").pop() + ":" + ev.lineno + ")" : ""), stack: e.stack });
+  });
+  window.addEventListener("unhandledrejection", (ev) => {
+    const r = ev.reason;
+    if (r && r.logged) return; // schon als Server-Anfrage gemeldet
+    reportError("Unerwarteter Fehler", r instanceof Error ? r : { name: "Promise abgelehnt", message: String(r) });
+  });
+
   // Abmessungen + EXIF-Ausrichtung aus dem Dateianfang (DataView der ersten 256 KB) – ohne das Bild zu dekodieren
   function readImageInfo(v) {
     const n = v.byteLength;
@@ -2504,15 +2575,15 @@
     return h[0] === 0xff && h[1] === 0xd8 && h[2] === 0xff;
   }
   // Hochladen mit bis zu 3 Versuchen (Netz weg, Server kurz nicht erreichbar); Ablehnungen (4xx) nicht wiederholen
-  async function uploadPhoto(blob) {
+  async function uploadPhoto(blob, url) { // url: anderes Ziel (Erinnerungsfoto) – liefert dann die Antwort statt der ID
     let last = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       let res = null;
       try {
-        res = await fetch("api/photo", { method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: "Bearer " + app.token }, body: blob, cache: "no-store" });
+        res = await fetch(url || "api/photo", { method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: "Bearer " + app.token }, body: blob, cache: "no-store" });
       } catch (e) { last = new PhotoError("upload", e.name || "NetworkError", "keine Verbindung zum Server", "Bitte Netz prüfen und „Erneut versuchen“."); await pause(600 * attempt); continue; }
       const data = await res.json().catch(() => null);
-      if (res.ok && data && data.id) return data.id;
+      if (res.ok && data && (url || data.id)) return url ? data : data.id;
       if (res.status < 500) { last = new PhotoError("server", "HTTP " + res.status, (data && data.error) || "abgelehnt"); break; }
       last = new PhotoError("upload", "HTTP " + res.status, (data && data.error) || "Server-Fehler", "Bitte gleich „Erneut versuchen“.");
       await pause(600 * attempt);
@@ -2714,6 +2785,9 @@
     if (ui === "team-open") { closeAll(); return go("team"); }
     if (ui === "handoff-ok") { delete toolUI.handoff[qid]; return rerenderTools(qid); }
     if (ui === "peek-off") { toolUI.peek[qid] = 0; return rerenderTools(qid); }
+    if (ui === "mem-replace") { toolUI.memReplace[qid.slice(4)] = true; return rerenderTools(qid); }
+    if (ui === "mem-cancel") { delete toolUI.memReplace[qid.slice(4)]; if (toolUI.cam && toolUI.cam.qid === qid) stopCamera(); return rerenderTools(qid); }
+    if (ui === "mem-delete") return deleteMemory(qid.slice(4));
     if (ui === "cam-open") return openCamera(qid);
     if (ui === "photo-camera") return choosePhotos(qid, "camera");
     if (ui === "photo-retry") return retryPhoto(qid, b.dataset.lid, b.dataset.kind);
@@ -2885,6 +2959,7 @@
         break;
       }
       toolUI.queue.splice(0, batch.length);
+      reportError("Synchronisierung", { name: "Hilfsmittel nicht gespeichert", message: failed + " (" + batch.map((x) => x.qid + ": " + x.op.type).slice(0, 5).join(", ") + ")" });
       toast("Speichern fehlgeschlagen (" + failed + "). Die Eingabe wurde NICHT übernommen.", true);
       render();
     } finally {
@@ -2987,7 +3062,7 @@
     }, (el) => {
       bindQuestChecks(el);
       $("#to-region", el).addEventListener("click", () => openRegion(r.id));
-    });
+    }, { where: "Quest: " + q.title });
   }
 
   // Übersicht über alle 56 Quests – nur zum Ansehen
@@ -3038,12 +3113,12 @@
         '</div><button class="modal-close" data-close aria-label="Schließen">' + icon("x") + '</button></div>' +
         '<p class="muted small">' + next + " · Punkte hier: " + fmt(L.regionPoints(app.state, C, r.id)) + "</p>" +
         r.quests.map((q) => regionQuestHTML(q, true)).join("");
-    }, bindQuestChecks);
+    }, bindQuestChecks, { where: "Region: " + r.name });
   }
 
   async function toggleQuest(questId, btn) {
     const done = app.state.quests[questId];
-    if (!done) { await act({ type: "quest", questId }, { fxFrom: btn }); return; }
+    if (!done) { if (await act({ type: "quest", questId }, { fxFrom: btn })) offerMemory(questId); return; }
     const entry = lastEntry((e) => e.type === "quest" && e.data.questId === questId);
     if (!entry) return;
     if (await confirmBox("Quest rückgängig machen?", "„" + IX.quests[questId].title + "“ wird wieder offen, die Punkte werden abgezogen.", "Rückgängig")) {
@@ -3090,7 +3165,7 @@
       const id = e.data.questId;
       return '<div class="list-item"><div class="grow"><div class="txt"><strong>' + esc(IX.stack[id].title) + "</strong></div>" +
         '<div class="meta">' + diffLabel(IX.stack[id].difficulty) + " · " + esc(e.by) + " · " + when(e.t) + "</div></div>" +
-        '<span class="delta plus">+' + L.stackPoints(app.state, C, id) + "</span>" +
+        '<span class="delta plus">+' + L.stackPoints(app.state, C, id) + "</span>" + memChip(id) +
         '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">' + icon("undo-2") + '</button></div>';
     }).join("");
     return '<section class="stack-zone" aria-label="Stapel-Quests">' +
@@ -3161,6 +3236,7 @@
       return '<div class="list-item ' + (e.undone ? "undone" : "") + '"><div class="grow"><div class="txt">' + esc(e.text) + "</div>" +
         '<div class="meta">' + when(e.t, true) + " · " + esc(e.by) + (e.undone ? " · rückgängig gemacht" : "") + "</div></div>" +
         (d ? '<span class="delta ' + (d > 0 ? "plus" : "minus") + '">' + signed(d) + "</span>" : "") +
+        ((e.type === "quest" || e.type === "stack") && !e.undone && questDone(e.data.questId) ? memChip(e.data.questId) : "") +
         (L.canUndo(e) && !app.state.ended ? '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">' + icon("undo-2") + '</button>' : "") + "</div>";
     }).join("");
     return '<h2>' + icon("history") + ' Aktivitäten</h2><p class="muted small">Alle Aktionen mit Uhrzeit und Name. Mit ' + icon("undo-2") + ' lässt sich gezielt etwas rückgängig machen – keine Aufgabe bringt je zweimal Punkte.</p>' +
@@ -3230,7 +3306,8 @@
         setRow("player", "user", "Spieler", "Angemeldet als " + esc(app.name) + " · Name ändern, Abmelden") +
         setRow("team", "users", "Mitspieler", teamNames().length ? teamNames().map(esc).join(" · ") : "3 Namen für die Hilfsmittel") +
         setRow("backup", "download", "Spielstand sichern", "Sichern und wiederherstellen") +
-        setRow("errors", "bug", "Fehlerprotokoll", "Fehler beim Foto-Upload – zum Weiterschicken") +
+        setRow("photos", "image", "Erinnerungsfotos", memStorage() + " · alle herunterladen") +
+        setRow("errors", "bug", "Fehlerprotokoll", "Fehler der App und beim Foto-Upload – zum Weiterschicken") +
         setRow("end", "flag", "Urlaub beenden & Belohnungen", app.state.ended ? "Urlaub beendet – Belohnungen & Zertifikat" : "Restpunkte umtauschen, Zertifikat", "set-end") +
       "</div>" +
       '<div class="set-danger">' + setRow("reset", "rotate-ccw", "Kompletter Reset", "Alles auf null – für alle Handys", "set-reset") + "</div>";
@@ -3277,12 +3354,12 @@
     const log = app.errorLog;
     const list = !log ? '<p class="muted small">Wird geladen …</p>'
       : log.error ? '<p class="tool-warn">' + esc(log.error) + "</p>"
-      : !log.entries.length ? '<p class="muted small" style="margin:0">Keine Einträge – bisher ist beim Foto-Upload nichts schiefgegangen.</p>'
-      : '<ol class="errlog">' + log.entries.map((e) => "<li><strong>" + esc(e.time || "") + " · " + esc(e.stage || "?") + "</strong>: " + esc(e.name || "") +
+      : !log.entries.length ? '<p class="muted small" style="margin:0">Keine Einträge – bisher ist nichts schiefgegangen.</p>'
+      : '<ol class="errlog">' + log.entries.map((e) => "<li><strong>" + esc(e.time || "") + " · " + esc(e.stage || "?") + (e.count > 1 ? " · " + e.count + "×" : "") + "</strong>: " + esc(e.name || "") +
           (e.message ? " – " + esc(e.message) : "") + '<div class="small muted">' + esc(errLine(e, true)) + "</div></li>").join("") + "</ol>";
     return pageHead("bug", "Fehlerprotokoll") +
       '<div class="panel set-panel">' +
-        '<p class="muted small" style="margin:0">Jeder Fehler beim Foto-Upload wird hier automatisch gespeichert (von allen Handys). ' +
+        '<p class="muted small" style="margin:0">Fehler werden hier automatisch gespeichert (von allen Handys): beim Foto-Upload, unerwartete Fehler der App, fehlgeschlagene Server-Anfragen und Synchronisierung. Gleiche Fehler kurz hintereinander stehen nur einmal da (mit Anzahl). ' +
           "Mit „Kopieren“ landen die Einträge in der Zwischenablage – zum Weiterschicken.</p>" +
         (log && log.entries ? '<p class="small" style="margin:0">' + log.entries.length + (log.total > log.entries.length ? " neueste von " + log.total : "") + " Einträge</p>" : "") +
         '<div class="grid2"><button class="btn btn-primary" id="errlog-copy"' + (log && log.entries && log.entries.length ? "" : " disabled") + ">" + icon("copy") + " Kopieren</button>" +
@@ -3292,11 +3369,12 @@
   }
   function errLine(e, short) {
     return [short ? "" : (e.time || "") + " · " + (e.stage || "?") + ": " + (e.name || "") + (e.message ? " – " + e.message : ""),
+      e.count > 1 ? e.count + "-mal" + (e.lastTime ? ", zuletzt " + e.lastTime : "") : "", e.where ? "Ort: " + e.where : "",
       e.fileName || e.fileSize ? "Datei: " + (e.fileName || "?") + " · " + (e.fileType || "?") + " · " + fmtSize(e.fileSize || 0) : "",
       e.attempts ? "Versuche: " + e.attempts : "",
       e.source ? "Knopf: " + e.source + (e.autoTries !== "" && e.autoTries != null ? " · automatische Wiederholungen: " + e.autoTries : "") + (e.okTry ? " · geklappt: " + e.okTry : "") : "",
       e.readWays ? "Lesewege: " + e.readWays : "", e.lastModified ? "Datei geändert: " + e.lastModified : "",
-      e.pick ? "Auswahl Nr. " + e.pick + " in dieser Sitzung · Lesebeginn " + e.readDelayMs + " ms nach dem change-Event · Synchronisierung: " + (e.sync || "?") : "", e.player ? "Spieler: " + e.player : "", e.detail || "", e.ua ? "Gerät: " + e.ua : ""].filter(Boolean).join(short ? " · " : "\n  ");
+      e.pick ? "Auswahl Nr. " + e.pick + " in dieser Sitzung · Lesebeginn " + e.readDelayMs + " ms nach dem change-Event · Synchronisierung: " + (e.sync || "?") : "", e.player ? "Spieler: " + e.player : "", e.detail || "", e.stack && !short ? "Ablauf: " + e.stack : "", e.ua ? "Gerät: " + e.ua : ""].filter(Boolean).join(short ? " · " : "\n  ");
   }
   async function loadErrorLog() {
     app.errorLog = null;
@@ -3333,7 +3411,7 @@
   function viewReset() {
     return pageHead("rotate-ccw", "Kompletter Reset") +
       '<div class="panel set-panel">' +
-        '<p style="margin:0">Setzt alles für alle drei Handys auf null und mischt den Stapel neu – auch alle Hilfsmittel. Das kann man nicht rückgängig machen.</p>' +
+        '<p style="margin:0">Setzt alles für alle drei Handys auf null und mischt den Stapel neu – auch alle Hilfsmittel und Erinnerungsfotos. Das kann man nicht rückgängig machen.</p>' +
         '<p class="muted small" style="margin:0">Tipp: Vorher unter „Spielstand sichern“ eine Sicherung herunterladen.</p>' +
         '<button class="btn btn-danger btn-block" id="reset-btn">Kompletter Reset</button>' +
       "</div>";
@@ -3522,7 +3600,7 @@
 
   // ---- Reset
   async function doReset() {
-    if (!(await confirmBox("Kompletter Reset?", "Setzt ALLES auf null und mischt neu – für alle drei Handys. Das kann nicht rückgängig gemacht werden.", "Weiter", true))) { backToSettings("reset"); return; }
+    if (!(await confirmBox("Kompletter Reset?", "Setzt ALLES auf null und mischt neu – für alle drei Handys, auch alle Erinnerungsfotos werden gelöscht. Das kann nicht rückgängig gemacht werden.", "Weiter", true))) { backToSettings("reset"); return; }
     const typed = await promptBox("Wirklich zurücksetzen?", "Tippe zur Sicherheit RESET ein:", "RESET");
     if (typed !== "RESET") { if (typed !== null) toast("Abgebrochen – nicht richtig eingetippt.", true); backToSettings("reset"); return; }
     if (await act({ type: "reset", seed: Math.floor(Math.random() * 2 ** 31) })) toast("Neues Spiel – viel Spaß!");
@@ -3532,6 +3610,7 @@
   // Spielanleitung als eigene Seite (Einstellungen → Spielanleitung)
   function viewHelp() {
     return '<h2>' + icon("circle-help") + ' Spielanleitung</h2><div class="muted small help-sub">Operação Madeira - Das Spiel</div>' +
+      '<button class="btn btn-ghost btn-block tour-again" id="tour-btn">' + icon("play") + " Einführung noch einmal ansehen</button>" +
       '<div class="panel help">' +
       "<h3>" + icon("target") + " Ziel</h3><p>Ihr spielt als <strong>ein Team</strong>: Erkundet alle 10 Regionen Madeiras mit regionalen Quests und sammelt zusätzlich Punkte mit Stapel-Quests. Alle Punkte gehören dem Team – wir vertrauen uns, es gibt keine Beweisfotos.</p>" +
       "<h3>" + icon("map-pinned") + " Regionale Quests und Stufen</h3><p>Jede Region hat 3 regionale Quests an festen Orten – auf der Inselkarte als Pins markiert. Pin antippen öffnet die Quest, Region antippen zeigt alle 3. Eine erledigte regionale Quest erkundet die Region, jede weitere hebt sie eine Stufe.</p>" +
@@ -3544,13 +3623,222 @@
       "<li><strong>Multiplikator (10) · 3 im Spiel:</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. Einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt. Shop und Erfolge zeigen immer, wie viele Joker schon <em>genutzt</em> wurden, z. B. „Tausch-Joker · 2 von 5 genutzt“.</p>" +
       "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos, Kriterien wählen oder Bucht zeichnen und raten (Küstenkarte der Ponta de São Lourenço: CAOP, Direção-Geral do Território). Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben geht jeder Schritt auf jedem Handy (Phase 1 geheim eingeben, 2 raten, 3 Ergebnis): Wer eingibt, tippt, die anderen schauen weg. Danach ist alles verdeckt; „Anzeigen“ per langem Drücken ist nur für die Person gedacht, die eingegeben hat. „Auflösen“ deckt alles für alle auf. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst. Manche Stapel-Quests haben Zähler, Timer oder „Höhe messen“; beim Abhaken oder Tauschen beginnen sie wieder bei null. „Wo bin ich?“ bei der Inselkarte fragt einmalig den Standort ab und zeigt Region und Höhe (Geländehöhe: Open-Meteo) – gespeichert wird nichts.</p>" +
+      "<h3>" + icon("camera") + " Erinnerungsfotos</h3><p>Zu jeder erledigten Quest könnt ihr ein Foto anhängen – direkt nach dem Abhaken, später im Quest-Fenster, bei den erledigten Stapel-Quests oder bei den Aktivitäten. Ersetzen und Löschen geht jederzeit. Die Fotos bleiben dauerhaft; unter Einstellungen → Erinnerungsfotos lassen sich alle als ZIP herunterladen. Wird eine Quest rückgängig gemacht, ist ihr Foto ausgeblendet; der komplette Reset löscht alle Fotos.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
-      "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
+      "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys, löscht auch alle Erinnerungsfotos und braucht die Eingabe „RESET“.</p>" +
       "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("trophy") + " Erfolge (Rang, Regionen, Punkte und Diagramme), " + icon("history") + " Aktivitäten (alles, was passiert ist, mit Rückgängig) und " + icon("settings") + " Einstellungen (diese Spielanleitung, Spieler, Spielstand sichern, Urlaub beenden, Reset). „← Zu den Quests“ führt zurück zur Startseite; in den Unterseiten der Einstellungen gibt es zusätzlich „← Einstellungen“.</p>" +
       "<h3>" + icon("flag") + " Ende</h3><p>„Urlaub beenden &amp; Belohnungen“ (unter Einstellungen) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
       "</div>";
   }
+
+  // ------------------------------------------------------------------ Erinnerungsfotos
+  // Zu jeder erledigten Quest (regional und Stapel) genau ein Foto, dauerhaft auf dem Server (data/memories/, nicht im
+  // Spielstand). Aufnehmen/Auswählen und Verkleinern laufen unverändert über die Foto-Grundlage der Hilfsmittel
+  // (photoPicker, Kamera in der Seite, Galerie, Dateien) mit der Kennung "mem:<Quest-ID>"; statt eingetragen zu werden,
+  // geht das verkleinerte Foto mit einem kleinen Vorschaubild an POST api/memory/<Quest-ID>. Die Liste (app.mem) kommt
+  // von GET api/memories und wird neu geladen, sobald sich ihre Versionsnummer (memv, bei jeder Spielstand-Antwort) ändert.
+  // Ist eine Quest gerade nicht erledigt (rückgängig gemacht), wird ihr Foto nirgends gezeigt. Reset löscht alle.
+  const THUMB_SIDE = 320;
+  const isMem = (qid) => typeof qid === "string" && qid.indexOf("mem:") === 0;
+  const questDone = (id) => !!(app.state && (app.state.quests[id] || app.state.done[id]));
+  const questTitle = (id) => (IX.quests[id] || IX.stack[id] || {}).title || id;
+  const memFor = (id) => (app.mem && app.mem.items[id] && questDone(id) ? app.mem.items[id] : null);
+  const memUrl = (it, thumb) => "api/memory-file/" + it.f + (thumb ? ".t.jpg" : ".jpg") + "?t=" + encodeURIComponent(app.token || "");
+  const memThumb = (it, cls) => '<img class="' + (cls || "mem-thumb") + '" src="' + memUrl(it, true) + '" alt="Erinnerungsfoto" loading="lazy" decoding="async" onerror="this.classList.add(\'gone\')">';
+  const visibleMems = () => (app.mem ? Object.keys(app.mem.items).filter((id) => memFor(id)) : []);
+  async function loadMemories(v) {
+    if (app.memLoading) { app.memAgain = true; return; }
+    app.memLoading = true;
+    if (v != null) app.memv = v;
+    try {
+      const r = await api("memories").catch(() => null);
+      if (r && r.status === 200 && r.data && r.data.items) { setMem(r.data); return; }
+      if (v != null) app.memv = null; // beim nächsten Mal erneut versuchen
+    } finally {
+      app.memLoading = false;
+      if (app.memAgain) { app.memAgain = false; loadMemories(); }
+    }
+  }
+  function setMem(data) {
+    app.mem = data; app.memv = data.v;
+    if (photoBusy() || toolUI.dragging || mapUI.active) { toolUI.refreshPending = true; return; }
+    if (app.state && L.isCompatible(app.state, C)) render();
+  }
+  // Teil des Dateinamens im ZIP (Datum_Region_Quest.jpg): Umlaute umschreiben, Akzente weg, nur Buchstaben/Ziffern
+  const fileLabel = (t) => String(t).replace(/[äöüÄÖÜß]/g, (c) => ({ ä: "ae", ö: "oe", ü: "ue", Ä: "Ae", Ö: "Oe", Ü: "Ue", ß: "ss" }[c]))
+    .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  function memLabel(id) {
+    const q = IX.quests[id];
+    return (q ? fileLabel(IX.regions[q.region].name) : "Stapel") + "_" + fileLabel(questTitle(id));
+  }
+  // Vorschaubild (lange Seite ≤ 320 px) aus dem schon verkleinerten Foto
+  async function makeThumb(blob) {
+    const url = URL.createObjectURL(blob), img = new Image(), c = document.createElement("canvas");
+    try {
+      img.src = url;
+      await img.decode();
+      const w = img.naturalWidth, h = img.naturalHeight, sc = Math.min(1, THUMB_SIDE / Math.max(w, h));
+      c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc));
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const out = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.75));
+      if (!out || out.size < 100 || !(await isJpeg(out))) throw Object.assign(new Error("kein gültiges Vorschaubild"), { name: "LeeresBild" });
+      return out;
+    } finally { c.width = 0; c.height = 0; img.removeAttribute("src"); URL.revokeObjectURL(url); }
+  }
+  async function saveMemory(id, small) {
+    let thumb;
+    try { thumb = await makeThumb(small); } catch (e) { throw new PhotoError("shrink", e.name || "Fehler", "Vorschaubild: " + (e.message || ""), "Bitte „Erneut versuchen“."); }
+    const url = "api/memory/" + encodeURIComponent(id) + "?tl=" + thumb.size + "&label=" + encodeURIComponent(memLabel(id)) + "&by=" + encodeURIComponent(app.name || "");
+    const data = await uploadPhoto(new Blob([thumb, small], { type: "image/jpeg" }), url);
+    delete toolUI.memReplace[id];
+    if (data && data.items) setMem(data);
+    toast("Erinnerungsfoto gespeichert.");
+  }
+  toolUI.memReplace = {};
+  function memoryBody(qid) {
+    const id = qid.slice(4), it = memFor(id);
+    if (!questDone(id)) return '<p class="tool-warn">' + icon("eye-off") + " Diese Quest ist gerade nicht erledigt – ihr Erinnerungsfoto ist ausgeblendet.</p>";
+    if (it && !toolUI.memReplace[id]) {
+      return '<img class="mem-photo" src="' + memUrl(it) + '" alt="Erinnerungsfoto zu ' + esc(questTitle(id)) + '" decoding="async" onerror="this.classList.add(\'gone\')">' +
+        '<p class="muted small mem-meta">' + (it.by ? "von " + esc(it.by) + " · " : "") + when(it.t) + " · " + fmtSize(it.size || 0) + "</p>" +
+        '<div class="grid2"><button class="btn btn-ghost" data-tool-ui="mem-replace">' + icon("camera") + " Ersetzen</button>" +
+        '<button class="btn btn-ghost" data-tool-ui="mem-delete">' + icon("trash-2") + " Löschen</button></div>";
+    }
+    return '<p class="muted small">' + (it ? "Das neue Foto ersetzt das bisherige." : "Ein Foto für euren Urlaubs-Rückblick – freiwillig, eins pro Quest.") + "</p>" +
+      photoPicker(qid, false) + (it ? '<button class="btn btn-small btn-ghost btn-block" data-tool-ui="mem-cancel">Abbrechen</button>' : "");
+  }
+  function openMemory(id) {
+    const qid = "mem:" + id;
+    const m = openModal(() => '<div class="modal-head"><h2 class="tool-title">' + icon("camera") + " Erinnerungsfoto</h2>" +
+      '<button class="modal-close" data-close aria-label="Schließen">' + icon("x") + "</button></div>" +
+      '<p class="muted small tool-sub-title">' + esc(questTitle(id)) + (IX.quests[id] ? " · " + esc(IX.regions[IX.quests[id].region].name) : " · Stapel-Quest") + "</p>" +
+      '<div class="tool mem-tool" data-tool="' + qid + '"><div class="tool-body">' + toolBody(qid) + "</div></div>", bindTools, { stack: true, where: "Erinnerungsfoto: " + questTitle(id) });
+    const refresh = m.refresh;
+    m.refresh = () => { if (photoBusy(qid)) toolUI.refreshPending = true; else refresh(); };
+    m.el.addEventListener("click", (ev) => { if (ev.target === m.el && app.modals[app.modals.length - 1] === m) closeModal(); });
+    m.onClose = () => { delete toolUI.memReplace[id]; if (toolUI.cam && toolUI.cam.qid === qid) stopCamera(); };
+  }
+  async function deleteMemory(id) {
+    if (!(await confirmBox("Erinnerungsfoto löschen?", "Das Foto zu „" + questTitle(id) + "“ wird für alle Handys gelöscht.", "Löschen", true))) return;
+    if (!app.online) { toast(OFFLINE_MSG, true); return; }
+    const r = await api("memory/" + encodeURIComponent(id) + "/delete", { method: "POST" }).catch(() => null);
+    if (!r || r.status !== 200) { toast("Löschen ging nicht (offline?).", true); return; }
+    setMem(r.data);
+    toast("Erinnerungsfoto gelöscht.");
+  }
+  // Nach dem Abhaken (eigenes Handy): kurzes, überspringbares Angebot
+  function offerMemory(id) {
+    if (memFor(id)) return;
+    let tries = 0;
+    const show = () => { // nach den Animationen (Region erkundet schließt die Fenster; Banner abwarten)
+      if (!questDone(id) || memFor(id)) return;
+      if ($(".banner, .big-celebration") && tries++ < 8) { setTimeout(show, 700); return; }
+      openModal(() => '<h2>' + icon("camera") + " Erinnerungsfoto hinzufügen?</h2>" +
+        '<p class="muted">„' + esc(questTitle(id)) + "“ ist erledigt. Ein Foto dazu – für euren Urlaubs-Rückblick.</p>" +
+        '<div class="grid2 mem-offer"><button class="btn btn-ghost" id="mo-no">Überspringen</button><button class="btn btn-primary" id="mo-yes">' + icon("camera") + " Foto hinzufügen</button></div>",
+      (el) => {
+        $("#mo-no", el).addEventListener("click", () => closeModal());
+        $("#mo-yes", el).addEventListener("click", () => { closeModal(); openMemory(id); });
+      }, { static: true, stack: true, where: "Angebot Erinnerungsfoto" });
+    };
+    setTimeout(show, 900);
+  }
+  // Zeile in der erledigten Quest bzw. kleines Vorschaubild in Listen (Aktivitäten, erledigte Stapel-Quests)
+  function memLine(id) {
+    const it = memFor(id);
+    return '<button class="tool-line mem-line" data-mem="' + id + '">' + (it ? memThumb(it, "mem-thumb mem-thumb-sm") : icon("camera")) +
+      '<span class="tl-label">' + (it ? "Erinnerungsfoto ansehen" : "Erinnerungsfoto hinzufügen") + "</span>" + icon("chevron-right", "tl-end") + "</button>";
+  }
+  function memChip(id) {
+    const it = memFor(id);
+    return '<button class="mem-chip" data-mem="' + id + '" aria-label="' + (it ? "Erinnerungsfoto ansehen" : "Erinnerungsfoto hinzufügen") + '">' +
+      (it ? memThumb(it) : icon("camera")) + "</button>";
+  }
+  // Einstellungen → Erinnerungsfotos: Speicherplatz, ZIP herunterladen, Übersicht mit Vorschaubildern
+  function viewPhotos() {
+    const ids = visibleMems().sort((a, b) => ((app.state.quests[a] || app.state.done[a]).t - (app.state.quests[b] || app.state.done[b]).t));
+    const zip = "api/memories.zip?t=" + encodeURIComponent(app.token || "") + "&tz=" + new Date().getTimezoneOffset();
+    return pageHead("image", "Erinnerungsfotos") +
+      '<div class="panel set-panel">' +
+        '<p class="muted small" style="margin:0">Zu jeder erledigten Quest könnt ihr ein Foto anhängen – im Quest-Fenster, bei den erledigten Stapel-Quests oder bei den Aktivitäten. Die Fotos bleiben dauerhaft gespeichert; nur der komplette Reset löscht sie.</p>' +
+        '<p class="set-line">' + icon("image") + " " + memStorage() + "</p>" +
+        (ids.length ? '<a class="btn btn-primary btn-block" id="mem-zip" href="' + esc(zip) + '" download>' + icon("download") + " Alle Fotos herunterladen (ZIP)</a>"
+          : '<button class="btn btn-primary btn-block" disabled>' + icon("download") + " Alle Fotos herunterladen (ZIP)</button>") +
+        '<p class="muted small" style="margin:0">Dateinamen: Datum_Region_Quest.jpg</p>' +
+      "</div>" +
+      (ids.length ? '<div class="mem-grid">' + ids.map((id) => '<button class="mem-tile" data-mem="' + id + '">' + memThumb(memFor(id)) +
+        '<span class="mem-cap">' + esc(questTitle(id)) + "</span></button>").join("") + "</div>"
+        : '<p class="muted small">Noch keine Erinnerungsfotos.</p>');
+  }
+  function memStorage() {
+    if (!app.mem) return "Speicherplatz wird geladen …";
+    const n = visibleMems().length;
+    return n + (n === 1 ? " Foto" : " Fotos") + " · belegt " + fmtSize(app.mem.bytes || 0) + (app.mem.dataBytes ? " (alle Daten zusammen " + fmtSize(app.mem.dataBytes) + ")" : "");
+  }
+
+  // ------------------------------------------------------------------ Einführung
+  // Erscheint einmal pro Handy nach dem ersten Anmelden (localStorage „tourDone“), wiederholbar unter Einstellungen →
+  // Spielanleitung. 5 kurze Schritte mit Hervorhebung; „Überspringen“, „Weiter“, am Ende „Los geht's“.
+  const TOUR = [
+    { sel: "#map-wrap", title: "Regionale Quests", text: "Pin antippen öffnet eine Quest, Region antippen zeigt alle drei Quests dort." },
+    { sel: ".stack-zone .zone-head", title: "Stapel-Quests", text: "Drei Stapel-Quests sind immer offen und überall machbar – nach dem Abhaken wird nachgezogen." },
+    { sel: '.hdr-btn[data-go="shop"]', title: "Shop", text: "Hier tauscht ihr Punkte gegen Joker und Multiplikatoren." },
+    { sel: '.hdr-btn[data-go="stats"]', title: "Erfolge", text: "Rang, Regionen und Punkte des Teams auf einen Blick." },
+    { sel: '.hdr-btn[data-go="settings"]', title: "Einstellungen", text: "Spielanleitung, Mitspieler und Erinnerungsfotos – und Wischen wechselt zwischen den Seiten." }
+  ];
+  const tour = { on: false, i: 0, el: null };
+  function startTour() {
+    if (tour.on || !app.state || !L.isCompatible(app.state, C)) return;
+    closeAll();
+    if (app.view !== "home") show("home");
+    tour.on = true; tour.i = 0;
+    const el = tour.el = document.createElement("div");
+    el.className = "tour";
+    el.innerHTML = '<div class="tour-hole"></div><div class="tour-card" role="dialog" aria-modal="true" aria-live="polite"></div>';
+    document.body.appendChild(el);
+    el.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-tour]");
+      if (!b) return;
+      if (b.dataset.tour === "next" && tour.i < TOUR.length - 1) { tour.i++; tourStep(); } else endTour();
+    });
+    tourStep();
+  }
+  function endTour() {
+    if (!tour.on) return;
+    tour.on = false;
+    store.set("tourDone", "1");
+    if (tour.el) tour.el.remove();
+    tour.el = null;
+    window.scrollTo(0, 0);
+  }
+  function tourStep() {
+    const st = TOUR[tour.i], card = $(".tour-card", tour.el), last = tour.i === TOUR.length - 1;
+    card.innerHTML = '<div class="tour-count small muted">' + (tour.i + 1) + " von " + TOUR.length + "</div>" +
+      "<h3>" + esc(st.title) + "</h3><p>" + esc(st.text) + "</p>" +
+      '<div class="tour-btns"><button class="btn btn-ghost btn-small" data-tour="skip"' + (last ? " hidden" : "") + ">Überspringen</button>" +
+      '<button class="btn btn-primary" data-tour="next">' + (last ? "Los geht's" : "Weiter") + "</button></div>";
+    const target = $(st.sel);
+    if (target && !target.closest(".topbar")) target.scrollIntoView({ block: "center" });
+    requestAnimationFrame(tourPlace);
+    const btn = $('[data-tour="next"]', card); if (btn) btn.focus({ preventScroll: true });
+  }
+  function tourPlace() {
+    if (!tour.on || !tour.el) return;
+    const target = $(TOUR[tour.i].sel), hole = $(".tour-hole", tour.el), card = $(".tour-card", tour.el);
+    const W = window.innerWidth, H = window.innerHeight, pad = 6;
+    if (!target) { hole.hidden = true; card.style.top = Math.round(H / 2 - card.offsetHeight / 2) + "px"; return; }
+    const r = target.getBoundingClientRect();
+    const top = Math.max(4, r.top - pad), bottom = Math.min(H - 4, r.bottom + pad);
+    hole.hidden = false;
+    Object.assign(hole.style, { left: Math.max(4, r.left - pad) + "px", top: top + "px", width: Math.min(W - 8, r.width + pad * 2) + "px", height: Math.max(0, bottom - top) + "px" });
+    const ch = card.offsetHeight, below = H - bottom - 12, above = top - 12;
+    const y = below >= ch ? bottom + 12 : above >= ch ? top - 12 - ch : Math.max(12, H - ch - 12);
+    card.style.top = Math.round(y) + "px";
+  }
+  window.addEventListener("resize", () => { if (tour.on) tourPlace(); });
+  window.addEventListener("scroll", () => { if (tour.on) tourPlace(); }, { passive: true });
+  document.addEventListener("keydown", (ev) => { if (tour.on && ev.key === "Escape") endTour(); });
 
   // ------------------------------------------------------------------ Modals
   function openModal(renderFn, bindFn, opts) {
@@ -3577,7 +3865,7 @@
       if (focused && focused.keep) { const f = $('[data-keep="' + focused.keep + '"]', el); if (f) f.focus(); }
     };
     if (!opts.stack) backdrop.addEventListener("click", (ev) => { if (ev.target === backdrop) closeModal(); });
-    const m = { refresh: opts.static ? () => {} : refresh, el: backdrop, onClose: null };
+    const m = { refresh: opts.static ? () => {} : refresh, el: backdrop, onClose: null, where: opts.where || "" };
     app.modals.push(m);
     refresh();
     return m;
@@ -3749,7 +4037,8 @@
     if (t.hasAttribute("data-here-close")) { mapUI.here = null; return render(); }
     if (t.dataset.go) return go(t.dataset.go);
     if (t.dataset.region) return openRegion(t.dataset.region);
-    if (t.dataset.done) return act({ type: "stack", questId: t.dataset.done }, { fxFrom: t });
+    if (t.dataset.done) { const id = t.dataset.done; return act({ type: "stack", questId: id }, { fxFrom: t }).then((ok) => ok && offerMemory(id)); }
+    if (t.dataset.mem) return openMemory(t.dataset.mem);
     if (t.dataset.swap) return doSwap(t.dataset.swap);
     if (t.dataset.mult) return doMult(t.dataset.mult);
     if (t.dataset.undo) return undo(Number(t.dataset.undo));
@@ -3776,6 +4065,7 @@
       case "rename-btn": return promptBox("Name ändern", "Unter diesem Namen erscheinen deine Aktionen bei den Aktivitäten.", app.name).then((n) => {
         if (n) { app.name = n.slice(0, 24); store.set("name", app.name); registerName(); render(); }
       });
+      case "tour-btn": go("home"); return setTimeout(startTour, 350);
       case "pdf-btn": return downloadPDF().catch(() => toast("PDF konnte nicht erstellt werden.", true));
       case "reopen-btn": return confirmBox("Urlaub fortsetzen?", "Die Verteilung der Belohnungen wird aufgehoben und ihr könnt weiterspielen.", "Fortsetzen").then((ok) => ok && act({ type: "reopen" }));
       case "tab-stats-btn": { const st = app.state.ended; app.state.ended = null; const html = viewStats(sum()); app.state.ended = st; $("#view").innerHTML = html; return; }

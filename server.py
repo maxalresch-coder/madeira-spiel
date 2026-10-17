@@ -8,8 +8,11 @@ Aufgaben:
     damit alle drei Handys denselben Stand sehen
   * nimmt Fotos der Hilfsmittel entgegen (data/photos/, nur vorübergehend: Fotos, auf die der
     Spielstand nicht mehr verweist, werden automatisch gelöscht – z. B. nach „Geschafft“, „Neue Runde“ oder Reset)
-  * führt ein Fehlerprotokoll für den Foto-Upload (data/client-errors.log, eine JSON-Zeile je Fehler),
-    das die Handys automatisch füllen – anzusehen in der App unter Einstellungen → Fehlerprotokoll
+  * führt ein Fehlerprotokoll (data/client-errors.log, eine JSON-Zeile je Fehler), das die Handys automatisch füllen:
+    Foto-Upload, unerwartete Fehler, fehlgeschlagene Server-Anfragen und Synchronisierung – anzusehen in der App unter
+    Einstellungen → Fehlerprotokoll. Gleiche allgemeine Fehler kurz hintereinander werden zusammengefasst (count).
+  * speichert Erinnerungsfotos – höchstens eins je Quest, dauerhaft (data/memories/, Liste in data/memories.json,
+    jeweils Foto + kleines Vorschaubild); gelöscht werden sie nur einzeln oder beim kompletten Reset
   * speichert die 3 Mitspieler-Namen für die Hilfsmittel (data/team.json, Einstellungen → Mitspieler)
   * merkt sich alle Namen, mit denen sich jemand angemeldet hat (data/players.json),
     z. B. für die Spielerauswahl beim Tic-Tac-Toe (bleibt auch nach einem Reset)
@@ -33,6 +36,7 @@ import re
 import secrets
 import threading
 import time
+from urllib.parse import parse_qs
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
@@ -43,7 +47,12 @@ PHOTO_GRACE = 120               # Sekunden: frisch hochgeladene Fotos nicht sofo
 ERRLOG_KEEP = 500               # so viele Einträge behält das Fehlerprotokoll höchstens
 ERRLOG_FIELDS = ("stage", "name", "message", "fileName", "fileType", "fileSize", "attempts", "player", "detail",
                  "pick", "readDelayMs", "sync", "readWays", "lastModified",
-                 "source", "autoTries", "okTry")
+                 "source", "autoTries", "okTry",
+                 "kind", "where", "count", "stack")
+ERRLOG_MERGE = 600              # Sekunden: gleiche allgemeine Fehler in diesem Abstand werden zusammengefasst
+MEMORY_ID = re.compile(r"m[0-9a-f]{24}")
+QUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,40}")
+MAX_THUMB = 120 * 1024          # Vorschaubild (im Browser ~240 px)
 _lock = threading.Lock()
 
 
@@ -245,16 +254,52 @@ def _log_client_error(conf, environ, body):
             entry[key] = val
         elif val is not None:
             entry[key] = str(val)[:500]
-    line = json.dumps(entry, ensure_ascii=False)
     path = _errlog_path(conf)
     with _lock:
         os.makedirs(conf["data_dir"], exist_ok=True)
         lines = _read_errlog(conf)
-        lines.append(line)
+        if entry.get("kind") == "general":
+            lines = _merge_error(lines, entry)
+        else:
+            lines.append(json.dumps(entry, ensure_ascii=False))
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write("\n".join(lines[-ERRLOG_KEEP:]) + "\n")
         os.replace(tmp, path)
+
+
+def _merge_error(lines, entry):
+    """Allgemeine Fehler (nicht Foto): Gab es denselben Fehler (Schritt, Name, Meldung, Ort, Spieler) vor kurzem schon,
+    wird dieser Eintrag hochgezählt (count, lastTime) und ans Ende gerückt, statt hundertfach eingetragen zu werden."""
+    key = tuple(entry.get(k) for k in ("stage", "name", "message", "where", "player"))
+    try:
+        count = max(1, int(entry.get("count") or 1))
+    except (TypeError, ValueError):
+        count = 1
+    entry["count"] = count
+    now = time.time()
+    for i in range(len(lines) - 1, max(-1, len(lines) - 51), -1):
+        try:
+            old = json.loads(lines[i])
+        except ValueError:
+            continue
+        if old.get("kind") != "general" or tuple(old.get(k) for k in ("stage", "name", "message", "where", "player")) != key:
+            continue
+        last = old.get("lastTime") or old.get("time") or ""
+        try:
+            age = now - time.mktime(time.strptime(last, "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            age = ERRLOG_MERGE + 1
+        if age > ERRLOG_MERGE:
+            break
+        old["count"] = int(old.get("count") or 1) + count
+        old["lastTime"] = entry["time"]
+        old["ua"] = entry.get("ua", old.get("ua"))
+        del lines[i]
+        lines.append(json.dumps(old, ensure_ascii=False))
+        return lines
+    lines.append(json.dumps(entry, ensure_ascii=False))
+    return lines
 
 
 def _read_errlog(conf):
@@ -263,6 +308,172 @@ def _read_errlog(conf):
             return [ln for ln in f.read().splitlines() if ln.strip()]
     except OSError:
         return []
+
+# ---------------------------------------------------------------- Erinnerungsfotos
+# Je Quest höchstens ein Foto, dauerhaft (nicht im Spielstand, nicht vom Aufräumen der Hilfsmittel-Fotos betroffen).
+# Dateien: data/memories/<id>.jpg (≤ 1.000 px, im Browser verkleinert) und <id>.t.jpg (Vorschaubild).
+# Liste: data/memories.json = {"v": Versionsnummer, "items": {questId: {"f": id, "t": ms, "by": Name, "label": …,
+# "size": Bytes, "tsize": Bytes}}}. Ist eine Quest gerade nicht erledigt (rückgängig gemacht), bleibt ihr Foto liegen,
+# wird aber nirgends angezeigt und nicht heruntergeladen. Der komplette Reset löscht alle.
+def _mem_dir(conf):
+    return os.path.join(conf["data_dir"], "memories")
+
+
+def _mem_path(conf):
+    return os.path.join(conf["data_dir"], "memories.json")
+
+
+def _load_mem(conf):
+    try:
+        with open(_mem_path(conf), encoding="utf-8") as f:
+            doc = json.load(f)
+        if isinstance(doc, dict) and isinstance(doc.get("items"), dict):
+            return doc
+    except (FileNotFoundError, ValueError):
+        pass
+    return {"v": 0, "items": {}}
+
+
+def _save_mem(conf, doc):
+    os.makedirs(conf["data_dir"], exist_ok=True)
+    doc["v"] = int(doc.get("v") or 0) + 1
+    tmp = _mem_path(conf) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False)
+    os.replace(tmp, _mem_path(conf))
+
+
+def _mem_remove_files(conf, fid):
+    for suffix in (".jpg", ".t.jpg"):
+        try:
+            os.remove(os.path.join(_mem_dir(conf), fid + suffix))
+        except OSError:
+            pass
+
+
+def _dir_bytes(folder):
+    total = 0
+    for root, _dirs, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def _mem_info(conf):
+    doc = _load_mem(conf)
+    return {"v": doc.get("v", 0), "items": doc["items"], "bytes": _dir_bytes(_mem_dir(conf)),
+            "dataBytes": _dir_bytes(conf["data_dir"])}
+
+
+def _clean_label(text):
+    """Teil des Dateinamens im ZIP: nur Buchstaben, Ziffern, - und _ (der Browser schreibt Umlaute schon um)."""
+    text = re.sub(r"[^A-Za-z0-9_-]+", "-", str(text or ""))
+    return re.sub(r"-{2,}", "-", text).strip("-_")[:80] or "Quest"
+
+
+def _save_memory(conf, environ, qid, query):
+    """Body = Vorschaubild + Foto hintereinander (beide JPEG), tl = Länge des Vorschaubilds. Ersetzt ein altes Foto."""
+    try:
+        length = int(environ.get("CONTENT_LENGTH") or -1)
+        tl = int(query.get("tl", "0"))
+    except ValueError:
+        return "Ungültige Anfrage"
+    if length > MAX_PHOTO + MAX_THUMB:
+        return "Foto zu groß (%d KB)" % (length // 1024)
+    data = environ["wsgi.input"].read(length if length >= 0 else MAX_PHOTO + MAX_THUMB + 1)
+    if not data:
+        return "leeres Foto angekommen"
+    if len(data) > MAX_PHOTO + MAX_THUMB or not 0 < tl <= MAX_THUMB or len(data) - tl > MAX_PHOTO:
+        return "Foto zu groß"
+    thumb, full = data[:tl], data[tl:]
+    if thumb[:3] != b"\xff\xd8\xff" or full[:3] != b"\xff\xd8\xff":
+        return "kein JPEG angekommen"
+    os.makedirs(_mem_dir(conf), exist_ok=True)
+    fid = "m" + secrets.token_hex(12)
+    with open(os.path.join(_mem_dir(conf), fid + ".jpg"), "wb") as f:
+        f.write(full)
+    with open(os.path.join(_mem_dir(conf), fid + ".t.jpg"), "wb") as f:
+        f.write(thumb)
+    with _lock:
+        doc = _load_mem(conf)
+        old = doc["items"].get(qid)
+        doc["items"][qid] = {"f": fid, "t": _now_ms(), "by": " ".join(str(query.get("by", "")).split())[:24],
+                             "label": _clean_label(query.get("label")), "size": len(full), "tsize": len(thumb)}
+        _save_mem(conf, doc)
+    if old and old.get("f") != fid:
+        _mem_remove_files(conf, old.get("f", ""))
+    return None
+
+
+def _delete_memory(conf, qid):
+    with _lock:
+        doc = _load_mem(conf)
+        old = doc["items"].pop(qid, None)
+        if old:
+            _save_mem(conf, doc)
+    if old:
+        _mem_remove_files(conf, old.get("f", ""))
+
+
+def _clear_memories(conf):
+    """Kompletter Reset: alle Erinnerungsfotos löschen."""
+    with _lock:
+        doc = _load_mem(conf)
+        if doc["items"]:
+            doc["items"] = {}
+            _save_mem(conf, doc)
+    folder = _mem_dir(conf)
+    if os.path.isdir(folder):
+        for name in os.listdir(folder):
+            try:
+                os.remove(os.path.join(folder, name))
+            except OSError:
+                pass
+
+
+def _is_reset(old, new):
+    """Neues Spiel durch „Kompletter Reset“ (bzw. „Neues Spiel starten“): anderer Zufallswert und der erste Eintrag
+    bei den Aktivitäten ist der Reset. Ein Wiederherstellen derselben Partie behält den Zufallswert."""
+    if not isinstance(old, dict) or not isinstance(new, dict) or old.get("seed") == new.get("seed"):
+        return False
+    log = new.get("log")
+    return isinstance(log, list) and bool(log) and isinstance(log[0], dict) and log[0].get("type") == "reset"
+
+
+def _memories_zip(conf, tz_minutes):
+    """Alle sichtbaren Erinnerungsfotos (nur Quests, die gerade erledigt sind) als ZIP, Dateinamen
+    JJJJ-MM-TT_Region_Quest.jpg – Datum = wann die Quest erledigt wurde (Ortszeit des Handys: tz_minutes)."""
+    import io
+    import zipfile
+    state = _load(conf).get("state") or {}
+    done = {}
+    for group in ("quests", "done"):
+        for qid, info in (state.get(group) or {}).items():
+            if isinstance(info, dict):
+                done[qid] = info.get("t") or 0
+    items = sorted(_load_mem(conf)["items"].items(), key=lambda kv: (done.get(kv[0], 0), kv[0]))
+    buf = io.BytesIO()
+    names = set()
+    count = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for qid, item in items:
+            if qid not in done:
+                continue
+            full = os.path.join(_mem_dir(conf), str(item.get("f", "")) + ".jpg")
+            if not MEMORY_ID.fullmatch(str(item.get("f", ""))) or not os.path.isfile(full):
+                continue
+            ts = (done[qid] or item.get("t") or 0) / 1000.0 - tz_minutes * 60
+            base = time.strftime("%Y-%m-%d", time.gmtime(ts)) + "_" + _clean_label(item.get("label") or qid)
+            name, n = base + ".jpg", 2
+            while name in names:
+                name, n = "%s-%d.jpg" % (base, n), n + 1
+            names.add(name)
+            zf.write(full, name)
+            count += 1
+    return buf.getvalue(), count
 
 
 def _now_ms():
@@ -299,6 +510,15 @@ def _read_body(environ):
         return None
 
 
+def _query(environ):
+    return {k: v[0] for k, v in parse_qs(environ.get("QUERY_STRING", "")).items()}
+
+
+def _token_ok(environ, conf):
+    """Token als ?t=… – für <img> und Download-Links, die keinen Header schicken können."""
+    return hmac.compare_digest(_query(environ).get("t", ""), _token(conf))
+
+
 def _authorized(environ, conf):
     auth = environ.get("HTTP_AUTHORIZATION", "")
     return auth.startswith("Bearer ") and hmac.compare_digest(auth[7:], _token(conf))
@@ -332,8 +552,50 @@ def _api(path, environ, start_response, conf):
                                   ("Cache-Control", "private, max-age=86400")])
         return [body]
 
+    # Erinnerungsfotos anzeigen (…/<id>.jpg, Vorschaubild …/<id>.t.jpg) und alle als ZIP herunterladen
+    if path.startswith("memory-file/") and method == "GET":
+        name = path[12:]
+        fid = name[:-6] if name.endswith(".t.jpg") else name[:-4] if name.endswith(".jpg") else ""
+        if not MEMORY_ID.fullmatch(fid) or not _token_ok(environ, conf):
+            return _not_found(start_response)
+        full = os.path.join(_mem_dir(conf), name)
+        if not os.path.isfile(full):
+            return _not_found(start_response)
+        with open(full, "rb") as f:
+            body = f.read()
+        start_response("200 OK", [("Content-Type", "image/jpeg"), ("Content-Length", str(len(body))),
+                                  ("Cache-Control", "private, max-age=31536000, immutable")])
+        return [body]
+    if path == "memories.zip" and method == "GET":
+        if not _token_ok(environ, conf):
+            return _not_found(start_response)
+        try:
+            tz = max(-900, min(900, int(_query(environ).get("tz", "0"))))
+        except ValueError:
+            tz = 0
+        body, _count = _memories_zip(conf, tz)
+        fname = "operacao-madeira-fotos-" + time.strftime("%Y-%m-%d", time.gmtime(time.time() - tz * 60)) + ".zip"
+        start_response("200 OK", [("Content-Type", "application/zip"), ("Content-Length", str(len(body))),
+                                  ("Content-Disposition", 'attachment; filename="' + fname + '"'),
+                                  ("Cache-Control", "no-store")])
+        return [body]
+
     if not _authorized(environ, conf):
         return _json(start_response, "401 Unauthorized", {"error": "Nicht angemeldet"})
+
+    if path == "memories" and method == "GET":
+        return _json(start_response, "200 OK", _mem_info(conf))
+    if path.startswith("memory/") and method == "POST":
+        parts = path[7:].split("/")
+        if not QUEST_ID.fullmatch(parts[0]) or len(parts) > 2 or (len(parts) == 2 and parts[1] != "delete"):
+            return _not_found(start_response)
+        if len(parts) == 2:
+            _delete_memory(conf, parts[0])
+        else:
+            err = _save_memory(conf, environ, parts[0], _query(environ))
+            if err:
+                return _json(start_response, "400 Bad Request", {"error": err})
+        return _json(start_response, "200 OK", _mem_info(conf))
 
     if path == "photo" and method == "POST":
         pid, err = _save_photo(conf, environ)
@@ -391,8 +653,10 @@ def _api(path, environ, start_response, conf):
                     pass
         if since is not None and since == doc["version"]:
             return _json(start_response, "200 OK", {"version": doc["version"], "unchanged": True, "now": _now_ms(),
-                                                    "players": _load_players(conf), "team": _load_team(conf)})
-        return _json(start_response, "200 OK", dict(doc, now=_now_ms(), players=_load_players(conf), team=_load_team(conf)))
+                                                    "players": _load_players(conf), "team": _load_team(conf),
+                                                    "memv": _load_mem(conf).get("v", 0)})
+        return _json(start_response, "200 OK", dict(doc, now=_now_ms(), players=_load_players(conf), team=_load_team(conf),
+                                                    memv=_load_mem(conf).get("v", 0)))
 
     if path == "state" and method == "POST":
         body = _read_body(environ)
@@ -402,10 +666,14 @@ def _api(path, environ, start_response, conf):
             doc = _load(conf)
             if body["baseVersion"] != doc["version"]:
                 return _json(start_response, "409 Conflict", doc)
+            reset = _is_reset(doc.get("state"), body["state"])
             doc = {"version": doc["version"] + 1, "state": body["state"]}
             _save(conf, doc)
             _gc_photos(conf, body["state"])
-        return _json(start_response, "200 OK", {"version": doc["version"], "now": _now_ms()})
+        if reset:
+            _clear_memories(conf)  # kompletter Reset: auch alle Erinnerungsfotos weg
+        return _json(start_response, "200 OK", {"version": doc["version"], "now": _now_ms(),
+                                                "memv": _load_mem(conf).get("v", 0)})
 
     return _not_found(start_response)
 

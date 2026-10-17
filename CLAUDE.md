@@ -30,7 +30,8 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
 3. Nur wenn nötig: auf der Seite „Neues Spiel starten“ bzw. Reset. Ein Reset ist nötig, wenn sich Quest-/Stapel-IDs
    oder die Spielstand-Struktur ändern (dann `SCHEMA` in logic.js erhöhen → App zeigt automatisch „Neue Spielinhalte“).
 Konfiguration in der WSGI-Datei (`pythonanywhere_wsgi.py`): `MADEIRA_PASSWORD`, `MADEIRA_LINK_KEY` (geheimer Link-Teil).
-Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Mitspieler: `data/team.json`, Fotos der Hilfsmittel: `data/photos/` (alles nicht in git). Details: ANLEITUNG.md.
+Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Mitspieler: `data/team.json`, Fotos der Hilfsmittel: `data/photos/`,
+Erinnerungsfotos: `data/memories/` + `data/memories.json` (alles nicht in git). Details: ANLEITUNG.md.
 
 ## Fehlerprotokoll (bei Problemen ZUERST hier nachsehen)
 - Jeder Fehler beim Foto-Upload wird vom Handy automatisch an den Server gemeldet (`POST api/client-error`, ohne Netz in
@@ -51,6 +52,16 @@ Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Mitspieler: `d
   `NotReadableError` (→ frisches Datei-Feld je Auswahl); der Lesefehler ist **zufällig** (dasselbe Bild klappt mal, mal nicht,
   auch bei Lesebeginn 0 ms ohne Synchronisierung) – vermutlich vergibt die Android-Foto-Auswahl die Leseerlaubnis fehlerhaft
   (→ automatische Wiederholungen, einmal automatisch neu öffnen, „Aus Dateien wählen“). „Gelesen nach Wiederholung“ = Info.
+- **Allgemeine Fehler** (`reportError(stage, e)` in app.js, `kind: "general"`): Stufen „Unerwarteter Fehler“ (`window`
+  `error`/`unhandledrejection`), „Server-Anfrage“ (jede fehlgeschlagene `api()`-Anfrage: keine Antwort/Zeitüberschreitung oder
+  HTTP ≥ 400; nicht 409, nicht falsches Passwort, nicht das Melden selbst) und „Synchronisierung“ (Abholen in `poll`
+  fehlgeschlagen, auch Fehler beim Anwenden/Zeichnen eines neuen Stands; Konflikt nach 4 Versuchen in `act`; Hilfsmittel nicht
+  gespeichert in `flushTools`). Felder: `where` (Seite + oberstes Fenster, `whereNow`: Quest/Region/Hilfsmittel/
+  Erinnerungsfoto; Fenster bekommen `openModal(…, {where})`), `player`, `stack` (gekürzt), `detail`, `count`, Gerät = `ua`.
+  **Zusammenfassen:** dasselbe (Stufe, Name, Meldung, Ort) höchstens 1× pro Minute senden, Wiederholungen zählen und nachreichen
+  (`errSeen`); offline in `errQueue` zusammengefasst (höchstens 30), beim Wieder-online nachgeschickt; der Server
+  (`_merge_error`) zählt gleiche Einträge (auch Spieler gleich) innerhalb von 10 min hoch (`count`, `lastTime`, rückt ans Ende).
+  Gesamtgröße wie bisher höchstens 500 Einträge. Die Foto-Protokollierung (`reportPhotoError`) ist unverändert.
 - „Auswahl: Seite neu geladen“ = die Seite wurde neu geladen, während Kamera/Galerie offen war (Android hat den Browser wegen
   Speichermangel beendet; erkannt über localStorage `photoPick`).
 - In der App: Einstellungen → **Fehlerprotokoll** (Unterseite `errors`): letzte 30 Einträge (`GET api/client-errors`),
@@ -91,6 +102,30 @@ Vertrauensbasis, keine Beweisfotos.
   Tausch, Multiplikator, Käufe, Ende, Reset, Wiederherstellen) sind ausgegraut und zeigen beim Antippen einen Hinweis. Ansehen
   geht weiter. Polling läuft weiter; ist der Server zurück, verschwindet der Streifen und der komplette Stand wird neu geladen.
   Schlägt das Speichern fehl → Fehlermeldung „… Die Aktion wurde NICHT ausgeführt.“, lokaler Stand bleibt unverändert.
+- **Datum/Uhrzeit erledigter Quests:** `state.quests[id]` bzw. `state.done[id]` = `{by, t}`; `act` rechnet mit **Serverzeit**
+  (`serverNow()`), damit alle Handys dieselbe Zeit speichern (für Erinnerungsfotos/Urlaubs-Rückblick). Rückgängig löscht den Eintrag.
+- **Erinnerungsfotos** (app.js Abschnitt „Erinnerungsfotos“, server.py `_save_memory` …): je erledigter Quest (regional und Stapel)
+  **genau ein** Foto, **dauerhaft**, als einzelne Dateien `data/memories/<id>.jpg` (+ Vorschaubild `<id>.t.jpg`, ≤ 320 px), Liste
+  `data/memories.json` `{v, items: {questId: {f, t, by, label, size, tsize}}}` – **nicht im Spielstand**, nicht vom Aufräumen der
+  Hilfsmittel-Fotos betroffen. Aufnehmen/Auswählen/Verkleinern laufen **unverändert** über die Foto-Grundlage (`photoPicker`,
+  Kamera in der Seite, Galerie, „Aus Dateien wählen“, Wiederholungen, Fehlerprotokoll) mit der Kennung `"mem:<Quest-ID>"`
+  (`isMem`; `toolBody` → `memoryBody`, `addPhotoJob` → `saveMemory` statt `toolDo`): Vorschaubild `makeThumb`, Hochladen
+  `POST api/memory/<id>?tl=<Vorschau-Bytes>&label=…&by=…` (Body = Vorschaubild + Foto, über `uploadPhoto(blob, url)`), ersetzt ein
+  altes Foto. Löschen `POST api/memory/<id>/delete`; Liste `GET api/memories` (+ `bytes`, `dataBytes`); Anzeigen
+  `GET api/memory-file/<f>.jpg` bzw. `.t.jpg` `?t=<token>`. Jede Spielstand-Antwort hat `memv` → bei Änderung lädt `loadMemories`
+  neu (synchron auf allen Handys). Wo: nach dem Abhaken (eigenes Handy) überspringbares Fenster „Erinnerungsfoto hinzufügen?“
+  (`offerMemory`, wartet Banner/Animationen ab); im Quest-Fenster der erledigten Quest Zeile „Erinnerungsfoto hinzufügen/ansehen“
+  (`memLine`); kleines Vorschaubild/Kamera-Knopf (`memChip`, 44 px) bei erledigten Stapel-Quests und bei den Aktivitäten;
+  Fenster `openMemory` (Foto, Ersetzen, Löschen mit Rückfrage; nach einem Kamera-Foto schließt die Kamera). **Rückgängig** →
+  Foto ausgeblendet (`memFor` zeigt nur Fotos erledigter Quests; Datei bleibt, erscheint nach erneutem Abhaken wieder).
+  **Reset** → Server löscht alle (`_is_reset`: neuer Zufallswert + erster Aktivitäten-Eintrag „reset“; Wiederherstellen derselben
+  Partie behält sie). Einstellungen → **Erinnerungsfotos** (Unterseite `photos`): Anzahl + belegter Speicher (Fotos und alle Daten),
+  „Alle Fotos herunterladen (ZIP)“ = Link `GET api/memories.zip?t=<token>&tz=<Zeitzonen-Minuten>` (nur sichtbare Fotos, Namen
+  `JJJJ-MM-TT_Region_Quest.jpg` aus Erledigt-Datum + `label`, Stapel-Quests „Stapel_…“), Raster mit Vorschaubildern.
+- **Einführung** (`TOUR`, `startTour` in app.js): einmal pro Handy nach dem ersten Anmelden (localStorage `tourDone`), 5 Schritte
+  mit Hervorhebung (Inselkarte, Stapel-Quests, Shop, Erfolge, Einstellungen), je ein Satz; „Überspringen“, „Weiter“, am Ende
+  „Los geht's“ (Escape = beenden). Wiederholbar: Einstellungen → Spielanleitung → „Einführung noch einmal ansehen“. Ebene `.tour`
+  (z-index 75: über Fenstern, unter Toasts/Konfetti), Position wird bei Neuzeichnen/Scrollen/Größe angepasst (`tourPlace`).
 - **Spielstand sichern/wiederherstellen** (Einstellungen, Abschnitt „Spielstand sichern“): lädt `operacao-madeira-JJJJ-MM-TT.json`
   herunter (`{app, savedAt, savedBy, version, state}`); Wiederherstellen prüft die Datei (`isCompatible`), fragt deutlich nach
   (überschreibt für alle Handys) und speichert sie als neuen Stand (nur online).
@@ -381,12 +416,12 @@ Vertrauensbasis, keine Beweisfotos.
   Kopfzeile zeigt die aktuelle Hauptseite (auf Unterseiten ausgeblendet). Seiteninhalt kommt aus `pageHTML(view)`.
 - **Navigation (Regel):** Bereiche Shop / Erfolge / Aktivitäten / Einstellungen (Views `shop`, `stats`, `log`, `settings`) haben
   oben „← Zu den Quests“ (direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
-  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `team`, `backup`, `errors`, `end`, `reset`) haben stattdessen zwei Knöpfe:
+  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `team`, `backup`, `photos`, `errors`, `end`, `reset`) haben stattdessen zwei Knöpfe:
   „← Einstellungen“ und „Zu den Quests“. Wird eine Unterseite durch **Abbrechen einer Sicherheitsabfrage** verlassen
   (Reset, RESET-Eingabe, Urlaub beenden, Belohnungs-Fenster schließen, Wiederherstellen), landet man in den Einstellungen
   (`backToSettings(view)`). Neue Unterseiten der Einstellungen in `SETTINGS_PAGES` eintragen.
 - **Einstellungen** = Menü aus antippbaren Zeilen (Reihenfolge): Spielanleitung · Spieler (angemeldeter Name, „Name ändern“,
-  „Abmelden“) · Mitspieler (3 Namen für die Hilfsmittel) · Spielstand sichern (sichern/wiederherstellen) · Fehlerprotokoll · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
+  „Abmelden“) · Mitspieler (3 Namen für die Hilfsmittel) · Spielstand sichern (sichern/wiederherstellen) · Erinnerungsfotos · Fehlerprotokoll · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
   „Belohnungen & Zertifikat ansehen“ → Erfolge) · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
   Unterseite; alle Sicherheitsabfragen bleiben.
 - Erfolge (früher „Statistik“): Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);

@@ -892,3 +892,38 @@ body { overflow-x: hidden; }
 .page-dots[hidden] { display: none; }
 .page-dots i { width: 5px; height: 5px; border-radius: 50%; background: rgba(255, 255, 255, .35); transition: background .2s, transform .2s; }
 .page-dots i.on { background: #fff; transform: scale(1.25); }
+
+/* ---------- Erinnerungsfotos ---------- */
+.mem-line { margin-top: 8px; }
+.mem-line .mem-thumb-sm { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; }
+.mem-chip { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--surface); color: var(--muted);
+  display: grid; place-items: center; padding: 0; overflow: hidden; cursor: pointer; align-self: center; }
+.mem-chip .ic { width: 20px; height: 20px; }
+.mem-chip .mem-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mem-thumb.gone, .mem-photo.gone { visibility: hidden; }
+.mem-photo { display: block; width: 100%; max-height: 60vh; object-fit: contain; border-radius: 12px; background: var(--sea); }
+.mem-meta { margin: 8px 0 10px; }
+.mem-tool .tool-body { display: flex; flex-direction: column; gap: 10px; }
+.mem-tool .mem-meta { margin: 0; }
+.mem-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.mem-tile { border: 0; padding: 0; background: var(--surface); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); cursor: pointer; color: var(--ink); text-align: left; font: inherit; }
+.mem-tile .mem-thumb { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--sea); }
+.mem-cap { display: block; font-size: .75rem; padding: 5px 7px 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+a.btn { text-decoration: none; text-align: center; justify-content: center; }
+
+/* ---------- Einführung ---------- */
+.tour { position: fixed; inset: 0; z-index: 75; }
+.tour-hole { position: fixed; border-radius: 14px; box-shadow: 0 0 0 9999px rgba(4, 25, 33, .62); outline: 2px solid var(--gold); outline-offset: 0;
+  transition: left .25s ease, top .25s ease, width .25s ease, height .25s ease; pointer-events: none; }
+.tour-card { position: fixed; left: 16px; right: 16px; max-width: 420px; margin: 0 auto; background: var(--surface); color: var(--ink);
+  border-radius: 16px; padding: 14px 16px; box-shadow: 0 12px 34px rgba(0, 0, 0, .3); transition: top .25s ease; }
+.tour-card h3 { margin: 2px 0 4px; }
+.tour-card p { margin: 0 0 12px; }
+.tour-count { font-weight: 600; }
+.tour-btns { display: flex; justify-content: flex-end; gap: 10px; align-items: center; }
+.tour-btns .btn { min-height: 44px; }
+.tour-btns [data-tour="skip"] { margin-right: auto; }
+.tour-again { margin: 4px 0 12px; }
+@media (prefers-reduced-motion: reduce) { .tour-hole, .tour-card { transition: none; } }
+.mem-offer { margin-top: 16px; grid-template-columns: auto 1fr; }
+.mem-offer .btn { white-space: nowrap; }
