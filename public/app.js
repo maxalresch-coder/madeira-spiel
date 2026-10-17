@@ -1117,7 +1117,7 @@
 
   // ---- Bucht gesucht (Machico): Zeichenfläche + Karte der Ponta de São Lourenço (Küste: bay-map.js, Quelle CAOP/DGT).
   // Phase 1: Zufall lost geheim eine Bucht aus; auf dem auslosenden Handy (oder wer „Hier zeichnen“ wählt) erscheinen der
-  // vergrößerte Küstenausschnitt (ohne Nummer/Namen, ein-/ausblendbar) und die Zeichenfläche. Gezeichnet wird nur lokal
+  // Küstenausschnitt nur der Bucht (gedreht, Öffnung oben; ohne Nummer/Namen, ein-/ausblendbar) und die Zeichenfläche. Gezeichnet wird nur lokal
   // (nicht synchronisiert; Entwurf in localStorage), erst „Bestätigen“ speichert die Striche → „Handy weitergeben“.
   // Phase 2: Zeichnung + Karte mit nummerierten Buchten, eine antippen → „Bestätigen“. Phase 3: grün/rot, richtige Bucht
   // hervorgehoben, Zeichnung und echter Ausschnitt nebeneinander; „Neue Runde“, bei falsch „Trotzdem richtig“.
@@ -1126,10 +1126,17 @@
   const bayTitle = (b) => "Bucht " + b.n + (b.name ? " · " + b.name : "");
   let bayLandCache = "";
   const bayLand = () => bayLandCache || (bayLandCache = BM().land.map((d) => '<path d="' + d + '"/>').join(""));
+  // Küstenausschnitt nur der Bucht, gedreht (nicht gespiegelt), sodass ihre Öffnung oben liegt: gleichmäßiger Landstreifen
+  // (Breite d) entlang der Buchtküste, Wasser der Bucht, Inseln darin; oberhalb der Öffnung (top) wird alles abgeschnitten.
+  // So ist nichts außerhalb der Bucht zu sehen (keine Nachbarbuchten, keine Gegenküste). Daten: bay-map.js (poly/rot/d/top/box).
+  let bayClipN = 0;
   function bayCrop(id) {
-    const v = bayById(id).view;
+    const b = bayById(id), v = b.box, land = BM().land, cid = "bayclip" + (++bayClipN);
     return '<svg class="bay-crop" viewBox="' + v.join(" ") + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Küstenausschnitt">' +
-      '<rect class="bm-sea" x="' + v[0] + '" y="' + v[1] + '" width="' + v[2] + '" height="' + v[3] + '"/><g class="bm-land">' + bayLand() + "</g></svg>";
+      '<defs><clipPath id="' + cid + '"><rect x="' + v[0] + '" y="' + b.top + '" width="' + v[2] + '" height="' + (v[1] + v[3] - b.top) + '"/></clipPath></defs>' +
+      '<g clip-path="url(#' + cid + ')"><g transform="rotate(' + b.rot + ')">' +
+      '<path class="bc-strip" d="' + b.poly + 'Z" stroke-width="' + 2 * b.d + '"/><path class="bm-sea" d="' + b.poly + 'Z"/>' +
+      '<path class="bc-coast" d="' + b.poly + '"/><g class="bm-land">' + b.isl.map((k) => '<path d="' + land[k] + '"/>').join("") + "</g></g></g></svg>";
   }
   // Karte des Zipfels mit allen nummerierten Buchten; opts: sel (getippt), right/wrong (Ergebnis), tap (antippbar)
   function bayMap(opts) {
@@ -1139,7 +1146,7 @@
       return '<g class="bm-mark' + cls + '"><circle cx="' + b.x + '" cy="' + b.y + '" r="' + r + '"/><text x="' + b.x + '" y="' + b.y + '" dy=".36em" font-size="' + r * 1.25 + '">' + b.n + "</text>" +
         (b.name ? '<text class="bm-name" x="' + (b.x + r * 1.3) + '" y="' + (b.y + r * 2.2) + '" font-size="' + r * 1.05 + '">' + esc(b.name) + "</text>" : "") + "</g>";
     }).join("");
-    const hl = opts.right ? (() => { const v = bayById(opts.right).view; return '<rect class="bm-hl" x="' + v[0] + '" y="' + v[1] + '" width="' + v[2] + '" height="' + v[3] + '" rx="' + r * 0.6 + '"/>'; })() : "";
+    const hl = opts.right ? '<path class="bm-hl" d="' + bayById(opts.right).poly + 'Z"/>' : ""; // Wasserfläche der Bucht, nach Norden ausgerichtet
     return '<div class="bay-map-wrap' + (toolUI.bayBig ? " big" : "") + '"><svg class="bay-map" viewBox="0 0 ' + m.w + " " + m.h + '"' + (opts.tap ? ' data-tool-ui="baymap"' : "") +
       ' role="img" aria-label="Karte der Ponta de São Lourenço mit nummerierten Buchten"><rect class="bm-sea" width="' + m.w + '" height="' + m.h + '"/><g class="bm-land">' + bayLand() + "</g>" + hl + marks + "</svg></div>";
   }

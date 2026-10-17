@@ -795,18 +795,20 @@ span.pt-btn { cursor: default; }
 .bm-mark.sel circle { fill: #e5b53b; }
 .bm-mark.right circle { fill: var(--laurel); }
 .bm-mark.wrong circle { fill: var(--hibiscus); }
-.bm-hl { fill: rgba(47, 158, 68, .12); stroke: var(--laurel); stroke-width: 3px; vector-effect: non-scaling-stroke; }
+.bm-hl { fill: rgba(47, 158, 68, .35); stroke: var(--laurel); stroke-width: 3px; vector-effect: non-scaling-stroke; }
 svg[data-tool-ui="baymap"] { cursor: pointer; }
 .bay-chips .chip { min-width: 44px; min-height: 40px; background: var(--sea); color: var(--ocean-deep); }
 .bay-chips .chip.on { background: var(--ocean); color: #fff; }
 .bay-big-btn, .bay-ref-btn { align-self: center; min-height: 40px; }
 .bay-ref { border-radius: 12px; overflow: hidden; border: 1.5px solid var(--line); }
-.bay-crop { display: block; width: 100%; height: auto; max-height: 34vh; background: #cfe7f0; }
+.bay-crop { display: block; width: 100%; height: auto; max-height: 34vh; background: #eceff1; }
+.bc-strip { fill: #e8d9b5; stroke: #e8d9b5; stroke-linejoin: round; }
+.bc-coast { fill: none; stroke: #7a5a2e; stroke-width: 1.4px; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .bay-drawing { display: block; width: 100%; height: auto; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; }
 .bay-drawing path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .bay-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .bay-compare figure { margin: 0; display: flex; flex-direction: column; gap: 4px; }
-.bay-compare figure > svg { border-radius: 10px; border: 1.5px solid var(--line); width: 100%; height: auto; aspect-ratio: 4 / 3; background: #cfe7f0; }
+.bay-compare figure > svg { border-radius: 10px; border: 1.5px solid var(--line); width: 100%; height: auto; aspect-ratio: 4 / 3; background: #eceff1; }
 .bay-compare figcaption { font-size: .82rem; color: var(--muted); text-align: center; }
 .draw { display: flex; flex-direction: column; gap: 6px; }
 .draw-bar, .draw-colors { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: center; }

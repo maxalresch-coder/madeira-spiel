@@ -33,7 +33,7 @@
     "q-fun-1": { kind: "photoNames", fv: 1, photos: 3, label: "Türen zuordnen", icon: "door-open" },                                // Gespür für die richtige Tür
     "q-mac-3": { kind: "photoPick", fv: 1, photos: 3, label: "Adler-Stein raten", icon: "bird" },                                   // Steinadler
     // Zeichnen: geheim ausgeloste Bucht der Ponta de São Lourenço nachzeichnen, die anderen raten auf der Karte (bay-map.js)
-    "q-mac-2": { kind: "drawBay", fv: 1, bays: ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"], label: "Bucht zeichnen und raten", icon: "pencil" }, // Bucht gesucht
+    "q-mac-2": { kind: "drawBay", fv: 2, bays: ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"], label: "Bucht zeichnen und raten", icon: "pencil" }, // Bucht gesucht
     // Auswahl: genau 2 der 10 UNESCO-Kriterien; Lösung (ix) + (x) wird bei „Daneben“ nie gezeigt
     "q-san-3": { kind: "choice", pick: 2, solution: ["ix", "x"], penalty: 10, label: "Zwei Kriterien wählen", icon: "list-checks" } // Mit Lorbeeren und UNESCO gekrönt
   };

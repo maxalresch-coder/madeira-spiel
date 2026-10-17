@@ -558,6 +558,18 @@ assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, unde
   const MAP = sandbox.window.BAY_MAP;
   assert.strictEqual(JSON.stringify(MAP.bays.map((b) => b.id)), JSON.stringify(BG.bays), "Buchten in bay-map.js und tools.js gleich");
   assert(MAP.bays.length >= 8 && MAP.bays.length <= 12 && MAP.land.length > 10);
+  // Ausschnitte: gedreht (nur Drehung), Öffnung waagrecht oben, die ganze Buchtküste darunter und im Ausschnitt
+  for (const bay of MAP.bays) {
+    const pts = bay.poly.slice(1).split(" ").map((q) => q.split(",").map(Number)), t = bay.rot * Math.PI / 180;
+    const R = ([x, y]) => [x * Math.cos(t) - y * Math.sin(t), x * Math.sin(t) + y * Math.cos(t)];
+    const rp = pts.map(R), a = rp[0], z = rp[rp.length - 1], [bx, by, bw, bh] = bay.box;
+    assert(pts.length > 5 && bay.d > 0 && !("view" in bay), "Bucht " + bay.n);
+    assert(Math.abs(a[1] - bay.top) < 1 && Math.abs(z[1] - bay.top) < 1, "Öffnung oben, Bucht " + bay.n);
+    assert(rp.every((p) => p[1] >= bay.top - 1 && p[0] >= bx && p[0] <= bx + bw && p[1] <= by + bh), "Küste unter der Öffnung, Bucht " + bay.n);
+    const my = rp.reduce((s, p) => s + p[1], 0) / rp.length;
+    assert(my > bay.top + 1, "Land unten, Bucht " + bay.n);
+    assert(bay.isl.every((k) => k >= 0 && k < MAP.land.length));
+  }
   const draw = { strokes: [{ t: "p", c: "#1f2933", w: 2, p: [10, 10, 200, 300, 400, 120] }, { t: "e", c: "#ffffff", w: 3, p: [50, 50, 60, 60] }] };
   assert.strictEqual(T.phase(BG, null), 1);
   tbf("q-mac-2", null, { type: "start", bay: "b99" }, "Anna");

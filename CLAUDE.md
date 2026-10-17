@@ -10,6 +10,7 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
 - **Repository- und Ordnername `madeira-spiel` nie ändern** (PythonAnywhere-Update hängt daran).
 - Tests: `node tests/logic.test.js` muss durchlaufen; bei Regeländerungen Tests ergänzen.
 - Spielregeln/Punkte/Quest-Texte nur ändern, wenn ausdrücklich verlangt. Quest-Texte **wortwörtlich** lassen.
+- In Quest-Texten (content.js) **nie das Wort „geheim“** verwenden.
 - Oberfläche im Browser prüfen (Playwright, Chromium vorinstalliert; Handybreite 360 und 390 px).
   Lokal: `MADEIRA_PASSWORD=test MADEIRA_LINK_KEY=geheim python3 server.py` → http://localhost:8000/geheim/
 - **Android und iPhone:** Wir nutzen Android (Chrome) **und** iPhone (Safari). Jede Funktion muss auf beiden laufen. Wo ein
@@ -273,19 +274,27 @@ Vertrauensbasis, keine Beweisfotos.
     (`UNESCO_CRITERIA`), genau 2 wählen und bestätigen; Lösung (ix)+(x) in tools.js, vorher nie gezeigt. Danach wird jedes
     gewählte Kriterium einzeln bewertet („(x) richtig“, „(ii) falsch“, grün/rot); nicht gewählte werden nie verraten;
     nicht beide richtig → automatisch 10 min Strafzeit.
-  - „Bucht zeichnen und raten“ (Bucht gesucht, q-mac-2, `kind: "drawBay"`, geheim → Handy weitergeben): Karte der Ponta de
-    São Lourenço (Caniçal/Prainha bis zur Spitze inkl. Ilhéus) aus `public/bay-map.js` (`window.BAY_MAP`, Koordinaten in
-    Metern), erzeugt mit `tools/buchten_karte.py` aus der **CAOP-Küstenlinie** (Direção-Geral do Território, via
+  - „Bucht zeichnen und raten“ (Bucht gesucht, q-mac-2, `kind: "drawBay"`, `fv: 2`, geheim → Handy weitergeben): Karte der
+    Ponta de São Lourenço (Caniçal/Prainha bis zur Spitze inkl. Ilhéus) aus `public/bay-map.js` (`window.BAY_MAP`, Koordinaten
+    in Metern), erzeugt mit `tools/buchten_karte.py` aus der **CAOP-Küstenlinie** (Direção-Geral do Território, via
     github.com/nmota/caop_GeoJSON; OpenStreetMap war gesperrt), vereinfacht auf ~1,6 m – nie von Hand ändern, sondern Skript
-    neu laufen lassen. 9 nummerierte Buchten `b1`–`b9` (Nordküste 1–5 West→Ost, Südküste 6–9 Ost→West), Namen nur bei echten:
-    8 „Baía d'Abra“, 9 „Prainha“; je Bucht Markierung `x/y` und Zoom-Ausschnitt `view`. Ablauf: „Bucht auslosen“ (Aktion
-    `start`, gleichverteilt mit `T.randomInt` über `T.bayChoices` = noch nicht gespielte Buchten, `used`; sind alle durch,
-    alle außer der letzten) → nur das auslosende Handy (`here` im lokalen Entwurf) sieht den Küstenausschnitt (`bayCrop`, ohne
-    Nummer/Name, ein-/ausblendbar) und zeichnet; andere Handys sehen „Auf einem anderen Handy wird gerade gezeichnet“ +
-    „Hier zeichnen“ (Rückfrage, Ein-Handy-Fall nach Neuladen). „Bestätigen“ (Aktion `fix` mit `drawing`) → Handy weitergeben
-    → Phase 2: Zeichnung + Karte mit allen Nummern (`bayMap`, Antippen wählt die nächste Markierung, „Karte größer“, Chips)
-    → „Bestätigen“ (`guess`) → Phase 3: Richtig/Falsch, richtige Bucht auf der Karte hervorgehoben, Zeichnung und echter
-    Ausschnitt nebeneinander; „Neue Runde“ (löscht Zeichnung), bei Falsch zusätzlich „Trotzdem richtig“ (`accept`).
+    neu laufen lassen (`python3 tools/buchten_karte.py <MadeiraFreguesias.geojson> [vorschau-ordner]`; prüft jede Bucht und
+    schreibt Vorschaubilder). 9 nummerierte Buchten `b1`–`b9` (Nordküste 1–6 West→Ost, Südküste 7–9 Ost→West), Namen nur bei
+    echten: 8 „Baía d'Abra“, 9 „Prainha“. Je Bucht im Skript: Markierung + die **beiden Landspitzen am Eingang**; daraus
+    berechnet: `poly` = Buchtküste von Landspitze zu Landspitze (geschlossen = Wasserfläche; das Skript rückt die Öffnung
+    automatisch auf die äußersten Landspitzen), `isl` = Inseln darin, `rot` = Drehung, `d` = Landstreifen, `top`/`box`.
+    **Küstenausschnitt** (`bayCrop`): nur gedreht (nie gespiegelt), sodass die Öffnung **oben** liegt (Meer der Bucht oben,
+    Land unten/seitlich); gezeigt wird **nur die Bucht**: gleichmäßiger Landstreifen (Breite `d`) entlang der Buchtküste,
+    Wasser der Bucht, Inseln darin; alles oberhalb der Öffnung abgeschnitten (`clipPath`). Echtes Land außerhalb wird nicht
+    gezeichnet → keine Nachbarbuchten, keine Gegenküste. Füllt die Fläche (`box` passt sich jeder Buchtgröße an).
+    Ablauf: „Bucht auslosen“ (Aktion `start`, gleichverteilt mit `T.randomInt` über `T.bayChoices` = noch nicht gespielte
+    Buchten, `used`; sind alle durch, alle außer der letzten) → nur das auslosende Handy (`here` im lokalen Entwurf) sieht den
+    Küstenausschnitt (ohne Nummer/Name, ein-/ausblendbar) und zeichnet; andere Handys sehen „Auf einem anderen Handy wird
+    gerade gezeichnet“ + „Hier zeichnen“ (Rückfrage, Ein-Handy-Fall nach Neuladen). „Bestätigen“ (Aktion `fix` mit `drawing`)
+    → Handy weitergeben → Phase 2: Zeichnung + Karte mit allen Nummern (`bayMap`, Antippen wählt die nächste Markierung,
+    „Karte größer“, Chips) → „Bestätigen“ (`guess`) → Phase 3: Richtig/Falsch, Zeichnung und gedrehter Ausschnitt nebeneinander,
+    dazu die Bucht auf der Karte (nach Norden, ungedreht) grün hervorgehoben (`bm-hl` = `poly`); „Neue Runde“ (löscht
+    Zeichnung), bei Falsch zusätzlich „Trotzdem richtig“ (`accept`).
     **Zeichenfläche** (`buildDrawEl`, einmal gebaut, nach jedem Neuzeichnen mit `mountDraw` in `[data-draw-slot]` zurückgehängt
     wie die Kamera): 1000×750-Koordinaten, Pointer-Events, `touch-action: none` (Seite scrollt/zoomt nicht), während des
     Zeichnens `toolUI.dragging` (kein Neuzeichnen). Werkzeuge Stift / weicher Pinsel / Radierer, 3 Stärken, 8 Farben,
