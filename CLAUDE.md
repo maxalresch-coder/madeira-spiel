@@ -94,7 +94,7 @@ Vertrauensbasis, keine Beweisfotos.
 - **Spielstand sichern/wiederherstellen** (Einstellungen, Abschnitt „Spielstand sichern“): lädt `operacao-madeira-JJJJ-MM-TT.json`
   herunter (`{app, savedAt, savedBy, version, state}`); Wiederherstellen prüft die Datei (`isCompatible`), fragt deutlich nach
   (überschreibt für alle Handys) und speichert sie als neuen Stand (nur online).
-- **Hilfsmittel (Tools)** für einzelne regionale Quests (`public/tools.js` = Liste `TOOLS` mit `label`/`icon` + reine Logik,
+- **Hilfsmittel (Tools)** für einzelne regionale Quests und Stapel-Quests (`public/tools.js` = Liste `TOOLS` mit `label`/`icon` + reine Logik,
   getestet; Oberfläche in app.js). Zustand in `state.tools[questId]` (gleicher Server-Speicher wie der Spielstand,
   Warteschlange + Konflikt-Wiederholung, offline gesperrt); Reset löscht sie (newGame hat kein `tools`). Zeiten in
   **Serverzeit** (`now` in den API-Antworten → `app.clockOffset`), daher synchron auf allen Handys, auch nach Neuladen.
@@ -306,6 +306,23 @@ Vertrauensbasis, keine Beweisfotos.
     Rückgängig, Wiederholen, „Alles löschen“ (Rückfrage); kompakte Icon-Leiste. Entwurf nur lokal (localStorage `draw:<Runde>`),
     übersteht Neuladen; synchronisiert wird erst beim Bestätigen (`T.checkDrawing`: höchstens 600 Striche/60.000 Zahlen).
     Neue Runde/Reset entfernen die Zeichnung aus dem Spielstand.
+  - **Stapel-Quests** (Zeile im Stapel-Quest-Kasten auf der Startseite, öffnet das Hilfsmittel; Ziele/Zeiten wie im Quest-Text):
+    Zähler (`kind: "counter"`, großes „+1“, kleines „−1“, „3 von 10 …“, Balken, bei Ziel dezent „Ziel erreicht – abhaken
+    macht ihr selbst“): Tunnelblick 10, Obrigado 3, Wasserfall-Marathon 10; Zähler + Timer (`minutes`): Wine-Tasting 3 + 1 h,
+    Sprachensammler 5 + 1 h; Regionen-Liste (`kind: "regions"`, 10 Chips, Ziel 5): Fünf auf einen Streich; Timer
+    (`kind: "timer"`): Fußdurchblutung 5 min, Levada-Spaziergang 30 min; „Höhe messen“ (`kind: "altitude"`, `local`):
+    Gipfelgruß (> 1.000 m), Ups & Downs (1.000 m und −1 m). **Timer** rechnen mit der Startzeit in Serverzeit (`acc` = bisher
+    gelaufen, `startedAt` = läuft seit; `T.timerLeft/timerEnd`): Start/Weiter, Pause, Zurücksetzen; laufen bei gesperrtem
+    Handy, nach Neuladen und auf jedem Handy richtig weiter. Ende: `checkTimers` (jeder Takt, auch wenn eine andere Seite offen
+    ist; nur bis 60 s nach Ablauf, kein alter Alarm nach Neuladen) → Meldung + `signalTimer` (Ton **und** Vibration; iPhone nur
+    Ton – AudioContext wird beim Antippen freigeschaltet). Nie automatisch abhaken. **Zurücksetzen:** Abhaken und Tauschen
+    löschen `state.tools[id]` der Stapel-Quest (`takeTool` in logic.js, alter Stand im Aktivitäten-Eintrag `data.tool`);
+    Rückgängig stellt ihn wieder her (`giveTool`); Reset löscht alles. Zeile rechts: „3/10“, „⏱ 4:12“, „Pause …“, „Zeit um“.
+  - **Höhe messen / Wo bin ich?** (nur auf Knopfdruck, einmalig `getCurrentPosition`, nichts gespeichert oder geteilt):
+    GPS-Höhe auf Meeresspiegel umgerechnet (`T.seaLevelAltitude`: Android liefert Höhe über dem WGS84-Ellipsoid → minus
+    **48 m** Geoid-Höhe Madeira (EGM96, 47–48 m, `GEOID_MADEIRA`); iPhone liefert schon Meeresspiegel) mit „± X m“
+    (`altitudeAccuracy`), dazu Geländehöhe von **Open-Meteo Elevation API** (kostenlos, ohne Schlüssel; offline nur GPS),
+    Hinweis auf GPS-Ungenauigkeit. Region per `T.regionAt` (Punkt-in-Polygon mit den Gemeindegrenzen aus map-data.js).
   - Links (`LINKS` in tools.js, eigene Zeilen): „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
     „Die zehn UNESCO-Kriterien“ (Mit Lorbeeren und UNESCO gekrönt) → https://whc.unesco.org/en/criteria/.
 - Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann Zertifikat (PDF).
@@ -327,6 +344,13 @@ Vertrauensbasis, keine Beweisfotos.
   Zeile „… · Joker genutzt: Tausch X von 5 · Multiplikator X von 3“); dann Knopf „Alle Quests anzeigen“.
 - Pins: einzelne = Punkt-Symbol, Farbe offen = unbesucht-Grau, erledigt = erkundet-Hellgrün, deutlicher Rand;
   nahe Pins → Gruppe mit Anzahl (Antippen = Auswahl). Pin → einzelne Quest; Region → alle 3 Quests.
+  Größe `PIN` (r 11 px, Tippfläche `hit` 22 px Radius = 44 px). **Regionsnamen bleiben lesbar:** `avoidLabels` rückt
+  Pin-Köpfe, die auf einem Namen oder einem anderen Kopf liegen, höchstens ~44 px weiter (zuerst nach oben); geht das nicht,
+  werden sie zur Gruppe zusammengelegt. Die Namen liegen über den Stielen (`#labels` nach `#pins`). Nach Änderungen bei
+  384×854 prüfen (alle 10 Namen frei).
+- **„Wo bin ich?“** (Knopf rechts in der Kopfzeile „Regionale Quests“): Kasten unter der Karte („Ihr seid in …“ bzw.
+  „Gerade in keiner Region.“ + Höhe, ×), Region blinkt 3× kurz (`here-hl`), roter pulsierender Punkt (SMIL-`animate`) am
+  Standort; verweigerte Erlaubnis → kurze Meldung. Nur lokal (`mapUI.here`).
 - Quest-Fenster: Bild oben (`public/images/quests/<ID>.jpg`, erst beim Öffnen geladen, fehlend = nichts), Titel,
   Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett.
 - **Navigation (Regel):** Bereiche Shop / Erfolge / Aktivitäten / Einstellungen (Views `shop`, `stats`, `log`, `settings`) haben

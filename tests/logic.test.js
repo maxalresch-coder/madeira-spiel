@@ -236,7 +236,7 @@ assert.strictEqual(L.summary(g, C).earned, 0);
 // ---------------------------------------------------------------- Werkzeuge (Tools)
 const T = require("../public/tools.js");
 const IXT = L.index(C);
-Object.keys(T.TOOLS).forEach((id) => assert(IXT.quests[id], "Tool für unbekannte Quest " + id));
+Object.keys(T.TOOLS).forEach((id) => assert(IXT.quests[id] || IXT.stack[id], "Tool für unbekannte Quest " + id));
 const tu = (id, ts, op, now) => T.update(T.config(id, C), ts, op, now, "Tester");
 const tf = (id, ts, op, now) => assert.throws(() => tu(id, ts, op, now), T.ToolError);
 // Countdown
@@ -616,5 +616,82 @@ assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, unde
   }
   const last = BG.bays.filter((x) => x !== "b4").pop();
   assert.deepStrictEqual(T.bayChoices(BG, all), BG.bays.filter((x) => x !== last));
+}
+// ---- Stapel-Quests: Zähler, Timer, Regionen-Liste, Höhe (Ziele wie im Quest-Text)
+{
+  const IXS = L.index(C).stack;
+  const want = { "s-e07": [10, 0], "s-e05": [3, 0], "s-s03": [3, 60], "s-m08": [5, 60], "s-s06": [10, 0], "s-s04": [5, 0], "s-e10": [0, 5], "s-m03": [0, 30] };
+  Object.keys(want).forEach((id) => {
+    const c = T.config(id, C);
+    assert(IXS[id] && c, "Hilfsmittel für " + id);
+    assert.strictEqual(c.target || 0, want[id][0], id + " Ziel");
+    assert.strictEqual(c.minutes || 0, want[id][1], id + " Minuten");
+  });
+  assert(T.config("s-m02", C).kind === "altitude" && T.config("s-s05", C).kind === "altitude" && !T.hasState(T.config("s-m02", C)));
+  assert.throws(() => tu("s-m02", null, { type: "inc" }, 0), T.ToolError);           // Höhe speichert nichts
+  // Zähler
+  let c = tu("s-e07", null, { type: "inc" }, 0);
+  for (let i = 0; i < 9; i++) c = tu("s-e07", c, { type: "inc" }, 0);
+  assert.strictEqual(c.count, 10);
+  assert.strictEqual(T.result(T.config("s-e07"), c, 0).ok, true);
+  c = tu("s-e07", c, { type: "dec" }, 0);
+  assert.strictEqual(T.result(T.config("s-e07"), c, 0), null);
+  tf("s-e07", { count: 0 }, { type: "dec" }, 0);
+  // Timer: rechnet mit der Startzeit, Pause/Weiter, Zurücksetzen, Ende
+  const TC = T.config("s-e10");
+  let tm = tu("s-e10", null, { type: "tStart" }, 1000);
+  assert.strictEqual(T.timerLeft(TC, tm, 61000), 240000);                           // 1 min gelaufen
+  tf("s-e10", tm, { type: "tStart" }, 2000);
+  tm = tu("s-e10", tm, { type: "tPause" }, 61000);
+  assert.strictEqual(T.timerLeft(TC, tm, 999999), 240000);                          // pausiert: bleibt stehen
+  tm = tu("s-e10", tm, { type: "tStart" }, 100000);
+  assert.strictEqual(T.timerEnd(TC, tm), 340000);
+  assert(T.timerRunning(TC, tm, 339999) && !T.timerRunning(TC, tm, 340000));
+  assert.strictEqual(T.result(TC, tm, 340000).ok, true);
+  tf("s-e10", tm, { type: "tStart" }, 400000);                                      // abgelaufen: erst zurücksetzen
+  tm = tu("s-e10", tm, { type: "tReset" }, 400000);
+  assert.strictEqual(T.timerLeft(TC, tm, 500000), 300000);
+  // Zähler + Timer (Wine-Tasting)
+  let w = tu("s-s03", null, { type: "tStart" }, 0);
+  w = tu("s-s03", w, { type: "inc" }, 10);
+  assert(w.count === 1 && T.timerRunning(T.config("s-s03"), w, 3599999) && !T.timerRunning(T.config("s-s03"), w, 3600000));
+  // Regionen-Liste
+  let rg = tu("s-s04", null, { type: "toggle", region: "funchal" }, 0);
+  ["machico", "santana", "calheta", "funchal"].forEach((r) => { rg = tu("s-s04", rg, { type: "toggle", region: r }, 0); });
+  assert.deepStrictEqual(rg.regions, ["machico", "santana", "calheta"]);
+  tf("s-s04", rg, { type: "toggle", region: "<b>" }, 0);
+  // Abhaken / Tauschen setzen zurück, Rückgängig holt den Stand zurück, Reset löscht alles
+  let gs = L.newGame(C, 5, t);
+  const sid = gs.open[0];
+  gs.tools = { [sid]: { count: 4 }, "q-cal-2": { startedAt: 1 } };
+  gs = L.apply(gs, C, { type: "stack", questId: sid }, "A", t);
+  assert(!gs.tools[sid] && gs.tools["q-cal-2"], "Abhaken setzt nur das Hilfsmittel dieser Stapel-Quest zurück");
+  gs = L.apply(gs, C, { type: "undo", logId: gs.log[gs.log.length - 1].id }, "A", t);
+  assert.deepStrictEqual(gs.tools[sid], { count: 4 });
+  const sid2 = gs.open.find((x) => x && x !== sid);
+  gs.tools[sid2] = { count: 2 };
+  gs = L.apply(gs, C, { type: "quest", questId: C.regions[0].quests[0].id }, "A", t);   // Punkte für den Tausch
+  gs = L.apply(gs, C, { type: "swap", questId: sid2 }, "A", t);
+  assert(!gs.tools[sid2], "Tauschen setzt zurück");
+  gs = L.apply(gs, C, { type: "undo", logId: gs.log.filter((e) => e.type === "swap").pop().id }, "A", t);
+  assert.deepStrictEqual(gs.tools[sid2], { count: 2 });
+  assert(!L.apply(gs, C, { type: "reset", seed: 3 }, "A", t).tools, "Reset löscht alle Hilfsmittel");
+  // Wo bin ich? Region aus den Gemeindegrenzen, Höhe über dem Meeresspiegel
+  const MW = {}; require("vm").runInNewContext(require("fs").readFileSync(__dirname + "/../public/map-data.js", "utf8"), { window: MW });
+  const MAPD = MW.MADEIRA_MAP;
+  C.regions.forEach((r) => assert(MAPD.regions[r.name], "Grenzen für " + r.name));
+  assert.strictEqual(T.regionAt(MAPD, -50, -50), null);                                 // Meer / außerhalb
+  // ein Punkt in jeder Region (Mitte eines Dreiecks am Rand) wird dieser Region zugeordnet
+  C.regions.forEach((r) => {
+    const ring = T.pathRings(MAPD.regions[r.name][0])[0];
+    let found = null;
+    for (let i = 0; i < ring.length && !found; i += 3) {
+      const [ax, ay] = ring[i], [bx, by] = ring[(i + ring.length / 3 | 0) % ring.length], [cx, cy] = ring[(i + 2 * ring.length / 3 | 0) % ring.length];
+      const x = (ax + bx + cx) / 3, y = (ay + by + cy) / 3;
+      if (T.regionAt(MAPD, x, y) === r.name) found = [x, y];
+    }
+    assert(found, "Punkt in " + r.name);
+  });
+  assert.deepStrictEqual([T.seaLevelAltitude(1048.4, false), T.seaLevelAltitude(1000, true), T.seaLevelAltitude(null, false)], [1000, 1000, null]);
 }
 console.log("Alle Logik-Tests bestanden ✓");

@@ -223,6 +223,7 @@
         state.done[id] = { by, t: now };
         state.open[slot] = state.deck.length ? state.deck.shift() : null;
         entry = { type: "stack", data: { questId: id }, text: "Stapel-Quest „" + ix.stack[id].title + "“ erledigt" };
+        takeTool(state, id, entry);
         break;
       }
       case "joker": {
@@ -248,6 +249,7 @@
         state.deck.splice(pos, 0, id);
         state.open[slot] = fresh;
         entry = { type: "swap", data: { oldId: id, newId: fresh }, text: "Tausch-Joker: „" + ix.stack[id].title + "“ zurück in den Stapel, „" + ix.stack[fresh].title + "“ vom Stapel gezogen" };
+        takeTool(state, id, entry);
         break;
       }
       case "mult": {
@@ -306,6 +308,19 @@
     return state;
   }
 
+  // Hilfsmittel einer Stapel-Quest (Zähler, Timer …) beim Abhaken/Tauschen zurücksetzen; der alte Stand
+  // wird im Eintrag gemerkt, damit Rückgängig ihn wiederherstellt.
+  function takeTool(state, id, entry) {
+    if (!state.tools || !state.tools[id]) return;
+    entry.data.tool = state.tools[id];
+    delete state.tools[id];
+  }
+  function giveTool(state, id, e) {
+    if (!e.data.tool) return;
+    state.tools = state.tools || {};
+    if (!state.tools[id]) state.tools[id] = e.data.tool;
+  }
+
   function undoEntry(state, content, e) {
     const ix = index(content);
     switch (e.type) {
@@ -317,6 +332,7 @@
         const id = e.data.questId;
         if (!state.done[id]) fail("Stapel-Quest ist nicht mehr erledigt.");
         delete state.done[id];
+        giveTool(state, id, e);
         state.deck.unshift(id); // zurück oben auf den Stapel
         for (let i = 0; i < state.open.length; i++) {
           if (!state.open[i] && state.deck.length) state.open[i] = state.deck.shift();
@@ -337,6 +353,7 @@
         state.deck.splice(pos, 1);
         state.deck.unshift(newId);
         state.open[slot] = oldId;
+        giveTool(state, oldId, e);
         return;
       }
       case "mult": {

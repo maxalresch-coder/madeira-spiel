@@ -35,7 +35,21 @@
     // Zeichnen: geheim ausgeloste Bucht der Ponta de São Lourenço nachzeichnen, die anderen raten auf der Karte (bay-map.js)
     "q-mac-2": { kind: "drawBay", fv: 2, bays: ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"], label: "Bucht zeichnen und raten", icon: "pencil" }, // Bucht gesucht
     // Auswahl: genau 2 der 10 UNESCO-Kriterien; Lösung (ix) + (x) wird bei „Daneben“ nie gezeigt
-    "q-san-3": { kind: "choice", pick: 2, solution: ["ix", "x"], penalty: 10, label: "Zwei Kriterien wählen", icon: "list-checks" } // Mit Lorbeeren und UNESCO gekrönt
+    "q-san-3": { kind: "choice", pick: 2, solution: ["ix", "x"], penalty: 10, label: "Zwei Kriterien wählen", icon: "list-checks" }, // Mit Lorbeeren und UNESCO gekrönt
+
+    // ---- Stapel-Quests: kleine Hilfsmittel (Zähler, Timer, Regionen-Liste, Höhe). Ziele und Zeiten wie im Quest-Text.
+    // Der Zustand wird beim Abhaken, Tauschen und beim Reset gelöscht (logic.js) – Rückgängig holt ihn zurück.
+    "s-e07": { kind: "counter", target: 10, unit: "Tunnel", label: "Tunnel zählen", icon: "hash" },                                  // Tunnelblick
+    "s-e05": { kind: "counter", target: 3, unit: "Einheimischen bedankt", label: "Danke zählen", icon: "hash" },                     // Obrigado
+    "s-s03": { kind: "counter", target: 3, minutes: 60, unit: "Weinen probiert", label: "Weine zählen + Timer", icon: "wine" },   // Wine-Tasting
+    "s-m08": { kind: "counter", target: 5, minutes: 60, unit: "Sprachen gehört", label: "Sprachen zählen + Timer", icon: "languages" }, // Sprachensammler
+    "s-s06": { kind: "counter", target: 10, unit: "Wasserfällen", label: "Wasserfälle zählen", icon: "droplets" },                    // Wasserfall-Marathon
+    "s-s04": { kind: "regions", target: 5, label: "Regionen abhaken", icon: "map-pinned" },                                         // Fünf auf einen Streich
+    "s-e10": { kind: "timer", minutes: 5, label: "Timer: 5 Minuten", icon: "timer" },                                               // Fußdurchblutung
+    "s-m03": { kind: "timer", minutes: 30, label: "Timer: 30 Minuten", icon: "timer" },                                             // Levada-Spaziergang
+    // Höhe messen: nur auf diesem Handy (GPS + Geländehöhe), nichts wird gespeichert
+    "s-m02": { kind: "altitude", local: true, goals: [{ min: 1000, text: "höher als 1.000 m" }], label: "Höhe messen", icon: "mountain" },  // Gipfelgruß
+    "s-s05": { kind: "altitude", local: true, goals: [{ min: 1000, text: "1.000 m über dem Meeresspiegel" }, { max: -1, text: "1 m unter dem Meeresspiegel" }], label: "Höhe messen", icon: "mountain" } // Ups & Downs
   };
 
   // Links als eigene Zeilen im Quest-Fenster (öffnen einen neuen Tab)
@@ -69,7 +83,7 @@
     content.regions.forEach((r) => r.quests.forEach((q) => { if (q.id === questId) quest = q; }));
     return quest && quest.height != null ? Object.assign({}, base, { answer: quest.height }) : base;
   }
-  function hasState(cfg) { return !!cfg; }
+  function hasState(cfg) { return !!cfg && !cfg.local; }
   function links(questId) { return LINKS[questId] || []; }
 
   // ---------------------------------------------------------------- Geheime Eingaben
@@ -205,6 +219,9 @@
         const places = names.map((n, i) => ts.guess[i] === n);
         return { ok: places.every(Boolean), places, names };
       }
+      case "counter": return (ts.count || 0) >= cfg.target ? { ok: true } : null;
+      case "regions": return (ts.regions || []).length >= cfg.target ? { ok: true } : null;
+      case "timer": return timerLeft(cfg, ts, now) <= 0 ? { ok: true } : null;
       case "choice":
         return ts.ok ? { ok: true } : null;
       default:
@@ -537,6 +554,89 @@
     return o;
   }
 
+  // ---------------------------------------------------------------- Zähler und Timer (Stapel-Quests)
+  // Der Timer rechnet mit der Startzeit (Serverzeit): acc = bisher gelaufene ms, startedAt = läuft seit.
+  // So zählt er auch bei gesperrtem Handy, nach dem Neuladen und auf jedem anderen Handy richtig weiter.
+  function hasTimer(cfg) { return !!cfg && (cfg.kind === "timer" || (cfg.kind === "counter" && cfg.minutes > 0)); }
+  function timerElapsed(cfg, ts, now) {
+    const dur = cfg.minutes * 60000, t = ts || {};
+    return Math.min(dur, (t.acc || 0) + (t.startedAt != null ? Math.max(0, now - t.startedAt) : 0));
+  }
+  function timerLeft(cfg, ts, now) { return cfg.minutes * 60000 - timerElapsed(cfg, ts, now); }
+  function timerRunning(cfg, ts, now) { return !!ts && ts.startedAt != null && timerLeft(cfg, ts, now) > 0; }
+  // Zeitpunkt, zu dem ein laufender Timer abläuft (sonst null)
+  function timerEnd(cfg, ts) { return ts && ts.startedAt != null ? ts.startedAt + cfg.minutes * 60000 - (ts.acc || 0) : null; }
+  function updateTimer(cfg, ts, op, now, by) {
+    switch (op.type) {
+      case "tStart":
+        if (timerRunning(cfg, ts, now)) fail("Der Timer läuft schon.");
+        if (timerLeft(cfg, ts, now) <= 0) fail("Die Zeit ist um – erst zurücksetzen.");
+        return Object.assign(ts, { startedAt: now, startedBy: by });
+      case "tPause":
+        if (!timerRunning(cfg, ts, now)) fail("Der Timer läuft gerade nicht.");
+        return Object.assign(ts, { acc: timerElapsed(cfg, ts, now), startedAt: null });
+      case "tReset":
+        return Object.assign(ts, { acc: 0, startedAt: null });
+    }
+    return null;
+  }
+  function updateSmall(cfg, ts, op, now, by) {
+    if (hasTimer(cfg)) { const r = updateTimer(cfg, ts, op, now, by); if (r) return r; }
+    if (cfg.kind === "counter") {
+      const n = ts.count || 0;
+      if (op.type === "inc") return Object.assign(ts, { count: Math.min(999, n + 1), by });
+      if (op.type === "dec") { if (!n) fail("Der Zähler steht schon auf 0."); return Object.assign(ts, { count: n - 1, by }); }
+      if (op.type === "cReset") return Object.assign(ts, { count: 0 });
+    }
+    if (cfg.kind === "regions" && op.type === "toggle") {
+      const id = String(op.region || "");
+      if (!/^[a-z0-9-]{1,40}$/.test(id)) fail("Unbekannte Region.");
+      const list = (ts.regions || []).slice(), i = list.indexOf(id);
+      if (i >= 0) list.splice(i, 1); else list.push(id);
+      return Object.assign(ts, { regions: list, by });
+    }
+    if (cfg.kind === "regions" && op.type === "cReset") return Object.assign(ts, { regions: [] });
+    fail("Das geht hier nicht.");
+  }
+
+  // ---------------------------------------------------------------- Wo bin ich? / Höhe messen
+  // Geoid-Höhe über Madeira (EGM96, 47–48 m): Abstand Ellipsoid ↔ Meeresspiegel. Android liefert die GPS-Höhe über dem
+  // Ellipsoid (WGS84) – davon wird sie abgezogen; das iPhone liefert sie schon über dem Meeresspiegel.
+  const GEOID_MADEIRA = 48;
+  function seaLevelAltitude(alt, ios) {
+    if (alt == null || !isFinite(alt)) return null;
+    return Math.round(ios ? alt : alt - GEOID_MADEIRA);
+  }
+  // Pfade der Inselkarte („M x,y L x,y … Z“, mehrere Teilflächen) in Punktlisten zerlegen
+  function pathRings(d) {
+    const rings = [];
+    String(d).split(/(?=M)/).forEach((part) => {
+      const nums = part.match(/-?\d+(?:\.\d+)?/g) || [];
+      const ring = [];
+      for (let i = 0; i + 1 < nums.length; i += 2) ring.push([+nums[i], +nums[i + 1]]);
+      if (ring.length >= 3) rings.push(ring);
+    });
+    return rings;
+  }
+  function inRing(x, y, ring) {
+    let c = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [x1, y1] = ring[j], [x2, y2] = ring[i];
+      if ((y1 > y) !== (y2 > y) && x < x1 + (y - y1) * (x2 - x1) / (y2 - y1)) c = !c;
+    }
+    return c;
+  }
+  // In welcher Region (Name aus map-data.js) liegt der Kartenpunkt? null = in keiner (z. B. auf dem Meer)
+  function regionAt(map, x, y) {
+    const names = Object.keys(map.regions);
+    for (const name of names) {
+      let inside = false;
+      map.regions[name].forEach((d) => pathRings(d).forEach((r) => { if (inRing(x, y, r)) inside = !inside; }));
+      if (inside) return name;
+    }
+    return null;
+  }
+
   // Liefert den neuen Zustand eines Tools; wirft ToolError, wenn es gerade nicht geht.
   function update(cfg, oldTs, op, now, by) {
     if (!hasState(cfg)) fail("Dieses Hilfsmittel speichert nichts.");
@@ -553,6 +653,7 @@
       return startPenalty(null);
     }
     if (isSecret(cfg)) return updateSecret(cfg, ts, op, now, by);
+    if (cfg.kind === "counter" || cfg.kind === "timer" || cfg.kind === "regions") return updateSmall(cfg, ts, op, now, by);
     if (op.type === "newRound") {
       if (cfg.kind === "tictactoe") {
         const st = tttStatus(ts.moves);
@@ -661,7 +762,8 @@
   const api = {
     TOOLS, LINKS, ARRIVALS_URL, UNESCO_URL, UNESCO_CRITERIA, ToolError, config, links, hasState, update, result, penaltyLeft,
     angleDiff, compassHit, tttStatus, norm, letterCount, sameName, hide, unhide, isSecret, randomInt, shuffle, letter, sameLetter,
-    phase, sanitize, draftEntries, isPhotoPuzzle, bayChoices, checkDrawing
+    phase, sanitize, draftEntries, isPhotoPuzzle, bayChoices, checkDrawing,
+    hasTimer, timerElapsed, timerLeft, timerRunning, timerEnd, GEOID_MADEIRA, seaLevelAltitude, pathRings, regionAt
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.QuestTools = api;

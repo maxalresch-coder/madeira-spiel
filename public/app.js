@@ -355,7 +355,8 @@
     return C.regions.map((r) => {
       const lvl = levels[r.id] || 0;
       const d = (MAP.regions[r.name] || []).join(" ");
-      return '<path class="region-path" data-region="' + r.id + '" tabindex="0" role="button" aria-label="' + esc(r.name + ": " + L.LEVELS[lvl].name) + '" d="' + d + '" fill="' + L.LEVELS[lvl].color + '"/>';
+      const hl = mapUI.here && mapUI.here.region === r.id && Date.now() < mapUI.here.hlUntil ? " here-hl" : "";
+      return '<path class="region-path' + hl + '" data-region="' + r.id + '" tabindex="0" role="button" aria-label="' + esc(r.name + ": " + L.LEVELS[lvl].name) + '" d="' + d + '" fill="' + L.LEVELS[lvl].color + '"/>';
     }).join("");
   }
   function mapSVG(levels, opts) {
@@ -387,11 +388,12 @@
       (app.state.ended ? '<div class="panel ended-note"><strong>' + icon("flag") + ' Urlaub beendet.</strong> <button class="btn btn-small btn-gold" data-go="stats">Zertifikat & Belohnungen</button></div>' : "") +
       '<section class="home-sec region-zone" aria-label="Regionale Quests">' +
       '<div class="zone-head"><div><h2>' + icon("map-pinned") + ' Regionale Quests</h2>' +
-      '<div class="zone-sub">' + s.explored + " von " + C.regions.length + " Regionen erkundet · " + s.questsDone + " von 30 erledigt</div></div></div>" +
+      '<div class="zone-sub">' + s.explored + " von " + C.regions.length + " Regionen erkundet · " + s.questsDone + " von 30 erledigt</div></div>" +
+      '<button class="here-btn" data-here aria-label="Wo bin ich? Standort einmalig abfragen">' + icon("locate-fixed") + "<span>Wo bin ich?</span></button></div>" +
       '<div class="map-wrap"><svg id="island" viewBox="' + [vb.x, vb.y, vb.w, vb.h].join(" ") + '" xmlns="http://www.w3.org/2000/svg">' +
-        '<g id="regions">' + regionPaths(s.levels) + '</g><g id="labels">' + labels + '</g><g id="pins"></g></svg></div>' +
+        '<g id="regions">' + regionPaths(s.levels) + '</g><g id="pins"></g><g id="labels">' + labels + "</g></svg></div>" +
       '<div class="map-bar"><div class="map-ctrl"><button data-zoom="out" aria-label="Herauszoomen">−</button><button data-zoom="in" aria-label="Hineinzoomen">+</button><button data-zoom="reset" aria-label="Ganze Insel">⤢</button></div>' +
-      '<div class="legend">' + legend + "</div></div></section>" +
+      '<div class="legend">' + legend + "</div></div>" + hereBox() + "</section>" +
       stackZone(s) +
       '<button class="btn btn-ghost btn-block all-quests-btn" data-all-quests>' + icon("list-checks") + ' Alle Quests anzeigen</button>';
   }
@@ -417,7 +419,8 @@
 
   // Pins: feste Bildschirmgröße. Liegen Pins zu nah beieinander, werden sie zu
   // einer Gruppe (Kreis mit Anzahl) zusammengefasst; beim Hineinzoomen lösen sie sich auf.
-  const PIN = { r: 14, hit: 22, lift: 20, gap: 34 };
+  // r = sichtbarer Kreis, hit = Tippfläche (Finger, 44 px), lift = Abstand über dem Standort, gap = ab hier Gruppe
+  const PIN = { r: 11, hit: 22, lift: 17, gap: 28 };
   // Pin-Farbe: offen = wie unbesuchte Region, erledigt = wie erkundete Region
   function pinFill(done) { return L.LEVELS[done ? 1 : 0].color; }
   const MIN_W = MAP.w / 16;
@@ -460,6 +463,7 @@
         }
       }
     }
+    avoidLabels(svg, groups, rect.width, H, k, headX, headY);
     mapUI.groups = groups;
     const U = (px) => +(px * k).toFixed(3);
     const X = (px) => +(vb.x + px * k).toFixed(2), Y = (py) => +(vb.y + py * k).toFixed(2);
@@ -475,18 +479,149 @@
         const o = g.items[0], q = o.p.q, done = !!app.state.quests[q.id];
         heads.push('<g class="pin' + (done ? " done" : "") + '" data-pin="' + q.id + '" tabindex="0" role="button" aria-label="' + esc(q.title + " (" + o.p.region.name + ")" + (done ? ", erledigt" : ", offen")) + '" ' + tr + ">" +
           '<circle class="pin-hit" r="' + PIN.hit + '"/><circle class="pin-halo" r="' + (PIN.r + 2) + '"/>' +
-          '<circle class="pin-head" r="' + PIN.r + '" fill="' + pinFill(done) + '"/><circle class="pin-core" r="4"/></g>');
+          '<circle class="pin-head" r="' + PIN.r + '" fill="' + pinFill(done) + '"/><circle class="pin-core" r="3"/></g>');
       } else {
         const nDone = g.items.filter((o) => app.state.quests[o.p.q.id]).length;
         const all = nDone === g.items.length;
         heads.push('<g class="pin group' + (all ? " done" : "") + '" data-group="' + gi + '" tabindex="0" role="button" aria-label="' + g.items.length + " Quests, " + nDone + ' erledigt" ' + tr + ">" +
           '<circle class="pin-hit" r="' + (PIN.hit + 2) + '"/><circle class="pin-halo" r="' + (PIN.r + 3) + '"/>' +
           '<circle class="pin-head" r="' + (PIN.r + 1) + '" fill="' + pinFill(all) + '"/>' +
-          '<text class="pin-txt" y="5">' + g.items.length + "</text></g>");
+          '<text class="pin-txt" y="4.5">' + g.items.length + "</text></g>");
       }
     });
-    $("#pins", svg).innerHTML = stems.join("") + heads.join("");
+    const here = mapUI.here && mapUI.here.xy ? (() => { // roter, pulsierender Punkt am tatsächlichen Standort
+      const [x, y] = mapUI.here.xy;
+      return '<g class="here-mark" pointer-events="none"><circle class="here-pulse" cx="' + x + '" cy="' + y + '" r="' + U(7) + '">' +
+        '<animate attributeName="r" values="' + U(6) + ";" + U(20) + '" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values=".55;0" dur="1.6s" repeatCount="indefinite"/></circle>' +
+        '<circle class="here-dot" cx="' + x + '" cy="' + y + '" r="' + U(6) + '" stroke-width="' + U(2.5) + '"/></g>';
+    })() : "";
+    $("#pins", svg).innerHTML = stems.join("") + heads.join("") + here;
   }
+  // ---- Standort: nur auf Knopfdruck und einmalig abgefragt; nichts wird gespeichert oder mit anderen Handys geteilt.
+  // Region aus den Gemeindegrenzen (map-data.js), Höhe aus GPS (auf Meeresspiegel umgerechnet) und Geländehöhe (Open-Meteo).
+  const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  function getPosition() {
+    return new Promise((res, rej) => {
+      if (!navigator.geolocation) { rej({ code: 0 }); return; }
+      navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+    });
+  }
+  // Geländehöhe am Standort (kostenlos, ohne Schlüssel; Copernicus-Höhenmodell, ca. 90 m Raster). Ohne Internet: null
+  async function terrainHeight(lat, lon) {
+    const ctl = window.AbortController ? new AbortController() : null;
+    const timer = ctl && setTimeout(() => ctl.abort(), 8000);
+    try {
+      const r = await fetch("https://api.open-meteo.com/v1/elevation?latitude=" + lat.toFixed(5) + "&longitude=" + lon.toFixed(5), ctl ? { signal: ctl.signal } : {});
+      const j = await r.json();
+      const v = j && j.elevation && j.elevation[0];
+      return typeof v === "number" && isFinite(v) ? Math.round(v) : null;
+    } catch (e) { return null; } finally { if (timer) clearTimeout(timer); }
+  }
+  async function locate() {
+    const pos = await getPosition(), c = pos.coords;
+    const xy = toMap(c.latitude, c.longitude), name = T.regionAt(MAP, xy[0], xy[1]);
+    const region = name ? (C.regions.find((r) => r.name === name) || {}).id || null : null;
+    const terrain = await terrainHeight(c.latitude, c.longitude);
+    return { lat: c.latitude, lon: c.longitude, acc: c.accuracy, xy, region, terrain,
+      alt: T.seaLevelAltitude(c.altitude, IS_IOS), altAcc: c.altitudeAccuracy != null && isFinite(c.altitudeAccuracy) ? Math.round(c.altitudeAccuracy) : null };
+  }
+  const geoError = (e) => e && e.code === 1 ? "Standort nicht erlaubt – bitte in den Browser-Einstellungen für diese Seite freigeben."
+    : e && e.code === 3 ? "Standort hat zu lange gedauert – bitte noch einmal versuchen (am besten unter freiem Himmel)."
+    : "Standort ist gerade nicht verfügbar.";
+  const fmtM = (m) => (m < 0 ? "−" : "") + fmt(Math.abs(m)) + " m";
+  function heightLine(r) {
+    const gps = r.alt != null ? "GPS " + fmtM(r.alt) + (r.altAcc != null ? " (± " + r.altAcc + " m)" : "") : "";
+    const ter = r.terrain != null ? "Gelände " + fmtM(r.terrain) : "";
+    return gps || ter ? "Höhe: " + [gps, ter].filter(Boolean).join(" · ") : "Keine Höhe verfügbar.";
+  }
+  function hereBox() {
+    const h = mapUI.here;
+    if (!h) return "";
+    if (h.loading) return '<div class="here-box">' + icon("locate") + "<span>Standort wird ermittelt …</span></div>";
+    const r = h.region && IX.regions[h.region];
+    return '<div class="here-box">' + icon("map-pin", "here-ic") + '<div class="grow"><strong>' + (r ? "Ihr seid in " + esc(r.name) : "Gerade in keiner Region.") + "</strong>" +
+      '<div class="small muted">' + heightLine(h) + "</div></div>" +
+      '<button class="here-close" data-here-close aria-label="Standort ausblenden">' + icon("x") + "</button></div>";
+  }
+  async function whereAmI() {
+    if (mapUI.here && mapUI.here.loading) return;
+    mapUI.here = { loading: true };
+    render();
+    try {
+      const r = await locate();
+      mapUI.here = Object.assign(r, { hlUntil: Date.now() + 4000 });
+      setTimeout(() => $$(".region-path.here-hl").forEach((p) => p.classList.remove("here-hl")), 4100);
+    } catch (e) {
+      mapUI.here = null;
+      toast(geoError(e), true);
+    }
+    render();
+  }
+  // Höhe messen (Stapel-Quests): dieselbe Abfrage, nur auf diesem Handy
+  async function measureAlt(qid) {
+    if (toolUI.alt[qid] && toolUI.alt[qid].loading) return;
+    toolUI.alt[qid] = { loading: true };
+    rerenderTools(qid);
+    try { toolUI.alt[qid] = { res: await locate() }; } catch (e) { toolUI.alt[qid] = { err: geoError(e) }; }
+    rerenderTools(qid);
+  }
+  function altitudeBody(qid, cfg) {
+    const a = toolUI.alt[qid] || {}, r = a.res;
+    const val = (label, v, sub) => '<div class="alt-val"><div class="muted small">' + label + '</div><div class="tool-big">' + (v == null ? "–" : fmtM(v)) + '</div><div class="small muted">' + sub + "</div></div>";
+    const best = r ? [r.alt, r.terrain].filter((v) => v != null) : [];
+    const goals = cfg.goals.map((g) => {
+      const hit = best.length && (g.min != null ? Math.max(...best) >= g.min : Math.min(...best) <= g.max);
+      return '<span class="mark-chip' + (hit ? " ok" : "") + '">' + (hit ? icon("check") + " " : "") + esc(g.text) + "</span>";
+    }).join(" ");
+    return '<p class="tool-label">Ziel: ' + goals + "</p>" +
+      (r ? '<div class="alt-vals">' +
+        val("GPS-Höhe", r.alt, r.alt == null ? "Handy liefert gerade keine" : (r.altAcc != null ? "± " + r.altAcc + " m · " : "") + "über dem Meeresspiegel") +
+        val("Gelände am Standort", r.terrain, r.terrain == null ? "nur mit Internet" : "Höhenmodell (Open-Meteo)") + "</div>" +
+        '<p class="small muted">' + (r.region ? "Region: " + esc(IX.regions[r.region].name) : "Gerade in keiner Region.") + "</p>" : "") +
+      (a.err ? '<p class="tool-warn">' + esc(a.err) + "</p>" : "") +
+      '<button class="btn btn-primary btn-block" data-tool-ui="alt-measure"' + (a.loading ? " disabled" : "") + ">" + icon("locate-fixed") + (a.loading ? " Messe …" : r ? " Neu messen" : " Höhe messen") + "</button>" +
+      '<p class="small muted">GPS-Höhen können 10–30 m danebenliegen. Die Geländehöhe gilt für den Boden an diesem Punkt (nicht auf Gebäuden, Brücken oder im Wasser).' +
+        (cfg.goals.some((g) => g.max != null) ? " Unter Wasser misst das Handy nichts – da zählt euer Wort." : "") + " Gespeichert wird nichts.</p>";
+  }
+
+  // Pin-Köpfe dürfen die Namen der 10 Regionen nicht verdecken und sich nicht gegenseitig überlappen: liegt ein Kopf
+  // auf einem Namen oder einem anderen Kopf, rückt er ein Stück weiter (zuerst nach oben); der Stiel zeigt weiter auf den
+  // echten Standort. Findet sich kein freier Platz, werden die beiden Köpfe zu einer Gruppe (Kreis mit Anzahl).
+  function avoidLabels(svg, groups, W, H, k, headX, headY) {
+    const vb = mapUI.vb, boxes = [];
+    $$(".region-label", svg).forEach((t) => {
+      let b; try { b = t.getBBox(); } catch (e) { return; }
+      if (!b.width) return;
+      boxes.push([(b.x - vb.x) / k - 2, (b.y - vb.y) / k - 1, b.width / k + 4, b.height / k + 2]);
+    });
+    const rad = (g) => (g.items.length > 1 ? PIN.r + 4 : PIN.r + 3);
+    const onLabel = (x, y, R) => boxes.some(([bx, by, bw, bh]) => Math.hypot(x - Math.max(bx, Math.min(x, bx + bw)), y - Math.max(by, Math.min(y, by + bh))) <= R);
+    const hitHead = (x, y, R, self) => groups.find((o) => o !== self && Math.hypot(x - o.x, y - o.y) <= R + rad(o) + 1);
+    const free = (x, y, R, self) => x >= R && x <= W - R && y >= R && y <= H - R && !onLabel(x, y, R) && !hitHead(x, y, R, self);
+    const ANG = [-90, -60, -120, -30, -150, 0, 180, 30, 150, 60, 120, 90];
+    for (let round = 0; round < 40; round++) {
+      let stuck = null;
+      for (const g of groups) {
+        const R = rad(g);
+        if (free(g.x, g.y, R, g)) continue;
+        let ok = false;
+        search: for (let d = 4; d <= 44; d += 4) { // nur ein kurzes Stück ausweichen – lange Stiele werden unübersichtlich
+          for (const a of ANG) {
+            const x = g.x + d * Math.cos(a * Math.PI / 180), y = g.y + d * Math.sin(a * Math.PI / 180);
+            if (free(x, y, R, g)) { g.x = x; g.y = y; ok = true; break search; }
+          }
+        }
+        if (!ok && groups.length > 1) { stuck = g; break; }
+      }
+      if (!stuck) return;
+      // kein Platz in der Nähe: mit dem nächsten Kopf zu einer Gruppe zusammenlegen und neu anordnen
+      const other = groups.filter((o) => o !== stuck).reduce((a, o) => (Math.hypot(o.x - stuck.x, o.y - stuck.y) < Math.hypot(a.x - stuck.x, a.y - stuck.y) ? o : a));
+      const items = stuck.items.concat(other.items);
+      groups.splice(groups.indexOf(other), 1);
+      Object.assign(stuck, { items, x: headX(items.reduce((s2, o) => s2 + o.ax, 0) / items.length), y: headY(items.reduce((s2, o) => s2 + o.ay, 0) / items.length) });
+    }
+  }
+
   // Gruppe antippen: Auswahl der Quests in der Gruppe
   function openGroup(gi) {
     const g = mapUI.groups && mapUI.groups[gi];
@@ -648,7 +783,7 @@
   // in einem eigenen Fenster. Der Zustand liegt in state.tools und wird über den Server geteilt.
   // Änderungen laufen über eine Warteschlange, damit schnelles Antippen (z. B. „+1 Auto“) nichts
   // verliert. Hilfsmittel haken nie ab und geben keine Punkte.
-  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, sel: {}, handoff: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false };
+  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, sel: {}, handoff: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false, alt: {} };
   const compass = { on: false, failed: "", samples: [], last: 0 };
   const tcfg = (qid) => T.config(qid, C);
   function serverNow() { return Date.now() + app.clockOffset; }
@@ -682,6 +817,8 @@
   // Kurzer Zustand rechts in der Zeile: Strafzeit, läuft, geschafft
   function toolStatus(qid) {
     const cfg = tcfg(qid), ts = toolState(qid), now = serverNow();
+    if (cfg.local) return null;
+    if (cfg.kind === "counter" || cfg.kind === "timer" || cfg.kind === "regions") return smallStatus(cfg, ts, now);
     if (T.penaltyLeft(ts, now)) return { cls: "lock", until: ts.penaltyUntil, html: icon("lock") + ' <span data-tick="down" data-end="' + ts.penaltyUntil + '">' + mmss(ts.penaltyUntil - now) + "</span>" };
     if ((cfg.kind === "countdown" || cfg.kind === "traffic") && ts.startedAt != null && now < ts.startedAt + cfg.seconds * 1000) {
       const end = ts.startedAt + cfg.seconds * 1000;
@@ -695,11 +832,61 @@
     return null;
   }
 
+  // Zeile der kleinen Hilfsmittel (Stapel-Quests): Zähler „3/10“, Timer läuft „4:12“, fertig = grün
+  function smallStatus(cfg, ts, now) {
+    const parts = [];
+    let cls = "run", until = null;
+    if (cfg.kind === "counter" || cfg.kind === "regions") {
+      const n = cfg.kind === "counter" ? (ts.count || 0) : (ts.regions || []).length;
+      if (n >= cfg.target) cls = "ok";
+      if (n || cls === "ok") parts.push((cls === "ok" ? icon("check") + " " : "") + n + "/" + cfg.target);
+    }
+    if (T.hasTimer(cfg)) {
+      const left = T.timerLeft(cfg, ts, now);
+      if (T.timerRunning(cfg, ts, now)) { until = T.timerEnd(cfg, ts); parts.push(icon("timer") + ' <span data-tick="down" data-end="' + until + '">' + mmss(left) + "</span>"); }
+      else if (left <= 0) { parts.push(icon("check") + " Zeit um"); if (cfg.kind === "timer") cls = "ok"; }
+      else if (ts.acc) parts.push("Pause " + mmss(left));
+    }
+    return parts.length ? { cls, until, html: parts.join(" · ") } : null;
+  }
+
+  // ---- Kleine Hilfsmittel der Stapel-Quests: Zähler, Timer, Regionen-Liste (synchron über alle Handys)
+  const goalNote = () => '<div class="cnt-ok">' + icon("circle-check") + " Ziel erreicht – abhaken macht ihr selbst.</div>";
+  function counterBody(qid, cfg, ts, now) {
+    const n = ts.count || 0, pct = Math.min(100, Math.round(n / cfg.target * 100));
+    return '<div class="cnt' + (n >= cfg.target ? " done" : "") + '"><div class="cnt-prog"><span class="cnt-num">' + n + "</span> von " + cfg.target + " " + esc(cfg.unit) + "</div>" +
+      '<div class="cnt-bar"><i style="width:' + pct + '%"></i></div>' + (n >= cfg.target ? goalNote() : "") +
+      '<div class="cnt-row"><button class="btn btn-ghost cnt-minus" data-tool-act="dec" aria-label="Minus 1"' + (n ? "" : " disabled") + ">−1</button>" +
+      '<button class="btn btn-primary cnt-plus" data-tool-act="inc" aria-label="Plus 1">+1</button></div></div>' +
+      (T.hasTimer(cfg) ? '<div class="cnt-timer"><div class="tool-label">' + icon("timer") + " Timer: " + (cfg.minutes === 60 ? "1 Stunde" : cfg.minutes + " Minuten") + "</div>" + timerBody(qid, cfg, ts, now, false) + "</div>" : "");
+  }
+  function timerBody(qid, cfg, ts, now, big) {
+    const left = T.timerLeft(cfg, ts, now), run = T.timerRunning(cfg, ts, now), end = T.timerEnd(cfg, ts);
+    if (left <= 0) {
+      const flash = end && toolUI.signaled.has(qid + ":" + end) && now - end < 4000 ? " tool-flash" : "";
+      return '<div class="tool-result ok tool-done' + flash + '">' + icon("circle-check") + "<div><strong>Zeit um – " + (cfg.minutes === 60 ? "1 Stunde" : cfg.minutes + " Minuten") + " vorbei!</strong>" +
+        '<div class="small">Geschafft? Dann abhaken. Sonst zurücksetzen und neu starten.</div></div></div>' + tBtn("tReset", icon("rotate-ccw") + " Zurücksetzen", "btn-ghost btn-block");
+    }
+    const sub = run ? "läuft" + (ts.startedBy ? " · gestartet von " + esc(ts.startedBy) : "") : ts.acc ? "pausiert" : "noch nicht gestartet";
+    return '<div class="tool-clock"' + (run ? ' data-until="' + end + '"' : "") + '><div class="' + (big ? "tool-huge" : "tool-big") + ' timer-num"' + (run ? ' data-tick="down" data-end="' + end + '"' : "") + ">" + mmss(left) + "</div>" +
+      '<div class="muted small">' + sub + "</div></div>" +
+      '<div class="grid2">' + (run ? tBtn("tPause", icon("pause") + " Pause", "btn-ghost") : tBtn("tStart", icon("play") + (ts.acc ? " Weiter" : " Start"), "btn-primary")) +
+      tBtn("tReset", icon("rotate-ccw") + " Zurücksetzen", "btn-ghost", run || ts.acc ? "" : " disabled") + "</div>";
+  }
+  function regionsBody(cfg, ts) {
+    const on = ts.regions || [], n = on.length;
+    return '<div class="cnt' + (n >= cfg.target ? " done" : "") + '"><div class="cnt-prog"><span class="cnt-num">' + n + "</span> von " + cfg.target + " Regionen</div>" +
+      '<div class="cnt-bar"><i style="width:' + Math.min(100, n / cfg.target * 100) + '%"></i></div>' + (n >= cfg.target ? goalNote() : "") + "</div>" +
+      '<p class="tool-label">Antippen, wo ihr heute wart:</p><div class="region-chips">' +
+      C.regions.map((r) => '<button class="chip' + (on.indexOf(r.id) >= 0 ? " on" : "") + '" data-tool-act="toggle" data-reg="' + r.id + '" aria-pressed="' + (on.indexOf(r.id) >= 0) + '">' +
+        (on.indexOf(r.id) >= 0 ? icon("check") + " " : "") + esc(r.name) + "</button>").join("") + "</div>";
+  }
+
   function openTool(qid) {
     const cfg = tcfg(qid);
     const m = openModal(() => '<div class="modal-head"><h2 class="tool-title">' + icon(cfg.icon) + " " + esc(cfg.label) + "</h2>" +
       '<button class="modal-close" data-close aria-label="Schließen">' + icon("x") + "</button></div>" +
-      '<p class="muted small tool-sub-title">' + esc(IX.quests[qid].title) + " · freiwillig – abhaken macht ihr selbst</p>" +
+      '<p class="muted small tool-sub-title">' + esc((IX.quests[qid] || IX.stack[qid]).title) + " · freiwillig – abhaken macht ihr selbst</p>" +
       '<div class="tool" data-tool="' + qid + '"><div class="tool-body">' + toolBody(qid) + "</div></div>", bindTools, { stack: true });
     // Während eine Liste gezogen wird, nicht neu zeichnen (sonst reißt das Ziehen ab)
     const refresh = m.refresh;
@@ -721,7 +908,9 @@
     let saved = null;
     try { saved = JSON.parse(store.get("openTool") || "null"); } catch (e) { /* egal */ }
     store.set("openTool", null);
-    if (!saved || !tcfg(saved.qid) || !IX.quests[saved.qid] || Date.now() - saved.t > 60 * 60000) return;
+    if (!saved || !tcfg(saved.qid) || Date.now() - saved.t > 60 * 60000) return;
+    if (IX.stack[saved.qid]) { if (app.state.open.indexOf(saved.qid) >= 0) openTool(saved.qid); return; } // Stapel-Quest: nur solange offen
+    if (!IX.quests[saved.qid]) return;
     openQuest(saved.qid);
     openTool(saved.qid);
   }
@@ -760,6 +949,10 @@
     }
     const res = T.result(cfg, ts, now);
     switch (cfg.kind) {
+      case "counter": return counterBody(qid, cfg, ts, now);
+      case "timer": return timerBody(qid, cfg, ts, now, true);
+      case "regions": return regionsBody(cfg, ts);
+      case "altitude": return altitudeBody(qid, cfg);
       case "countdown": {
         const end = ts.startedAt != null ? ts.startedAt + cfg.seconds * 1000 : 0;
         if (end && now < end) {
@@ -2064,7 +2257,7 @@
   let audioCtx = null;
   document.addEventListener("pointerdown", () => {
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (!audioCtx && AC && !navigator.vibrate) { try { audioCtx = new AC(); } catch (e) { audioCtx = null; } }
+    if (!audioCtx && AC) { try { audioCtx = new AC(); } catch (e) { audioCtx = null; } }
     if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
   }, true);
   function beep(times) {
@@ -2077,6 +2270,8 @@
     }
   }
   function signalEnd() { if (navigator.vibrate) navigator.vibrate([250, 120, 250]); else beep(2); }
+  // Timer der Stapel-Quests: Ton und, wo möglich, Vibration (iPhone: nur Ton)
+  function signalTimer() { if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]); beep(3); }
   function tapFeedback(el) {
     if (navigator.vibrate) { navigator.vibrate(15); return; }
     if (el && el.animate) el.animate([{ transform: "scale(.96)" }, { transform: "scale(1)" }], { duration: 160 }); // iPhone: sichtbar
@@ -2280,6 +2475,7 @@
       }
       return rerenderTools(qid);
     }
+    if (ui === "alt-measure") return measureAlt(qid);
     if (ui === "bay-big") { toolUI.bayBig = !toolUI.bayBig; return rerenderTools(qid); }
     if (ui === "bay-ref") { const d = toolUI.draw; if (d) d.showRef = !d.showRef; return rerenderTools(qid); }
     if (ui === "draw-here") {
@@ -2366,6 +2562,7 @@
       op.deg = h;
     } else if (act === "inc") op.d = Number(b.dataset.d);
     else if (act === "move") op.cell = Number(b.dataset.cell);
+    else if (act === "toggle") op.region = b.dataset.reg;
     else if (act === "players") { op.x = toolUI.ttt.sel[0]; op.o = toolUI.ttt.sel[1]; }
     else if (act === "newGame") toolUI.ttt.sel = [];
     // act === "penalty" („Daneben“, wenn Spieler selbst urteilen) startet die Strafzeit sofort – ohne Rückfrage
@@ -2467,6 +2664,7 @@
 
   // Taktgeber: Countdowns/Stoppuhren weiterzählen; ist eine Zeit abgelaufen, Hilfsmittel neu zeichnen + Signal
   setInterval(() => {
+    checkTimers();
     const ticks = $$("[data-tick]"), dues = $$("[data-until]");
     if (!ticks.length && !dues.length) return;
     const now = serverNow();
@@ -2482,16 +2680,32 @@
     due.forEach((qid) => {
       const ts = toolState(qid), cfg = tcfg(qid);
       const timed = cfg.kind === "countdown" || cfg.kind === "traffic";
-      const at = timed ? ts.startedAt : ts.penaltyUntil;
+      const at = T.hasTimer(cfg) ? T.timerEnd(cfg, ts) : timed ? ts.startedAt : ts.penaltyUntil;
       const key = qid + ":" + at;
       // Signal nur für abgelaufene Countdowns und Strafzeiten (nicht z. B. für „Anzeigen“)
       if (at != null && (timed || at <= now) && !toolUI.signaled.has(key)) {
         toolUI.signaled.add(key);
-        signalEnd(); // Vibration (Android) bzw. Ton (iPhone) – dazu die Anzeige auf allen Geräten
+        if (T.hasTimer(cfg)) signalTimer(); else signalEnd(); // Vibration (Android) bzw. Ton (iPhone) – dazu die Anzeige auf allen Geräten
       }
       rerenderTools(qid);
     });
   }, 200);
+
+  // Timer der offenen Stapel-Quests: Ende auch melden, wenn gerade eine andere Seite offen ist (Ton + Vibration)
+  function checkTimers() {
+    if (!app.state || !app.state.open) return;
+    const now = serverNow();
+    app.state.open.forEach((qid) => {
+      const cfg = qid && tcfg(qid);
+      if (!cfg || !T.hasTimer(cfg)) return;
+      const end = T.timerEnd(cfg, toolState(qid)), key = qid + ":" + end;
+      if (end == null || end > now || now - end > 60000 || toolUI.signaled.has(key)) return; // nach Neuladen kein alter Alarm
+      toolUI.signaled.add(key);
+      signalTimer();
+      toast("Zeit um: „" + IX.stack[qid].title + "“");
+      rerenderTools(qid);
+    });
+  }
 
   function openQuest(questId) {
     const q = IX.quests[questId];
@@ -2588,7 +2802,7 @@
     return '<div class="squest ' + q.difficulty + '">' +
       '<div class="row between"><span class="pill diff-' + q.difficulty + '">' + diffLabel(q.difficulty) + "</span>" +
       (m ? '<span class="pill mult-badge">' + L.fmtFactor(m.factor) + (m.factor === 5 ? " Jackpot" : "") + "</span>" : "") + "</div>" +
-      "<h3>" + esc(q.title) + "</h3>" + taskHTML(q) +
+      "<h3>" + esc(q.title) + "</h3>" + taskHTML(q) + (tcfg(id) ? '<div class="stack-tools">' + toolHTML(id) + "</div>" : "") +
       '<div class="pts">' + (m && pts !== base ? "<s>" + base + "</s>" : "") + pts + " Punkte</div>" +
       '<div class="actions">' +
         '<button class="btn btn-good" data-done="' + id + '">' + icon("check") + ' Erledigt</button>' +
@@ -3061,7 +3275,7 @@
       "<li><strong>Tausch-Joker (10) · 5 im Spiel:</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen. Rückgängig gemachte Tausche zählen nicht.</li>" +
       "<li><strong>Multiplikator (10) · 3 im Spiel:</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. Einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt. Shop und Erfolge zeigen immer, wie viele Joker schon <em>genutzt</em> wurden, z. B. „Tausch-Joker · 2 von 5 genutzt“.</p>" +
-      "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos, Kriterien wählen oder Bucht zeichnen und raten (Küstenkarte der Ponta de São Lourenço: CAOP, Direção-Geral do Território). Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben geht jeder Schritt auf jedem Handy (Phase 1 geheim eingeben, 2 raten, 3 Ergebnis): Wer eingibt, tippt, die anderen schauen weg. Danach ist alles verdeckt; „Anzeigen“ per langem Drücken ist nur für die Person gedacht, die eingegeben hat. „Auflösen“ deckt alles für alle auf. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst.</p>" +
+      "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos, Kriterien wählen oder Bucht zeichnen und raten (Küstenkarte der Ponta de São Lourenço: CAOP, Direção-Geral do Território). Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben geht jeder Schritt auf jedem Handy (Phase 1 geheim eingeben, 2 raten, 3 Ergebnis): Wer eingibt, tippt, die anderen schauen weg. Danach ist alles verdeckt; „Anzeigen“ per langem Drücken ist nur für die Person gedacht, die eingegeben hat. „Auflösen“ deckt alles für alle auf. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst. Manche Stapel-Quests haben Zähler, Timer oder „Höhe messen“; beim Abhaken oder Tauschen beginnen sie wieder bei null. „Wo bin ich?“ bei der Inselkarte fragt einmalig den Standort ab und zeigt Region und Höhe (Geländehöhe: Open-Meteo) – gespeichert wird nichts.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
@@ -3266,6 +3480,9 @@
       return zoomAt(t.dataset.zoom === "in" ? 1.6 : 1 / 1.6, vb.x + vb.w / 2, vb.y + vb.h / 2);
     }
     if (t.hasAttribute("data-all-quests")) return openAllQuests();
+    if (t.dataset.openTool) return openTool(t.dataset.openTool); // Hilfsmittel einer offenen Stapel-Quest
+    if (t.hasAttribute("data-here")) return whereAmI();
+    if (t.hasAttribute("data-here-close")) { mapUI.here = null; return render(); }
     if (t.dataset.go) return go(t.dataset.go);
     if (t.dataset.region) return openRegion(t.dataset.region);
     if (t.dataset.done) return act({ type: "stack", questId: t.dataset.done }, { fxFrom: t });
