@@ -439,6 +439,7 @@
   }
   // Google-Maps-Link: über den Namen des Eintrags oder, falls keiner, über die Pin-Koordinaten
   function mapsUrl(q) {
+    if (q.mapsUrl) return q.mapsUrl; // fester Link hat Vorrang
     const query = q.maps || (q.pin[0] + "," + q.pin[1]);
     return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(query);
   }

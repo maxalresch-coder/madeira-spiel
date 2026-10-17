@@ -113,6 +113,7 @@ C.regions.forEach(r => r.quests.forEach(q => {
   assert(q.title && q.location && q.desc && q.task.startsWith("Eure Aufgabe: "), q.id);
   assert(Array.isArray(q.pin) && q.pin.length === 2, q.id);
   assert(q.maps === null || (typeof q.maps === "string" && q.maps.length > 3), q.id + ": maps");
+  assert(q.mapsUrl === undefined || /^https:\/\/(maps\.app\.goo\.gl|www\.google\.com\/maps)\//.test(q.mapsUrl), q.id + ": mapsUrl");
 }));
 
 // Kompatibilität alter Spielstände

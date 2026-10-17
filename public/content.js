@@ -7,6 +7,7 @@
 //    pin      [Breitengrad, Längengrad] der Markierung auf der Inselkarte
 //    maps     Suchbegriff für den Google-Maps-Link (Name des Eintrags);
 //             null = der Link öffnet stattdessen die Pin-Koordinaten
+//    mapsUrl  optional: fester Google-Maps-Link, wird statt des Such-Links verwendet
 //    Bild     optional: public/images/quests/<ID>.jpg (siehe README dort)
 //    desc     Beschreibung
 //    task     Aufgabe ("Eure Aufgabe: …")
@@ -241,7 +242,7 @@ window.GAME_CONTENT = {
         },
         {
           id: "q-pmz-2", title: `Gischt ins Gesicht`,
-          location: `Naturpools (Piscinas Naturais) von Porto Moniz`, pin: [32.8682, -17.1705], maps: "Piscinas Naturais do Porto Moniz",
+          location: `Naturpools (Piscinas Naturais) von Porto Moniz`, pin: [32.8682, -17.1705], maps: "Piscinas Naturais do Porto Moniz", mapsUrl: "https://maps.app.goo.gl/CRShE5G3Ngwnvs9s5",
           desc: `Die Naturpools sind das Wahrzeichen von Porto Moniz: Becken im schwarzen Vulkangestein, zusammen rund 3.800 m² groß, in die der Atlantik bei Flut hineinschwappt.`,
           task: `Eure Aufgabe: Geht im Becken bis an den äußeren Rand, wo die Wellen gegen das Gestein schlagen, und wartet, bis euch eine Welle Wasser ins Gesicht spritzt. Geschafft ist die Quest, wenn es jede von euch erwischt hat.`
         },
