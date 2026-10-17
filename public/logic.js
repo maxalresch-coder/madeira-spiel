@@ -358,6 +358,41 @@
     return ids.every((id) => ix.stack[id]) && Object.keys(state.quests).every((id) => ix.quests[id]);
   }
 
+  // ---------------------------------------------------------------- Fortschritt in Etappen
+  // Für die Balken in der Statistik: jede Etappe hat die Farbe der Stufe auf der Inselkarte
+  // (1 = Erkundet, 2 = Erobert, 3 = Erschlossen). Ist eine Etappe geschafft, beginnt die
+  // nächste wieder bei 0. Alles wird aus dem Spielstand berechnet – Rückgängig passt also.
+  function regionProgress(sum, content) {
+    const total = content.regions.length;
+    const counts = [1, 2, 3].map((lvl) => content.regions.filter((r) => sum.levels[r.id] >= lvl).length);
+    const words = ["erkundet", "erobert", "erschlossen"];
+    let stage = counts.findIndex((c) => c < total);
+    const full = stage < 0;
+    if (full) stage = 2;
+    return {
+      stage: stage + 1, color: LEVELS[stage + 1].color, value: counts[stage], max: total,
+      pct: full ? 100 : counts[stage] / total * 100,
+      text: counts[stage] + " von " + total + " Regionen " + words[stage],
+      done: counts.map((c) => c >= total)
+    };
+  }
+  function rankProgress(earned) {
+    const bounds = [RANKS[1].min, RANKS[2].min, MAX_POINTS]; // 700, 1.500, 2.400
+    const targets = [RANKS[1].name, RANKS[2].name, "zum Maximum"];
+    let stage = bounds.findIndex((b) => earned < b);
+    const full = stage < 0;
+    if (full) stage = 2;
+    const from = stage === 0 ? 0 : bounds[stage - 1], to = bounds[stage];
+    const fmtN = (n) => Math.round(n).toLocaleString("de-DE");
+    return {
+      stage: stage + 1, color: LEVELS[stage + 1].color,
+      pct: full ? 100 : Math.max(0, (earned - from) / (to - from) * 100),
+      text: full ? (earned > MAX_POINTS ? "Maximum übertroffen (+" + fmtN(earned - MAX_POINTS) + " Punkte)" : "Maximum erreicht!")
+        : "noch " + fmtN(to - earned) + " Punkte bis " + targets[stage],
+      ranks: RANKS.map((r) => ({ name: r.name, reached: earned >= r.min }))
+    };
+  }
+
   function canUndo(entry) {
     return !entry.undone && ["quest", "stack", "joker", "swap", "mult"].indexOf(entry.type) >= 0;
   }
@@ -380,7 +415,7 @@
 
   const api = {
     STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MAX_SWAPS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
-    newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible,
+    newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible, regionProgress, rankProgress,
     canUndo, dayCount, pointsPerDay, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

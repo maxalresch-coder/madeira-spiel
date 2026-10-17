@@ -398,3 +398,10 @@ h2 .ic, h3 .ic { width: 1em; height: 1em; vertical-align: -0.12em; }
 .region-zone .zone-sub { color: var(--ocean-deep); opacity: .8; }
 .region-zone .map-wrap { box-shadow: none; border-radius: 14px; }
 @media (prefers-color-scheme: dark) { .region-zone .zone-head h2, .region-zone .zone-sub { color: var(--ink); } }
+
+/* ---------- Fortschritt in Etappen (Statistik) ---------- */
+.progress.stage { height: 14px; margin: 10px 0 4px; }
+.progress.stage > div { background-image: none; transition: width .6s, background-color .3s; }
+.rank-panel .rank-sub { opacity: .9; margin-top: 2px; }
+.rank-panel .ms { color: rgba(255,255,255,.8); border-color: rgba(255,255,255,.35); }
+.rank-panel .ms.on { color: #2e1d00; border-color: #8a5a00; }

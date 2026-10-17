@@ -274,13 +274,14 @@
       const lvl = s.levels[r.id];
       return '<button class="region-btn" data-region="' + r.id + '"><span class="dot" style="background:' + L.LEVELS[lvl].color + '"></span><span class="region-name">' + esc(r.name) + "</span>" + stars(lvl) + "</button>";
     }).join("");
-    const milestones = [["allExplored", "erkundet"], ["allConquered", "erobert"], ["allDeveloped", "erschlossen"]]
-      .map(([k, w]) => '<span class="ms' + (s[k] ? " on" : "") + '">' + (s[k] ? icon("check") + " " : "") + "Madeira " + w + "</span>").join("");
+    const rp = L.regionProgress(s, C);
+    const milestones = ["erkundet", "erobert", "erschlossen"]
+      .map((w, i) => '<span class="ms' + (rp.done[i] ? " on" : "") + '">' + (rp.done[i] ? icon("check") + " " : "") + "Madeira " + w + "</span>").join("");
     return '<section class="home-sec regions-sec" aria-label="Regionen">' +
         '<div class="sec-head"><h2>' + icon("map-pinned") + ' Regionen</h2><button class="btn btn-small btn-ghost" data-all-quests>' + icon("list-checks") + ' Alle Quests</button></div>' +
         '<div class="panel">' +
-          '<div class="row between"><strong>' + s.explored + " / " + C.regions.length + ' Regionen erkundet</strong><span class="muted small">' + s.questsDone + " von 30 regionale Quests</span></div>" +
-          '<div class="progress" style="margin-top:8px"><div style="width:' + (s.explored / C.regions.length * 100) + '%"></div></div>' +
+          '<div class="row between"><strong>' + rp.text + '</strong><span class="muted small">' + s.questsDone + " von 30 regionale Quests</span></div>" +
+          stageBar(rp, "Regionen") +
           '<div class="ms-row">' + milestones + "</div>" +
         "</div>" +
         '<div class="region-list">' + list + "</div></section>";
@@ -711,16 +712,24 @@
   }
 
   // ---- Statistik & Einstellungen
+  // Fortschrittsbalken in Etappen: Farbe = Farbe der Stufe auf der Inselkarte
+  function stageBar(p, label) {
+    return '<div class="progress stage" role="progressbar" aria-label="' + esc(label) + ": " + esc(p.text) + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(p.pct) + '">' +
+      '<div style="width:' + p.pct + "%;background:" + p.color + '"></div></div>';
+  }
+
   function viewStats(s) {
-    const pct = s.nextRank ? Math.min(100, (s.earned - L.RANKS[s.rank].min) / (s.nextRank.min - L.RANKS[s.rank].min) * 100) : 100;
+    const kp = L.rankProgress(s.earned);
+    const rankChecks = kp.ranks.map((r) => '<span class="ms' + (r.reached ? " on" : "") + '">' + (r.reached ? icon("check") + " " : "") + esc(r.name) + "</span>").join("");
     const days = L.dayCount(app.state, Date.now());
     const perDay = L.pointsPerDay(app.state, Date.now());
     const lvlCounts = [0, 0, 0, 0];
     C.regions.forEach((r) => lvlCounts[s.levels[r.id]]++);
     return '' +
       '<div class="panel rank-panel"><div class="muted small">Team-Rang</div><div class="rank-big">' + esc(s.rankName) + "</div>" +
-      '<div class="progress" style="margin:10px 0 6px"><div style="width:' + pct + '%"></div></div>' +
-      '<div class="small muted">' + (s.nextRank ? "Noch " + fmt(s.nextRank.min - s.earned) + " Punkte bis „" + s.nextRank.name + "“" : "Höchster Rang erreicht!") + "</div></div>" +
+      '<div class="small rank-sub">' + fmt(s.earned) + " Punkte verdient · " + esc(kp.text) + "</div>" +
+      stageBar(kp, "Teamrang") +
+      '<div class="ms-row">' + rankChecks + "</div></div>" +
       regionsSection(s) +
       '<div class="kpis">' +
         kpi(fmt(s.earned), "Punkte verdient") + kpi(fmt(s.balance), "Kontostand") +
@@ -732,7 +741,7 @@
       '<div class="section-title"><h3>Woher die Punkte kommen</h3></div><div class="panel">' +
         breakdown([["Regionen & Stufen", s.regionPts, "var(--laurel)"], ["Insel-Bonus", s.madeiraBonus, "var(--gold)"], ["Stapel-Quests", s.stackPts, "var(--medium)"]], s.earned) +
         '<div class="legend" style="margin-top:10px">' + L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + ": " + lvlCounts[i] + "</span>").join("") + "</div>" +
-        '<p class="muted small" style="margin:8px 0 0">Joker: Region-Joker ' + s.jokerUsed + " von 1 (" + fmt(s.jokerUsed * L.PRICES.joker) + " P) · Tausch " + s.swaps + " von " + L.MAX_SWAPS + " (" + fmt(s.swaps * L.PRICES.swap) + " P) · Multiplikator " + s.multCount + " von " + L.MAX_MULTS + " (" + fmt(s.multCount * L.PRICES.mult) + " P) · insgesamt ausgegeben " + fmt(s.spent) + " P</p></div>" +
+        '<p class="muted small" style="margin:8px 0 0">Joker: Tausch ' + s.swaps + " von " + L.MAX_SWAPS + " (" + fmt(s.swaps * L.PRICES.swap) + " P) · Multiplikator " + s.multCount + " von " + L.MAX_MULTS + " (" + fmt(s.multCount * L.PRICES.mult) + " P) · Region-Joker " + s.jokerUsed + " von 1 (" + fmt(s.jokerUsed * L.PRICES.joker) + " P) · insgesamt ausgegeben " + fmt(s.spent) + " P</p></div>" +
       '<div class="section-title"><h3>Spiel</h3></div>' +
       '<div class="panel" style="display:grid;gap:10px">' +
         '<button class="btn btn-ghost btn-block" data-all-quests>' + icon("list-checks") + ' Alle Quests ansehen</button>' +

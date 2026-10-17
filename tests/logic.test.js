@@ -163,6 +163,39 @@ assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
   assert.strictEqual(L.summary(w, C).spent, 50);
 }
 
+// Fortschrittsbalken in Etappen (Farben exakt wie die Stufen auf der Inselkarte)
+{
+  let g2 = L.newGame(C, 21, t);
+  let rp = L.regionProgress(L.summary(g2, C), C);
+  assert.deepStrictEqual([rp.stage, rp.pct, rp.text, rp.color], [1, 0, "0 von 10 Regionen erkundet", L.LEVELS[1].color]);
+  C.regions.forEach(r => { g2 = act(g2, { type: "quest", questId: r.quests[0].id }); });
+  g2 = act(g2, { type: "quest", questId: "q-cal-2" });
+  rp = L.regionProgress(L.summary(g2, C), C);
+  assert.deepStrictEqual([rp.stage, rp.value, rp.color, rp.done], [2, 1, L.LEVELS[2].color, [true, false, false]]);
+  assert.strictEqual(rp.text, "1 von 10 Regionen erobert");
+  // Rückgängig unter die Grenze -> zurück in Etappe 1
+  g2 = act(g2, { type: "undo", logId: g2.log.find(e => e.type === "quest" && e.data.questId === "q-pmz-1").id });
+  rp = L.regionProgress(L.summary(g2, C), C);
+  assert.deepStrictEqual([rp.stage, rp.value, rp.color, rp.done[0]], [1, 9, L.LEVELS[1].color, false]);
+  // alles erschlossen -> voll gold
+  C.regions.forEach(r => r.quests.forEach(q => { if (!g2.quests[q.id]) g2 = act(g2, { type: "quest", questId: q.id }); }));
+  rp = L.regionProgress(L.summary(g2, C), C);
+  assert.deepStrictEqual([rp.stage, rp.pct, rp.color, rp.done], [3, 100, L.LEVELS[3].color, [true, true, true]]);
+
+  let k = L.rankProgress(0);
+  assert.deepStrictEqual([k.stage, k.pct, k.text, k.color], [1, 0, "noch 700 Punkte bis Abenteurer", L.LEVELS[1].color]);
+  assert.deepStrictEqual(k.ranks.map(x => x.reached), [true, false, false]);
+  k = L.rankProgress(700);
+  assert.deepStrictEqual([k.stage, k.pct, k.text, k.color], [2, 0, "noch 800 Punkte bis Inselkönig", L.LEVELS[2].color]);
+  assert.deepStrictEqual(k.ranks.map(x => x.reached), [true, true, false]);
+  k = L.rankProgress(1950);
+  assert.deepStrictEqual([k.stage, k.pct, k.text, k.color], [3, 50, "noch 450 Punkte bis zum Maximum", L.LEVELS[3].color]);
+  k = L.rankProgress(699);
+  assert.strictEqual(k.stage, 1);
+  assert.deepStrictEqual([L.rankProgress(2400).pct, L.rankProgress(2400).text], [100, "Maximum erreicht!"]);
+  assert.deepStrictEqual([L.rankProgress(2510).pct, L.rankProgress(2510).text], [100, "Maximum übertroffen (+110 Punkte)"]);
+}
+
 // Belohnungen
 assert.strictEqual(L.formatReward(C.rewards[0], 350), "10 Min 30 Sek");
 assert.strictEqual(L.formatReward(C.rewards[0], 2000), "60 Min");
