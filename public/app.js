@@ -645,7 +645,7 @@
   // in einem eigenen Fenster. Der Zustand liegt in state.tools und wird über den Server geteilt.
   // Änderungen laufen über eine Warteschlange, damit schnelles Antippen (z. B. „+1 Auto“) nichts
   // verliert. Hilfsmittel haken nie ab und geben keine Punkte.
-  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false };
+  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, sel: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false };
   const compass = { on: false, failed: "", samples: [], last: 0 };
   const tcfg = (qid) => T.config(qid, C);
   function serverNow() { return Date.now() + app.clockOffset; }
@@ -687,6 +687,7 @@
     if (cfg.kind === "cablecar" && ts.startedAt != null && ts.stoppedAt == null) return { cls: "run", html: '<span data-tick="up" data-start="' + ts.startedAt + '">' + upfmt(now - ts.startedAt) + "</span>" };
     const res = T.result(cfg, ts, now);
     if (res && res.ok) return { cls: "ok", html: icon("check") + " Geschafft" };
+    if (res && cfg.kind === "photoGrid") return { cls: "run", html: "gefunden" };
     if ((cfg.kind === "tictactoe" && ts.players) || (T.isSecret(cfg) && ts.secret && !res)) return { cls: "run", html: "läuft" };
     return null;
   }
@@ -848,6 +849,7 @@
       case "secretTerms": return secretTermsBody(qid, cfg, ts, now);
       case "secretRank": return secretRankBody(qid, cfg, ts, now);
       case "photoWord": return photoWordBody(qid, cfg, ts, now);
+      case "photoGrid": case "photoNames": case "photoPick": return photoPuzzleBody(qid, cfg, ts, now);
       case "choice": return choiceBody(qid, cfg, ts);
 
       case "tictactoe": {
@@ -1018,6 +1020,87 @@
       tBtn("guess", icon("lock") + " Festschreiben und vergleichen", "btn-primary btn-block");
     if (peeking(qid)) h += '<p class="tool-label">Geheime Rangfolge:</p>' + orderList();
     return h + peekBtn(qid) + revealBtn(ts) + newRoundBtn(false, "Neue Runde");
+  }
+
+  // ---- Foto-Rätsel (Bananenversteck, Türen, Steinadler) auf der Foto-Grundlage. Phase 1: Fotos + geheime Festlegung
+  // (Auswahl nur auf diesem Handy bis „Festschreiben“), Phase 2: raten, Phase 3: Ergebnis. Jedes Handy kann alles.
+  const puzzleSel = (qid, ts) => { const k = qid + ":" + (ts.round || 1) + ":" + T.phase(tcfg(qid), ts); return (toolUI.sel[k] = toolUI.sel[k] || { names: {} }); };
+  function gridPhoto(cfg, photo, marks, tappable) {
+    let cells = "";
+    for (let i = 0; i < cfg.grid * cfg.grid; i++) {
+      const m = marks[i] || "";
+      cells += tappable ? '<button class="gp-cell ' + m + '" data-tool-ui="cell" data-cell="' + i + '" aria-label="Feld ' + (i + 1) + '"></button>'
+        : '<span class="gp-cell ' + m + '"></span>';
+    }
+    return '<div class="grid-photo">' + photoImg(photo, "gp-img") + '<div class="gp-cells" style="--n:' + cfg.grid + '">' + cells + "</div></div>";
+  }
+  const trashBtn = (i) => '<button class="sort-btn" data-tool-act="removePhoto" data-i="' + i + '" aria-label="Foto löschen">' + icon("trash-2") + "</button>";
+  function photoPuzzleBody(qid, cfg, ts, now) {
+    const ph = T.phase(cfg, ts), sel = puzzleSel(qid, ts), draft = T.draftEntries(ts.draft);
+    const fixBtn = (ok, label) => tBtn("fix", icon("lock") + " " + (label || "Festschreiben"), "btn-primary btn-block", ok ? "" : " disabled");
+    const guessBtn = (ok) => tBtn("guess", icon("lock") + " Festschreiben", "btn-primary btn-block", ok ? "" : " disabled");
+    if (ph === 1) {
+      let h = phaseBar(1) + lookAway;
+      const need = cfg.photos - draft.length;
+      if (cfg.kind === "photoGrid") {
+        h += '<p class="tool-label">Foto aufnehmen, dann geheim das Versteck antippen.</p>' + photoPicker(qid, false);
+        if (draft.length) h += gridPhoto(cfg, draft[0].photo, sel.cell != null ? { [sel.cell]: "sel" } : {}, true);
+        return h + fixBtn(draft.length && sel.cell != null);
+      }
+      if (cfg.kind === "photoPick") {
+        h += '<p class="tool-label">3 Steine fotografieren, dann geheim den Adler antippen.</p>' + (need > 0 ? photoPicker(qid, true) : "") +
+          '<div class="pick-tiles">' + draft.map((d, i) => '<div class="pick-tile' + (sel.key === d.key ? " sel" : "") + '">' +
+            '<button class="pt-btn" data-tool-ui="pick" data-key="' + esc(d.key) + '" aria-label="Foto ' + (i + 1) + ' als Adler">' + photoImg(d.photo, "pt-img") +
+            (sel.key === d.key ? '<span class="pt-badge">' + icon("bird") + " Adler</span>" : "") + "</button>" + trashBtn(i) + "</div>").join("") + "</div>";
+        return h + (need > 0 ? '<p class="muted small">Noch ' + need + " Foto" + (need === 1 ? "" : "s") + ".</p>" : "") +
+          fixBtn(!need && draft.some((d) => d.key === sel.key));
+      }
+      // photoNames
+      const names = knownNames(), used = sel.names;
+      h += '<p class="tool-label">3 Türen fotografieren, jeder Tür geheim einen Namen geben.</p>' + (need > 0 ? photoPicker(qid, true) : "");
+      if (names.length < cfg.photos) h += '<p class="tool-warn">' + icon("users") + " Erst " + names.length + " Namen bekannt – alle müssen sich einmal anmelden.</p>";
+      h += '<ol class="photo-rows">' + draft.map((d, i) => '<li class="pr-item"><span class="pr-no">' + (i + 1) + "</span>" + photoImg(d.photo, "pr-photo") +
+        '<span class="pr-side"><span class="chips name-chips">' + names.map((n) => '<button class="chip' + (used[d.key] === n ? " on" : "") + '" data-tool-ui="name" data-key="' + esc(d.key) +
+          '" data-name="' + esc(n) + '" aria-pressed="' + (used[d.key] === n) + '">' + esc(n) + "</button>").join("") + "</span>" + trashBtn(i) + "</span></li>").join("") + "</ol>";
+      const done = !need && draft.every((d) => used[d.key]);
+      return h + (need > 0 ? '<p class="muted small">Noch ' + need + " Foto" + (need === 1 ? "" : "s") + ".</p>" : "") + fixBtn(done);
+    }
+    const photos = ts.photos || [], res = T.result(cfg, ts, now);
+    if (cfg.kind === "photoGrid") {
+      if (ph === 2) {
+        return phaseBar(2) + '<p class="tool-label">Wo ist die Person versteckt? Feld antippen.</p>' +
+          gridPhoto(cfg, photos[0], sel.cell != null ? { [sel.cell]: "sel" } : {}, true) + guessBtn(sel.cell != null) + newRoundBtn(false);
+      }
+      const marks = {};
+      if (res) { marks[res.cell] = "answer"; marks[ts.guess] = res.hit ? "ok" : "miss"; }
+      return phaseBar(3) + (res ? tResult(res.found, res.hit ? "Gefunden – neu verstecken." : ts.accepted ? "Zählt als gefunden – neu verstecken." : "Nicht gefunden – Quest geschafft!",
+          res.hit || ts.accepted ? "Richtig" : "Falsch") : "") +
+        gridPhoto(cfg, photos[0], marks, false) + (res && !res.hit ? '<p class="muted small gp-legend"><span class="gp-key answer"></span> Versteck · <span class="gp-key miss"></span> getippt</p>' : "") +
+        newRoundBtn(true) + (res && !res.hit && !ts.accepted ? tBtn("accept", icon("check") + " Trotzdem richtig", "btn-ghost btn-block") : "");
+    }
+    if (cfg.kind === "photoPick") {
+      const tile = (p, i, cls, badge, tap) => '<div class="pick-tile' + cls + '">' + (tap ? '<button class="pt-btn" data-tool-ui="pick" data-i="' + i + '" aria-label="Stein ' + (i + 1) + '">' : '<span class="pt-btn">') +
+        photoImg(p, "pt-img") + (badge ? '<span class="pt-badge">' + badge + "</span>" : "") + (tap ? "</button>" : "</span>") + "</div>";
+      if (ph === 2) {
+        return phaseBar(2) + '<p class="tool-label">Welcher Stein ist der Adler?</p>' +
+          '<div class="pick-tiles">' + photos.map((p, i) => tile(p, i, sel.i === i ? " sel" : "", sel.i === i ? icon("bird") + " Tipp" : "", true)).join("") + "</div>" +
+          guessBtn(sel.i != null) + newRoundBtn(false);
+      }
+      return phaseBar(3) + (res ? tResult(res.ok, res.ok ? "Der Adler ist gefunden." : "Der Adler ist grün umrandet.", res.ok ? "Richtig" : "Falsch") : "") +
+        '<div class="pick-tiles">' + photos.map((p, i) => tile(p, i, res && i === res.answer ? " answer" : res && i === ts.guess ? " miss" : "",
+          res && i === res.answer ? icon("bird") + " Adler" : res && i === ts.guess ? icon("x") + " Tipp" : "", false)).join("") + "</div>" + newRoundBtn(!res || !res.ok);
+    }
+    // photoNames
+    if (ph === 2) {
+      return phaseBar(2) + '<p class="tool-label">Welche Tür gehört wem? Namen ziehen.</p>' +
+        '<div class="match-grid"><ol class="match-photos">' + photos.map((p) => "<li>" + photoImg(p, "mp-img") + "</li>").join("") + "</ol>" +
+        sortList(qid + ":names:" + (ts.round || 1), ts.guessOrder || [], true) + "</div>" + guessBtn(true) + newRoundBtn(false);
+    }
+    return phaseBar(3) + (res ? tResult(res.ok, res.ok ? "Alle Türen richtig zugeordnet." : res.places.filter(Boolean).length + " von " + photos.length + " richtig.", res.ok ? "Richtig" : "Falsch") : "") +
+      '<ol class="photo-rows">' + photos.map((p, i) => '<li class="pr-item ' + (res ? (res.places[i] ? "ok" : "miss") : "") + '"><span class="pr-no">' + (i + 1) + "</span>" + photoImg(p, "pr-photo") +
+        '<span class="pr-side"><strong>' + esc((ts.guess || [])[i] || "") + "</strong>" +
+        (res ? '<span class="term-ok">' + (res.places[i] ? icon("check") + " richtig" : icon("x") + " richtig: " + esc(res.names[i])) + "</span>" : "") + "</span></li>").join("") + "</ol>" +
+      newRoundBtn(!res || !res.ok);
   }
 
   // ---- Buchstaben-Fotos (Baumstaben): Fotos mit je einem Buchstaben → geheimes Wort; ein Rateversuch pro Runde
@@ -1855,6 +1938,18 @@
       if (i >= 0) sel.splice(i, 1); else if (sel.length < tcfg(qid).pick) sel.push(b.dataset.id); else toast("Genau " + tcfg(qid).pick + " – erst eines abwählen.", true);
       return rerenderTools(qid);
     }
+    if (ui === "cell" || ui === "pick" || ui === "name") { // Foto-Rätsel: Auswahl nur auf diesem Handy bis „Festschreiben“
+      const sel = puzzleSel(qid, toolState(qid));
+      if (ui === "cell") sel.cell = +b.dataset.cell;
+      else if (ui === "pick") { if (b.dataset.key) sel.key = b.dataset.key; else sel.i = +b.dataset.i; }
+      else {
+        const k = b.dataset.key, n = b.dataset.name;
+        if (sel.names[k] === n) delete sel.names[k];
+        else { Object.keys(sel.names).forEach((o) => { if (sel.names[o] === n) delete sel.names[o]; }); sel.names[k] = n; } // jeder Name nur einmal
+      }
+      tapFeedback(b);
+      return rerenderTools(qid);
+    }
     if (ui === "ttt-pick") {
       const sel = toolUI.ttt.sel, n = b.dataset.name, i = sel.indexOf(n);
       if (i >= 0) sel.splice(i, 1); else if (sel.length < 2) sel.push(n); else toast("Es spielen nur zwei – erst jemanden abwählen.", true);
@@ -1880,6 +1975,14 @@
     else if (kind === "secretTerms" && act === "mark") op.i = Number(b.dataset.i);
     else if (kind === "secretTerms" && act === "tip") op.d = Number(b.dataset.d);
     else if (kind === "choice" && act === "fix") op.picks = (toolUI.pick[qid] || []).slice();
+    else if (T.isPhotoPuzzle(tcfg(qid)) && act === "removePhoto") op.i = Number(b.dataset.i);
+    else if (T.isPhotoPuzzle(tcfg(qid)) && (act === "fix" || act === "guess")) {
+      const ts = toolState(qid), sel = puzzleSel(qid, ts), keys = T.draftEntries(ts.draft).map((d) => d.key);
+      if (kind === "photoGrid") op.cell = sel.cell;
+      else if (kind === "photoPick" && act === "fix") { op.pick = sel.key; op.order = T.shuffle(keys, rand32); }  // zufällige Reihenfolge, gleichverteilt
+      else if (kind === "photoPick") op.i = sel.i;
+      else if (act === "fix") { op.names = Object.assign({}, sel.names); op.order = T.shuffle(keys, rand32); op.start = T.shuffle(keys.map((k) => sel.names[k]), rand32); }
+    }
     if (clearAll || T.isSecret(tcfg(qid)) || kind === "choice") {
       clearAll = (clearAll || []).filter(Boolean);
       const typed = clearAll.map((el) => el.value);

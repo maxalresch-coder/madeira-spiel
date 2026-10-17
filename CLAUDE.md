@@ -110,7 +110,7 @@ Vertrauensbasis, keine Beweisfotos.
     dem, auf dem eingegeben wurde. Keine Auswahl „Wer gibt ein?“, keine Prüfung nach Spieler oder Gerät. Der Ablauf richtet
     sich nur nach der **Phase** des gemeinsamen Zustands (`T.phase`: 1 „Geheim eingeben“ → 2 „Raten“ → 3 „Ergebnis“, als
     Leiste `phaseBar` angezeigt); alle Handys zeigen immer dieselbe Phase.
-  - **Geheime Eingaben** (`kind` secretTerms/secretRank/photoWord, Logik `updateSecret` in tools.js): In Phase 1 tippt, wer
+  - **Geheime Eingaben** (`kind` secretTerms/secretRank/photoWord und die Foto-Rätsel photoGrid/photoNames/photoPick, Logik `updateSecret` in tools.js): In Phase 1 tippt, wer
     eingibt (die anderen schauen weg). Nach dem Festschreiben ist das Geheimnis auf **allen** Handys verdeckt, auch auf dem
     eingebenden. „Anzeigen“ ist auf jedem Handy möglich, aber nur durch **langes Drücken** (0,6 s → 5 s sichtbar, nur lokal)
     mit dem Hinweis „Nur für die Person, die eingegeben hat“ (Vertrauen). „Auflösen“ deckt alles für alle auf (→ Phase 3).
@@ -226,6 +226,20 @@ Vertrauensbasis, keine Beweisfotos.
     grün/rot, „X von Y Buchstaben richtig“ (Groß/klein egal). Alle richtig = „Geschafft!“ mit Wort (Fotos werden gelöscht);
     sonst „Daneben“ (`failed`, Phase 3): Wort wird aufgedeckt, **kein** erneutes Festschreiben – nur „Neue Runde“ (neues Wort,
     neue Fotos) oder „Trotzdem richtig“ (knappe Fälle; entscheidet, wer das Wort ausgedacht hat).
+  - **Foto-Rätsel** (`kind` photoGrid/photoNames/photoPick, `T.isPhotoPuzzle`, Logik `updatePhotoPuzzle`, Oberfläche
+    `photoPuzzleBody`): nutzen die Foto-Grundlage unverändert (`photoPicker`, Aktionen `addPhoto`/`removePhoto` in Phase 1,
+    Entwurf `draft` synchron). Geheime Auswahl nur lokal (`toolUI.sel`, `puzzleSel`) bis „Festschreiben“; danach nur
+    verschleiert (`hide`) im Spielstand, für niemanden sichtbar (kein „Anzeigen“), keine Einträge bei den Aktivitäten.
+    Fotos erscheinen beim Raten in zufälliger, gleichverteilter Reihenfolge (`T.shuffle` + `rand32`, Teil der Aktion `fix`).
+    Ein Tipp pro Runde → Phase 3. „Neue Runde“ leert den Zustand (Fotos weg → Server löscht sie), Reset ebenso.
+    - „Versteck im Foto“ (Bananenversteck, photoGrid): 1 Foto (ein neues ersetzt es), 4×4-Raster darüber; geheimes Feld
+      markieren → die anderen tippen ein Feld → „Richtig“ (grün, gefunden → neu verstecken) oder „Falsch“ (rot, Versteck
+      grün umrandet; „Nicht gefunden – Quest geschafft!“) + „Trotzdem richtig“ (Aktion `accept`). Zeile: „gefunden“/„Geschafft“.
+    - „Türen zuordnen“ (Gespür für die richtige Tür, photoNames): 3 Fotos, jedem geheim einen anderen Namen (Chips aller
+      bekannten Spieler, `knownNames`); Raten: Fotos links fest, Namen rechts per Ziehen/Pfeilen gemeinsam sortieren
+      (`sortList` sync, Aktion `arrange`, `guessOrder` gemischt) → „Festschreiben“ → je Foto grün/rot („richtig: …“).
+    - „Adler-Stein raten“ (Steinadler, photoPick): 3 Fotos, einen geheim als Adler antippen; Raten: Stein antippen →
+      „Festschreiben“ → grün/rot, der Adler wird grün umrandet gezeigt.
   - „Zwei Kriterien wählen“ (Mit Lorbeeren und UNESCO gekrönt): 10 UNESCO-Kriterien (i)–(x) mit deutscher Kurzfassung
     (`UNESCO_CRITERIA`), genau 2 wählen und festschreiben; Lösung (ix)+(x) in tools.js, vorher nie gezeigt. Danach wird jedes
     gewählte Kriterium einzeln bewertet („(x) richtig“, „(ii) falsch“, grün/rot); nicht gewählte werden nie verraten;

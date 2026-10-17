@@ -489,4 +489,66 @@ assert.deepStrictEqual(g.tools, { "q-cal-2": { startedAt: 1 } });
 assert.strictEqual(L.summary(g, C).earned, 100);
 assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, undefined);
 
+// ---- Foto-Rätsel (Bananenversteck, Türen, Steinadler): Fotos → geheim festlegen → raten → Ergebnis; Geheimnis nur verschleiert
+{
+  const pp = (n) => "p" + String(n).padStart(24, "0");
+  const plain = (ts) => JSON.stringify(ts);
+  // Bananenversteck: 1 Foto (ein neues ersetzt das alte), geheimes Feld 0–15
+  const BG = T.config("q-pds-3");
+  let g = tb("q-pds-3", null, { type: "addPhoto", photo: pp(1), key: "ka1" }, "Anna");
+  g = tb("q-pds-3", g, { type: "addPhoto", photo: pp(2), key: "ka2" }, "Anna");
+  assert.deepStrictEqual(g.draft.map((d) => d.photo), [pp(2)]);
+  tbf("q-pds-3", g, { type: "fix", cell: 16 }, "Anna");
+  tbf("q-pds-3", null, { type: "fix", cell: 3 }, "Anna"); // ohne Foto
+  g = tb("q-pds-3", g, { type: "fix", cell: 6 }, "Anna");
+  assert.deepStrictEqual([T.phase(BG, g), g.photos, g.draft], [2, [pp(2)], null]);
+  assert(!/"secret":6|"cell"/.test(plain(g)), "Feld nur verschleiert");
+  tbf("q-pds-3", g, { type: "addPhoto", photo: pp(3) }, "Ben");
+  tbf("q-pds-3", g, { type: "accept" }, "Ben");      // noch nicht geraten
+  const hit = tb("q-pds-3", g, { type: "guess", cell: 6 }, "Ben");   // auch das Handy, das versteckt hat, darf raten
+  assert.deepStrictEqual([T.phase(BG, hit), T.result(BG, hit, 0).found, T.result(BG, hit, 0).ok], [3, true, false]);
+  tbf("q-pds-3", hit, { type: "accept" }, "Ben");    // richtig getippt: nichts zu akzeptieren
+  const miss = tb("q-pds-3", g, { type: "guess", cell: 5 }, "Ben");
+  assert.deepStrictEqual([T.result(BG, miss, 0).ok, T.result(BG, miss, 0).cell], [true, 6]);  // nicht gefunden = Quest geschafft
+  const acc = tb("q-pds-3", miss, { type: "accept" }, "Carla");    // „Trotzdem richtig“
+  assert.deepStrictEqual([T.result(BG, acc, 0).found, T.result(BG, acc, 0).ok], [true, false]);
+  tbf("q-pds-3", miss, { type: "guess", cell: 2 }, "Ben"); // nur ein Tipp
+  const nr = tb("q-pds-3", acc, { type: "newRound" }, "Ben");
+  assert.deepStrictEqual([T.phase(BG, nr), nr.photos, nr.draft, nr.secret], [1, null, null, null]); // Fotos weg → Server löscht sie
+  // Steinadler: 3 Fotos, einer ist der Adler, Reihenfolge gemischt
+  const SA = T.config("q-mac-3");
+  let a = null;
+  [1, 2, 3].forEach((n) => { a = tb("q-mac-3", a, { type: "addPhoto", photo: pp(n), key: "ks" + n }, "Anna"); });
+  tbf("q-mac-3", a, { type: "addPhoto", photo: pp(4) }, "Anna"); // höchstens 3
+  tbf("q-mac-3", a, { type: "fix", pick: "ks2", order: ["ks1", "ks2"] }, "Anna");
+  tbf("q-mac-3", a, { type: "fix", pick: "kxx", order: ["ks3", "ks1", "ks2"] }, "Anna");
+  const fewer = tb("q-mac-3", a, { type: "removePhoto", i: 0 }, "Anna");
+  tbf("q-mac-3", fewer, { type: "fix", pick: "ks2", order: ["ks2", "ks3"] }, "Anna"); // nur 2 Fotos
+  a = tb("q-mac-3", a, { type: "fix", pick: "ks2", order: ["ks3", "ks1", "ks2"] }, "Anna");
+  assert.deepStrictEqual([a.photos, T.phase(SA, a)], [[pp(3), pp(1), pp(2)], 2]);
+  assert(!plain(a).includes('"pick"') && T.unhide(a.secret) === 2);
+  const aOk = tb("q-mac-3", a, { type: "guess", i: 2 }, "Ben"), aNo = tb("q-mac-3", a, { type: "guess", i: 0 }, "Ben");
+  assert.deepStrictEqual([T.result(SA, aOk, 0).ok, T.result(SA, aNo, 0).ok, T.result(SA, aNo, 0).answer], [true, false, 2]);
+  tbf("q-mac-3", aNo, { type: "accept" }, "Ben"); // „Trotzdem richtig“ nur beim Bananenversteck
+  // Türen: 3 Fotos, jedem ein anderer Name; Namen werden gemeinsam (synchron) den gemischten Fotos zugeordnet
+  const TU = T.config("q-fun-1");
+  let d = null;
+  [1, 2, 3].forEach((n) => { d = tb("q-fun-1", d, { type: "addPhoto", photo: pp(n), key: "kt" + n }, "Anna"); });
+  tbf("q-fun-1", d, { type: "fix", names: { kt1: "Anna", kt2: "anna", kt3: "Ben" }, order: ["kt1", "kt2", "kt3"], start: ["Anna", "anna", "Ben"] }, "Anna");
+  tbf("q-fun-1", d, { type: "fix", names: { kt1: "Anna", kt2: "Ben" }, order: ["kt1", "kt2", "kt3"], start: ["Anna", "Ben", "Carla"] }, "Anna");
+  tbf("q-fun-1", d, { type: "fix", names: { kt1: "Anna", kt2: "Ben", kt3: "Carla" }, order: ["kt1", "kt2", "kt3"], start: ["Anna", "Ben", "Dora"] }, "Anna");
+  d = tb("q-fun-1", d, { type: "fix", names: { kt1: "Anna", kt2: "Ben", kt3: "Carla" }, order: ["kt2", "kt3", "kt1"], start: ["Carla", "Anna", "Ben"] }, "Anna");
+  assert.deepStrictEqual([d.photos, d.guessOrder, T.phase(TU, d)], [[pp(2), pp(3), pp(1)], ["Carla", "Anna", "Ben"], 2]);
+  assert.deepStrictEqual(T.unhide(d.secret), ["Ben", "Carla", "Anna"]);
+  assert(!/"names"|kt1":"Anna/.test(plain(d)), "Zuordnung nur verschleiert");
+  d = tb("q-fun-1", d, { type: "arrange", order: ["Ben", "Anna", "Carla"] }, "Carla"); // gemeinsames Ziehen
+  tbf("q-fun-1", d, { type: "arrange", order: ["Ben", "Ben", "Carla"] }, "Carla");
+  const dg = tb("q-fun-1", d, { type: "guess" }, "Ben");
+  assert.deepStrictEqual([T.phase(TU, dg), T.result(TU, dg, 0).places, T.result(TU, dg, 0).ok], [3, [true, false, false], false]);
+  const dOk = tb("q-fun-1", tb("q-fun-1", d, { type: "arrange", order: ["Ben", "Carla", "Anna"] }, "A"), { type: "guess" }, "A");
+  assert.strictEqual(T.result(TU, dOk, 0).ok, true);
+  assert.strictEqual(tb("q-fun-1", dg, { type: "newRound" }, "Ben").photos, null);
+  // Alle drei gelten als geheime Hilfsmittel (Phasen, Rollen frei) und schreiben nichts in die Aktivitäten
+  assert(["q-pds-3", "q-fun-1", "q-mac-3"].every((id) => T.isSecret(T.config(id)) && T.isPhotoPuzzle(T.config(id))));
+}
 console.log("Alle Logik-Tests bestanden ✓");

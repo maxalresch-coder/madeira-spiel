@@ -28,6 +28,10 @@
     "q-cdl-2": { kind: "secretTerms", fv: 2, count: 5, need: 3, maxTips: 6, label: "Fünf geheime Begriffe", icon: "key-round" }, // Was Churchill sah
     "q-fun-3": { kind: "secretRank", fv: 2, count: 3, label: "Geheime Rangfolge", icon: "list-ordered" },                       // Früchteschweiger
     "q-pmz-3": { kind: "photoWord", fv: 2, minLetters: 5, label: "Buchstaben-Fotos", icon: "camera" },                               // Baumstaben
+    // Foto-Rätsel (Foto-Grundlage): Fotos aufnehmen, geheim festlegen, die anderen raten
+    "q-pds-3": { kind: "photoGrid", fv: 1, photos: 1, grid: 4, label: "Versteck im Foto", icon: "scan-search" },                    // Bananenversteck
+    "q-fun-1": { kind: "photoNames", fv: 1, photos: 3, label: "Türen zuordnen", icon: "door-open" },                                // Gespür für die richtige Tür
+    "q-mac-3": { kind: "photoPick", fv: 1, photos: 3, label: "Adler-Stein raten", icon: "bird" },                                   // Steinadler
     // Auswahl: genau 2 der 10 UNESCO-Kriterien; Lösung (ix) + (x) wird bei „Daneben“ nie gezeigt
     "q-san-3": { kind: "choice", pick: 2, solution: ["ix", "x"], penalty: 10, label: "Zwei Kriterien wählen", icon: "list-checks" } // Mit Lorbeeren und UNESCO gekrönt
   };
@@ -83,7 +87,9 @@
     try { return JSON.parse(decodeURIComponent(escape(atob(h.slice(2))))); } catch (e) { return null; }
   }
   const usedList = (ts) => unhide(ts.used) || [];
-  const isSecret = (cfg) => cfg.kind === "secretTerms" || cfg.kind === "secretRank" || cfg.kind === "photoWord";
+  const PHOTO_PUZZLES = ["photoGrid", "photoNames", "photoPick"];
+  const isPhotoPuzzle = (cfg) => PHOTO_PUZZLES.indexOf(cfg.kind) >= 0;
+  const isSecret = (cfg) => cfg.kind === "secretTerms" || cfg.kind === "secretRank" || cfg.kind === "photoWord" || isPhotoPuzzle(cfg);
 
   // ---------------------------------------------------------------- Zufall
   // Regel: Jede mögliche Anordnung muss gleich wahrscheinlich sein (auch die richtige Lösung).
@@ -176,6 +182,22 @@
       }
       case "photoWord":
         return ts.secret && ts.solved ? { ok: true } : null;
+      case "photoGrid": { // Bananenversteck: Quest geschafft, wenn die Person NICHT gefunden wird
+        if (!ts.secret || ts.guess == null) return null;
+        const cell = unhide(ts.secret), hit = ts.guess === cell;
+        return { ok: !hit && !ts.accepted, found: hit || !!ts.accepted, hit, cell };
+      }
+      case "photoPick": {
+        if (!ts.secret || ts.guess == null) return null;
+        const answer = unhide(ts.secret);
+        return { ok: ts.guess === answer, answer };
+      }
+      case "photoNames": {
+        if (!ts.secret || !ts.guess) return null;
+        const names = unhide(ts.secret) || [];
+        const places = names.map((n, i) => ts.guess[i] === n);
+        return { ok: places.every(Boolean), places, names };
+      }
       case "choice":
         return ts.ok ? { ok: true } : null;
       default:
@@ -223,6 +245,8 @@
         return Object.assign(ts, round0s, { used: hide(used), round: (ts.round || 1) + 1 });
       }
     }
+
+    if (isPhotoPuzzle(cfg)) return updatePhotoPuzzle(cfg, ts, op, now, by, ph, round0s);
 
     if (cfg.kind === "secretTerms") {
       if (op.type === "fix") {
@@ -356,6 +380,77 @@
     }
     fail("Das geht hier nicht.");
   }
+  // Foto-Rätsel: Phase 1 Fotos aufnehmen (Entwurf `draft`, für alle sichtbar und synchron, damit sie ein Neuladen
+  // überstehen) und geheim festlegen (Auswahl nur auf dem Handy, bis „Festschreiben“) → Phase 2 raten → Phase 3 Ergebnis.
+  // Das Geheimnis liegt nur verschleiert im Spielstand (hide); die Fotos erscheinen in zufälliger, gleichverteilter
+  // Reihenfolge (op.order, im Browser mit shuffle gezogen). „Neue Runde“ leert alles – der Server löscht dann die Fotos.
+  //  photoGrid  (Bananenversteck): 1 Foto, geheimes Feld im 4×4-Raster, Tipp = ein Feld; „Trotzdem richtig“ bei falsch
+  //  photoNames (Türen): 3 Fotos mit je einem Spielernamen, Namen werden den gemischten Fotos zugeordnet (Ziehen, synchron)
+  //  photoPick  (Steinadler): 3 Fotos, eines ist der Adler, Tipp = ein Foto
+  function updatePhotoPuzzle(cfg, ts, op, now, by, ph, round0s) {
+    const draft = draftEntries(ts.draft);
+    const inPhase1 = () => { if (ph !== 1) fail("Schon festgeschrieben."); };
+    const keysOf = (order) => {
+      const o = (order || []).map(String);
+      if (o.length !== draft.length || new Set(o).size !== o.length || draft.some((d) => o.indexOf(d.key) < 0)) fail("Bitte alle Fotos verwenden.");
+      return o;
+    };
+    switch (op.type) {
+      case "addPhoto": {
+        inPhase1();
+        if (!/^p[0-9a-f]{24}$/.test(String(op.photo))) fail("Ungültiges Foto.");
+        const key = op.key && /^k[0-9a-z]{2,24}$/.test(String(op.key)) && !draft.some((d) => d.key === op.key) ? String(op.key) : "k" + op.photo.slice(1, 13) + draft.length;
+        if (cfg.photos === 1) return Object.assign(ts, { draft: [{ key, photo: op.photo }] }); // neues Foto ersetzt das alte
+        if (draft.length >= cfg.photos) fail("Schon " + cfg.photos + " Fotos – erst eines löschen.");
+        draft.push({ key, photo: op.photo });
+        return Object.assign(ts, { draft });
+      }
+      case "removePhoto": {
+        inPhase1();
+        const i = Number(op.i);
+        if (!(i >= 0 && i < draft.length)) fail("Unbekanntes Foto.");
+        draft.splice(i, 1);
+        return Object.assign(ts, { draft });
+      }
+      case "fix": {
+        inPhase1();
+        if (draft.length !== cfg.photos) fail(cfg.photos === 1 ? "Erst ein Foto aufnehmen." : "Bitte genau " + cfg.photos + " Fotos aufnehmen.");
+        const base = Object.assign({}, round0s, { used: ts.used, round: ts.round, by });
+        if (cfg.kind === "photoGrid") {
+          const cell = Number(op.cell);
+          if (!Number.isInteger(cell) || cell < 0 || cell >= cfg.grid * cfg.grid) fail("Bitte ein Feld markieren.");
+          return Object.assign(ts, base, { photos: [draft[0].photo], secret: hide(cell) });
+        }
+        const order = keysOf(op.order), photos = order.map((k) => draft.find((d) => d.key === k).photo);
+        if (cfg.kind === "photoPick") {
+          const i = order.indexOf(String(op.pick));
+          if (i < 0) fail("Bitte den Adler markieren.");
+          return Object.assign(ts, base, { photos, secret: hide(i) });
+        }
+        // photoNames: jedem Foto genau ein (anderer) Name
+        const names = order.map((k) => String((op.names || {})[k] || "").trim().slice(0, 24));
+        if (names.some((n) => !n)) fail("Bitte jedem Foto einen Namen geben.");
+        if (new Set(names.map(norm)).size !== names.length) fail("Bitte jeden Namen nur einmal vergeben.");
+        return Object.assign(ts, base, { photos, secret: hide(names), guessOrder: checkOrder(names, op.start) });
+      }
+      case "arrange": // Türen: Namen gemeinsam den Fotos zuordnen (alle Handys sehen dieselbe Reihenfolge)
+        if (cfg.kind !== "photoNames" || ph !== 2) fail("Gerade wird nicht geraten.");
+        return Object.assign(ts, { guessOrder: checkOrder(ts.guessOrder || [], op.order) });
+      case "guess": {
+        if (ph !== 2) fail("Gerade wird nicht geraten.");
+        if (cfg.kind === "photoNames") return Object.assign(ts, { guess: checkOrder(ts.guessOrder || [], op.order || ts.guessOrder), guessBy: by });
+        const n = cfg.kind === "photoGrid" ? cfg.grid * cfg.grid : cfg.photos, g = Number(op.cell != null ? op.cell : op.i);
+        if (!Number.isInteger(g) || g < 0 || g >= n) fail(cfg.kind === "photoGrid" ? "Bitte ein Feld antippen." : "Bitte einen Stein antippen.");
+        return Object.assign(ts, { guess: g, guessBy: by });
+      }
+      case "accept": { // Bananenversteck: knapp daneben zählt trotzdem als gefunden
+        const r = result(cfg, ts, now);
+        if (cfg.kind !== "photoGrid" || !r || r.hit || ts.accepted) fail("Das geht hier nicht.");
+        return Object.assign(ts, { accepted: true, acceptedBy: by });
+      }
+    }
+    fail("Das geht hier nicht.");
+  }
   // Phase eines Hilfsmittels mit geheimer Eingabe: 1 geheim eingeben, 2 raten, 3 Ergebnis (gelöst oder aufgelöst).
   // Hängt nur am gemeinsamen Zustand – alle Handys zeigen dieselbe Phase.
   function phase(cfg, ts) {
@@ -364,6 +459,7 @@
     if (ts.revealed) return 3;
     if (cfg.kind === "secretRank") return ts.guess ? 3 : 2;
     if (cfg.kind === "photoWord") return ts.solved || ts.failed ? 3 : 2;
+    if (isPhotoPuzzle(cfg)) return ts.guess != null ? 3 : 2;
     // Churchill: auch nach dem 6. Tipp darf noch markiert werden (der letzte Tipp kann richtig gewesen sein)
     if (cfg.kind === "secretTerms") { const r = result(cfg, ts, 0); return r && r.ok ? 3 : 2; }
     return 2;
@@ -509,7 +605,7 @@
   const api = {
     TOOLS, LINKS, ARRIVALS_URL, UNESCO_URL, UNESCO_CRITERIA, ToolError, config, links, hasState, update, result, penaltyLeft,
     angleDiff, compassHit, tttStatus, norm, letterCount, sameName, hide, unhide, isSecret, randomInt, shuffle, letter, sameLetter,
-    phase, sanitize, draftEntries
+    phase, sanitize, draftEntries, isPhotoPuzzle
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.QuestTools = api;

@@ -741,3 +741,38 @@ img.gone { visibility: hidden; }
 .cam-shoot span { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--ocean, #0b5f78); }
 .cam-shoot:active span { transform: scale(.9); }
 .cam-status { margin: 0; text-align: center; min-height: 1.2em; }
+/* Foto-Rätsel: Raster über dem Foto (Bananenversteck), Steine (Steinadler), Türen zuordnen */
+.grid-photo { position: relative; border-radius: 12px; overflow: hidden; background: var(--line); }
+.gp-img { display: block; width: 100%; height: auto; min-height: 180px; object-fit: cover; }
+.gp-cells { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(var(--n), 1fr); grid-template-rows: repeat(var(--n), 1fr); }
+.gp-cell { border: 1px solid rgba(255, 255, 255, .7); background: transparent; padding: 0; margin: 0; min-height: 0; cursor: pointer; touch-action: manipulation; }
+.gp-cell.sel { background: rgba(11, 95, 120, .5); box-shadow: inset 0 0 0 3px #fff; }
+.gp-cell.ok { background: rgba(47, 158, 68, .6); box-shadow: inset 0 0 0 3px #fff; }
+.gp-cell.miss { background: rgba(224, 71, 91, .6); box-shadow: inset 0 0 0 3px #fff; }
+.gp-cell.answer { box-shadow: inset 0 0 0 4px var(--laurel), inset 0 0 0 6px #fff; background: rgba(47, 158, 68, .3); }
+.gp-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.gp-key { display: inline-block; width: 16px; height: 16px; border-radius: 4px; }
+.gp-key.answer { background: var(--laurel); }
+.gp-key.miss { background: var(--hibiscus); }
+.pick-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pick-tile { position: relative; display: flex; flex-direction: column; gap: 4px; align-items: stretch; }
+.pt-btn { position: relative; display: block; padding: 0; border: 3px solid transparent; border-radius: 12px; overflow: hidden; background: var(--line); cursor: pointer; }
+span.pt-btn { cursor: default; }
+.pt-img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; }
+.pick-tile.sel .pt-btn { border-color: var(--ocean); }
+.pick-tile.answer .pt-btn { border-color: var(--laurel); }
+.pick-tile.miss .pt-btn { border-color: var(--hibiscus); }
+.pt-badge { position: absolute; left: 4px; right: 4px; bottom: 4px; display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  background: rgba(7, 59, 76, .88); color: #fff; border-radius: 8px; font-weight: 700; font-size: .8rem; padding: 3px 4px; }
+.pick-tile.answer .pt-badge { background: var(--laurel); }
+.pick-tile.miss .pt-badge { background: var(--hibiscus); }
+.pick-tile .sort-btn { align-self: center; }
+.name-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.name-chips .chip { min-height: 40px; background: var(--sea); color: var(--ocean-deep); }
+.name-chips .chip.on { background: var(--ocean); color: #fff; }
+.match-grid { display: grid; grid-template-columns: 112px 1fr; gap: 8px; align-items: start; }
+.match-photos { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.match-photos li, .match-grid .sort-item { height: 96px; box-sizing: border-box; }
+.mp-img { display: block; width: 112px; height: 96px; object-fit: cover; border-radius: 12px; background: var(--line); }
+.match-grid .sort-item { min-width: 0; }
+.match-grid .sort-name { overflow: hidden; text-overflow: ellipsis; }
