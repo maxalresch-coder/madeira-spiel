@@ -288,7 +288,8 @@ assert.strictEqual(tu("q-cdl-3", ts, { type: "fix", value: 589 }, 1000 + 300000)
 assert.strictEqual(tu("q-cdl-3", null, { type: "penalty" }, 0).penaltyUntil, 300000);
 tf("q-rbr-2", null, { type: "penalty" }, 0);
 // Links: Flughafen-Ankünfte und UNESCO-Kriterien
-assert.strictEqual(T.config("q-san-3").url, "https://whc.unesco.org/en/criteria/");
+assert.strictEqual(T.links("q-san-3")[0].url, "https://whc.unesco.org/en/criteria/");
+assert.strictEqual(T.links("q-scr-1")[0].url, "https://www.madeiraairport.pt/en/fnc/arrivals");
 assert(!IXT.quests["q-san-3"].task.includes("whc.unesco"));
 assert(IXT.quests["q-scr-2"].task.includes("höchstens 50°"));
 // Kompass: 208° ± 50°, eine von zwei Messungen reicht, beide daneben → sofort Strafzeit
@@ -323,6 +324,72 @@ assert.strictEqual(T.tttStatus(draw).draw, true);
 assert.strictEqual(T.tttStatus(draw).winner, null);
 ts = tu("q-rbr-3", Object.assign(ts, { moves: draw }), { type: "newRound" }, 0);
 assert.deepStrictEqual([ts.moves, ts.round, ts.players], [[], 2, ["Anna", "Ben"]]);
+// ---- Geheime Eingaben
+const tb = (id, ts, op, by, now) => T.update(T.config(id), ts, op, now || 0, by);
+const tbf = (id, ts, op, by) => assert.throws(() => tb(id, ts, op, by), T.ToolError);
+assert.strictEqual(T.norm("  Möwe "), T.norm("moewe"));
+assert.strictEqual(T.norm("Straße"), T.norm("STRASSE"));
+assert.strictEqual(T.norm("Café"), T.norm("cafe"));
+assert.strictEqual(T.norm("Fußball"), T.norm("FUSSBALL"));
+assert.deepStrictEqual(T.unhide(T.hide(["Möwe", "Ä"])), ["Möwe", "Ä"]);
+// Was Churchill sah: 5 Begriffe, 6 Tipps, 3 erraten
+tbf("q-cdl-2", null, { type: "fix", terms: ["a", "b", "c", "d", "e"] }, "Anna");
+ts = tb("q-cdl-2", null, { type: "setSetter", name: "Anna" }, "Ben");
+tbf("q-cdl-2", ts, { type: "fix", terms: ["Meer", "Boote", "Klippen", "Sonne", "Kirche"] }, "Ben"); // nur Anna
+tbf("q-cdl-2", ts, { type: "fix", terms: ["Meer", "Boote", "Klippen", "Sonne"] }, "Anna");
+tbf("q-cdl-2", ts, { type: "fix", terms: ["Meer", "Boote", "Klippen", "Sonne", " meer "] }, "Anna");
+ts = tb("q-cdl-2", ts, { type: "fix", terms: ["Meer", "Boote", "Klippen", "Sonne", "Kirche"] }, "anna");
+assert(!JSON.stringify(ts).includes("Klippen"), "Begriffe verschleiert");
+tbf("q-cdl-2", ts, { type: "mark", i: 0 }, "Ben");
+for (let i = 0; i < 6; i++) ts = tb("q-cdl-2", ts, { type: "tip", d: 1 }, "Ben");
+tbf("q-cdl-2", ts, { type: "tip", d: 1 }, "Ben");
+ts = tb("q-cdl-2", ts, { type: "mark", i: 1 }, "Anna");
+ts = tb("q-cdl-2", ts, { type: "mark", i: 3 }, "Anna");
+assert.deepStrictEqual(T.result(T.config("q-cdl-2"), ts, 0), { ok: false, guessed: 2 });
+ts = tb("q-cdl-2", ts, { type: "mark", i: 4 }, "Anna");
+assert.strictEqual(T.result(T.config("q-cdl-2"), ts, 0).ok, true);
+ts = tb("q-cdl-2", ts, { type: "mark", i: 4 }, "Anna");
+ts = tb("q-cdl-2", ts, { type: "reveal" }, "Ben");
+assert.strictEqual(ts.revealed, true);
+ts = tb("q-cdl-2", ts, { type: "newRound" }, "Ben");
+assert.deepStrictEqual([ts.setter, ts.secret, ts.tips, ts.round], ["Anna", null, 0, 2]);
+assert.throws(() => tb("q-cdl-2", ts, { type: "fix", terms: ["Möwen", "BOOTE", "Wolken", "Wind", "Hafen"] }, "Anna"), /Boote|BOOTE/);
+ts = tb("q-cdl-2", ts, { type: "fix", terms: ["Möwen", "Wellen", "Wolken", "Wind", "Hafen"] }, "Anna");
+// Früchteschweiger: Rangfolge
+ts = tb("q-fun-3", tb("q-fun-3", null, { type: "setSetter", name: "Carla" }, "Carla"), { type: "setFruits", fruits: ["Mango", "Maracuja", "Banane"] }, "Carla");
+tbf("q-fun-3", ts, { type: "fix", order: ["Mango", "Banane"] }, "Carla");
+ts = tb("q-fun-3", ts, { type: "fix", order: ["Maracuja", "Mango", "Banane"] }, "Carla");
+tbf("q-fun-3", ts, { type: "guess", order: ["Maracuja", "Mango", "Banane"] }, "Carla");
+const wrong = tb("q-fun-3", ts, { type: "guess", order: ["Maracuja", "Banane", "Mango"] }, "Ben");
+assert.deepStrictEqual(T.result(T.config("q-fun-3"), wrong, 0).places, [true, false, false]);
+assert.strictEqual(T.result(T.config("q-fun-3"), wrong, 0).ok, false);
+assert.strictEqual(T.result(T.config("q-fun-3"), tb("q-fun-3", ts, { type: "guess", order: ["Maracuja", "Mango", "Banane"] }, "Ben"), 0).ok, true);
+ts = tb("q-fun-3", wrong, { type: "newRound" }, "Ben");
+tbf("q-fun-3", ts, { type: "setFruits", fruits: ["Papaya", "Anone", "banane"] }, "Carla");
+// Baumstaben: Wort ≥ 5 Buchstaben, Tipps, „Trotzdem richtig“
+ts = tb("q-pmz-3", null, { type: "setSetter", name: "Ben" }, "Anna");
+tbf("q-pmz-3", ts, { type: "fix", word: "Baum" }, "Ben");
+ts = tb("q-pmz-3", ts, { type: "fix", word: "Lorbeer" }, "Ben");
+assert.strictEqual(ts.letters, 7);
+tbf("q-pmz-3", ts, { type: "guess", text: "Lorbeer" }, "Ben");
+ts = tb("q-pmz-3", ts, { type: "guess", text: "Lorber" }, "Anna");
+assert.strictEqual(T.result(T.config("q-pmz-3"), ts, 0), null);
+tbf("q-pmz-3", ts, { type: "accept" }, "Anna");
+assert.strictEqual(T.result(T.config("q-pmz-3"), tb("q-pmz-3", ts, { type: "accept" }, "Ben"), 0).ok, true);
+assert.strictEqual(T.result(T.config("q-pmz-3"), tb("q-pmz-3", ts, { type: "guess", text: " LORBEER " }, "Carla"), 0).ok, true);
+ts = tb("q-pmz-3", ts, { type: "newRound" }, "Anna");
+tbf("q-pmz-3", ts, { type: "fix", word: "lorbeer" }, "Ben");
+// Lorbeeren: genau 2 Kriterien, (ix)+(x), daneben → 10 Minuten Strafzeit ohne Lösung
+assert.strictEqual(T.UNESCO_CRITERIA.length, 10);
+tbf("q-san-3", null, { type: "fix", picks: ["ix"] }, "Ben");
+ts = tb("q-san-3", null, { type: "fix", picks: ["vii", "x"] }, "Ben", 1000);
+assert.strictEqual(ts.penaltyUntil, 1000 + 600000);
+assert.strictEqual(T.result(T.config("q-san-3"), ts, 2000), null);
+assert(!JSON.stringify(ts.lastMiss).includes("ix"));
+tbf("q-san-3", ts, { type: "fix", picks: ["ix", "x"] }, "Ben");
+ts = T.update(T.config("q-san-3"), ts, { type: "fix", picks: ["x", "ix"] }, 1000 + 600000, "Ben");
+assert.strictEqual(T.result(T.config("q-san-3"), ts, 0).ok, true);
+
 // Tools liegen im Spielstand, Aktionen behalten sie, Reset löscht sie
 g = L.newGame(C, 7, t);
 g.tools = { "q-cal-2": { startedAt: 1 } };

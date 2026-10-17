@@ -23,9 +23,33 @@
     "q-cdl-3": { kind: "height", tolerancePct: 10, penalty: 5, label: "Höhe schätzen", icon: "mountain" }, // Angsthase oder Augenmaß?
     "q-scr-2": { kind: "compass", target: 208, tolerance: 50, penalty: 5, label: "Kompass: Wo liegt Rio?", icon: "navigation" }, // Grüße nach Rio
     "q-rbr-3": { kind: "tictactoe", label: "Tic-Tac-Toe-Spielfeld", icon: "grid-3x3" },               // Tic-Tac-São-Bento
-    "q-scr-1": { kind: "link", url: ARRIVALS_URL, label: "Aktuelle Ankünfte am Flughafen Madeira", icon: "plane-landing" }, // Halb gelandet
-    "q-san-3": { kind: "link", url: UNESCO_URL, label: "Die zehn UNESCO-Kriterien", icon: "landmark" } // Mit Lorbeeren und UNESCO gekrönt
+    // Geheime Eingaben (eine gewählte Person gibt etwas ein, das für die anderen verdeckt bleibt)
+    "q-cdl-2": { kind: "secretTerms", count: 5, need: 3, maxTips: 6, label: "Fünf geheime Begriffe", icon: "key-round" }, // Was Churchill sah
+    "q-fun-3": { kind: "secretRank", count: 3, label: "Geheime Rangfolge", icon: "list-ordered" },                       // Früchteschweiger
+    "q-pmz-3": { kind: "secretWord", minLetters: 5, label: "Geheimes Wort", icon: "type" },                               // Baumstaben
+    // Auswahl: genau 2 der 10 UNESCO-Kriterien; Lösung (ix) + (x) wird bei „Daneben“ nie gezeigt
+    "q-san-3": { kind: "choice", pick: 2, solution: ["ix", "x"], penalty: 10, label: "Zwei Kriterien wählen", icon: "list-checks" } // Mit Lorbeeren und UNESCO gekrönt
   };
+
+  // Links als eigene Zeilen im Quest-Fenster (öffnen einen neuen Tab)
+  const LINKS = {
+    "q-scr-1": [{ url: ARRIVALS_URL, label: "Aktuelle Ankünfte am Flughafen Madeira", icon: "plane-landing" }], // Halb gelandet
+    "q-san-3": [{ url: UNESCO_URL, label: "Die zehn UNESCO-Kriterien", icon: "landmark" }]                   // Mit Lorbeeren und UNESCO gekrönt
+  };
+
+  // Die zehn Welterbe-Kriterien der UNESCO (Kurzfassung nach whc.unesco.org/en/criteria)
+  const UNESCO_CRITERIA = [
+    { id: "i", text: "Ein Meisterwerk menschlicher Schöpferkraft." },
+    { id: "ii", text: "Zeigt einen bedeutenden Austausch menschlicher Werte über eine Zeitspanne oder in einem Kulturraum – in Architektur, Technik, Monumentalkunst, Städtebau oder Landschaftsgestaltung." },
+    { id: "iii", text: "Ein einzigartiges oder zumindest außergewöhnliches Zeugnis einer lebenden oder untergegangenen Kulturtradition oder Zivilisation." },
+    { id: "iv", text: "Ein herausragendes Beispiel eines Gebäudetyps, eines architektonischen oder technischen Ensembles oder einer Landschaft, das bedeutende Abschnitte der Menschheitsgeschichte zeigt." },
+    { id: "v", text: "Ein herausragendes Beispiel traditioneller Besiedlung oder Land- bzw. Meeresnutzung, typisch für eine Kultur oder das Zusammenspiel von Mensch und Umwelt – besonders wenn es durch unumkehrbaren Wandel gefährdet ist." },
+    { id: "vi", text: "Unmittelbar oder greifbar verbunden mit Ereignissen, lebendigen Traditionen, Ideen, Glaubensvorstellungen oder künstlerischen und literarischen Werken von herausragender universeller Bedeutung (möglichst nur zusammen mit anderen Kriterien)." },
+    { id: "vii", text: "Enthält überragende Naturerscheinungen oder Gebiete von außergewöhnlicher Naturschönheit und ästhetischer Bedeutung." },
+    { id: "viii", text: "Ein herausragendes Beispiel für die großen Abschnitte der Erdgeschichte – mit Spuren des Lebens, laufenden geologischen Prozessen der Landschaftsformung oder bedeutenden geomorphologischen Merkmalen." },
+    { id: "ix", text: "Ein herausragendes Beispiel laufender ökologischer und biologischer Prozesse in der Entwicklung von Ökosystemen an Land, im Süßwasser, an Küsten und im Meer sowie von Pflanzen- und Tiergemeinschaften." },
+    { id: "x", text: "Enthält die wichtigsten natürlichen Lebensräume für den Erhalt der biologischen Vielfalt vor Ort – auch mit bedrohten Arten von herausragendem universellem Wert für Wissenschaft oder Naturschutz." }
+  ];
 
   class ToolError extends Error {}
   const fail = (msg) => { throw new ToolError(msg); };
@@ -38,7 +62,27 @@
     content.regions.forEach((r) => r.quests.forEach((q) => { if (q.id === questId) quest = q; }));
     return quest && quest.height != null ? Object.assign({}, base, { answer: quest.height }) : base;
   }
-  function hasState(cfg) { return cfg && cfg.kind !== "link"; }
+  function hasState(cfg) { return !!cfg; }
+  function links(questId) { return LINKS[questId] || []; }
+
+  // ---------------------------------------------------------------- Geheime Eingaben
+  // Vergleich von Wörtern: Groß-/Kleinschreibung, Leerzeichen am Rand und Akzente egal; ä=ae, ö=oe, ü=ue, ß=ss
+  function norm(s) {
+    return String(s == null ? "" : s).trim().toLowerCase()
+      .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+  }
+  const letterCount = (s) => (String(s).match(/\p{L}/gu) || []).length;
+  const sameName = (a, b) => norm(a) === norm(b) && norm(a) !== "";
+  // Geheimes wird leicht verschleiert gespeichert, damit es nicht zufällig in einer Sicherungsdatei
+  // auffällt (Vertrauensbasis – kein echter Schutz).
+  function hide(v) { return "h:" + btoa(unescape(encodeURIComponent(JSON.stringify(v)))); }
+  function unhide(h) {
+    if (typeof h !== "string" || h.indexOf("h:") !== 0) return null;
+    try { return JSON.parse(decodeURIComponent(escape(atob(h.slice(2))))); } catch (e) { return null; }
+  }
+  const usedList = (ts) => unhide(ts.used) || [];
+  const isSecret = (cfg) => cfg.kind === "secretTerms" || cfg.kind === "secretRank" || cfg.kind === "secretWord";
 
   // ---------------------------------------------------------------- Auswertung
   function penaltyLeft(ts, now) {
@@ -89,6 +133,22 @@
         const st = tttStatus(ts.moves);
         return st.winner ? { ok: true, winner: st.winner } : null;
       }
+      case "secretTerms": {
+        if (!ts.secret) return null;
+        const n = (ts.guessed || []).filter(Boolean).length;
+        if (n >= cfg.need) return { ok: true, guessed: n };
+        return (ts.tips || 0) >= cfg.maxTips ? { ok: false, guessed: n } : null;
+      }
+      case "secretRank": {
+        if (!ts.secret || !ts.guess) return null;
+        const order = unhide(ts.secret) || [];
+        const places = order.map((f, i) => ts.guess[i] === f);
+        return { ok: places.every(Boolean), places, order };
+      }
+      case "secretWord":
+        return ts.secret && (ts.accepted || (ts.guesses || []).some((g) => g.ok)) ? { ok: true } : null;
+      case "choice":
+        return ts.ok ? { ok: true } : null;
       default:
         return null;
     }
@@ -102,7 +162,127 @@
     if (!isFinite(n) || n < 0 || n > 100000) fail("Bitte eine gültige Zahl für " + what + " eingeben.");
     return Math.round(n * 10) / 10;
   };
-  const round0 = { guess: null, answer: null, startedAt: null, stoppedAt: null, count: 0, measures: [] };
+  const round0 = { guess: null, answer: null, startedAt: null, stoppedAt: null, count: 0, measures: [], picks: null, ok: false };
+
+  // Geheime Eingaben: Person wählen → sie gibt ein und schreibt fest (verdeckt) → raten → auflösen / neue Runde
+  function updateSecret(cfg, ts, op, now, by) {
+    const setterOnly = () => { if (!sameName(by, ts.setter)) fail("Das kann nur " + (ts.setter || "die eingebende Person") + " auf dem eigenen Handy."); };
+    const guessersOnly = () => { if (sameName(by, ts.setter)) fail("Raten dürfen nur die anderen."); };
+    const fresh = (words) => { // keine Begriffe aus früheren Runden
+      const used = usedList(ts);
+      const again = words.filter((w) => used.indexOf(norm(w)) >= 0);
+      if (again.length) fail("Schon in einer früheren Runde verwendet: " + again.join(", ") + ". Bitte etwas Neues.");
+    };
+    const distinct = (words) => { if (new Set(words.map(norm)).size !== words.length) fail("Bitte keine doppelten Einträge."); };
+    const round0s = { secret: null, fruits: null, guess: null, guessed: null, tips: 0, guesses: [], accepted: null, revealed: false };
+
+    switch (op.type) {
+      case "setSetter": {
+        if (ts.secret || ts.fruits) fail("Die Eingabe läuft schon.");
+        const n = String(op.name || "").trim();
+        if (!n) fail("Bitte eine Person auswählen.");
+        return Object.assign(ts, { setter: n.slice(0, 24) });
+      }
+      case "clearSetter":
+        if (ts.secret) fail("Schon festgeschrieben.");
+        return Object.assign(ts, { setter: null, fruits: null });
+      case "reveal":
+        if (!ts.secret) fail("Es gibt noch nichts aufzulösen.");
+        return Object.assign(ts, { revealed: true });
+      case "newRound": {
+        if (!ts.secret && !ts.fruits) fail("Es läuft noch keine Runde.");
+        const used = usedList(ts);
+        const add = (w) => { const k = norm(w); if (k && used.indexOf(k) < 0) used.push(k); };
+        if (cfg.kind === "secretTerms") (unhide(ts.secret) || []).forEach(add);
+        if (cfg.kind === "secretWord" && ts.secret) add(unhide(ts.secret));
+        if (cfg.kind === "secretRank") (ts.fruits || []).forEach(add);
+        return Object.assign(ts, round0s, { used: hide(used), round: (ts.round || 1) + 1 });
+      }
+    }
+    if (!ts.setter) fail("Erst auswählen, wer die geheime Eingabe macht.");
+
+    if (cfg.kind === "secretTerms") {
+      if (op.type === "fix") {
+        setterOnly();
+        if (ts.secret) fail("Schon festgeschrieben.");
+        const terms = (op.terms || []).map((t) => String(t || "").trim().slice(0, 60));
+        if (terms.length !== cfg.count || terms.some((t) => !t)) fail("Bitte alle " + cfg.count + " Begriffe eintragen.");
+        distinct(terms); fresh(terms);
+        return Object.assign(ts, round0s, { secret: hide(terms), guessed: terms.map(() => false), tips: 0 });
+      }
+      if (!ts.secret) fail("Erst die Begriffe festschreiben.");
+      if (op.type === "tip") {
+        const n = (ts.tips || 0) + (op.d < 0 ? -1 : 1);
+        if (n < 0) fail("Noch kein Tipp gezählt.");
+        if (n > cfg.maxTips) fail("Alle " + cfg.maxTips + " Tipps sind verbraucht.");
+        return Object.assign(ts, { tips: n });
+      }
+      if (op.type === "mark") {
+        setterOnly();
+        const i = Number(op.i);
+        if (!(i >= 0 && i < cfg.count)) fail("Unbekannter Begriff.");
+        ts.guessed = (ts.guessed || []).slice();
+        ts.guessed[i] = !ts.guessed[i];
+        return ts;
+      }
+    }
+
+    if (cfg.kind === "secretRank") {
+      if (op.type === "setFruits") {
+        setterOnly();
+        if (ts.secret) fail("Schon festgeschrieben.");
+        const fruits = (op.fruits || []).map((t) => String(t || "").trim().slice(0, 40));
+        if (fruits.length !== cfg.count || fruits.some((t) => !t)) fail("Bitte alle " + cfg.count + " Früchte eintragen.");
+        distinct(fruits); fresh(fruits);
+        return Object.assign(ts, round0s, { fruits });
+      }
+      if (op.type === "fix") {
+        setterOnly();
+        if (!ts.fruits) fail("Erst die Früchte eintragen.");
+        if (ts.secret) fail("Schon festgeschrieben.");
+        return Object.assign(ts, { secret: hide(checkOrder(ts.fruits, op.order)) });
+      }
+      if (op.type === "guess") {
+        guessersOnly();
+        if (!ts.secret) fail("Die Rangfolge ist noch nicht festgeschrieben.");
+        if (ts.guess) fail("Eure Rangfolge ist schon festgeschrieben.");
+        return Object.assign(ts, { guess: checkOrder(ts.fruits, op.order), guessBy: by, revealed: true });
+      }
+    }
+
+    if (cfg.kind === "secretWord") {
+      if (op.type === "fix") {
+        setterOnly();
+        if (ts.secret) fail("Schon festgeschrieben.");
+        const w = String(op.word || "").trim().slice(0, 60);
+        if (letterCount(w) < cfg.minLetters) fail("Das Wort braucht mindestens " + cfg.minLetters + " Buchstaben.");
+        fresh([w]);
+        return Object.assign(ts, round0s, { secret: hide(w), letters: letterCount(w) });
+      }
+      if (!ts.secret) fail("Erst das Wort festschreiben.");
+      if (op.type === "guess") {
+        guessersOnly();
+        if (result(cfg, ts, now)) fail("Schon geschafft.");
+        const text = String(op.text || "").trim().slice(0, 60);
+        if (!text) fail("Bitte einen Tipp eintippen.");
+        ts.guesses = (ts.guesses || []).concat({ text, by, ok: norm(text) === norm(unhide(ts.secret)), t: now });
+        return ts;
+      }
+      if (op.type === "accept") {
+        setterOnly();
+        const last = (ts.guesses || [])[(ts.guesses || []).length - 1];
+        if (!last || last.ok) fail("Es gibt keinen falschen Tipp, der zählen könnte.");
+        return Object.assign(ts, { accepted: last.text });
+      }
+    }
+    fail("Das geht hier nicht.");
+  }
+  // Rangfolge prüfen: eine Anordnung genau dieser Früchte
+  function checkOrder(fruits, order) {
+    const o = (order || []).map(String);
+    if (o.length !== fruits.length || fruits.some((f) => o.indexOf(f) < 0)) fail("Bitte alle Früchte in eine Reihenfolge bringen.");
+    return o;
+  }
 
   // Liefert den neuen Zustand eines Tools; wirft ToolError, wenn es gerade nicht geht.
   function update(cfg, oldTs, op, now, by) {
@@ -118,6 +298,7 @@
       if (!cfg.penalty) fail("Hier gibt es keine Strafzeit.");
       return startPenalty(null);
     }
+    if (isSecret(cfg)) return updateSecret(cfg, ts, op, now, by);
     if (op.type === "newRound") {
       if (cfg.kind === "tictactoe") {
         const st = tttStatus(ts.moves);
@@ -185,6 +366,17 @@
         }
         break;
 
+      case "choice":
+        if (op.type === "fix") {
+          const picks = Array.from(new Set((op.picks || []).map(String)));
+          if (picks.length !== cfg.pick || !picks.every((p) => UNESCO_CRITERIA.some((c) => c.id === p))) fail("Bitte genau " + cfg.pick + " Kriterien auswählen.");
+          const ok = cfg.solution.every((id) => picks.indexOf(id) >= 0);
+          // daneben → sofort Strafzeit; die Lösung wird dabei nicht verraten
+          if (!ok) return startPenalty({ picks });
+          return Object.assign(ts, { picks, ok: true, by, lastMiss: null });
+        }
+        break;
+
       case "tictactoe":
         if (op.type === "players") {
           const x = String(op.x || "").trim(), o = String(op.o || "").trim();
@@ -212,7 +404,10 @@
     fail("Das geht hier nicht.");
   }
 
-  const api = { TOOLS, ARRIVALS_URL, UNESCO_URL, ToolError, config, hasState, update, result, penaltyLeft, angleDiff, compassHit, tttStatus };
+  const api = {
+    TOOLS, LINKS, ARRIVALS_URL, UNESCO_URL, UNESCO_CRITERIA, ToolError, config, links, hasState, update, result, penaltyLeft,
+    angleDiff, compassHit, tttStatus, norm, letterCount, sameName, hide, unhide, isSecret
+  };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.QuestTools = api;
 })(typeof window !== "undefined" ? window : globalThis);

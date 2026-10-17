@@ -70,7 +70,7 @@ Vertrauensbasis, keine Beweisfotos.
   - Das Wort „Werkzeug“ kommt in der App nicht vor (Begriff: „Hilfsmittel“).
   - Anzeige im Quest-Fenster unter der Aufgabe als **antippbare Zeile** wie ein Link: passendes Lucide-Icon + beschreibende
     Bezeichnung (z. B. „Countdown: 10 Sekunden“, „Höhe schätzen“), rechts ggf. Zustand (Strafzeit-Countdown, läuft, Geschafft)
-    und Pfeil. Tippen öffnet das Hilfsmittel in einem eigenen Fenster. Links (`kind: "link"`) öffnen einen neuen Tab.
+    und Pfeil. Tippen öffnet das Hilfsmittel in einem eigenen Fenster. Links (`LINKS`) öffnen einen neuen Tab; eine Quest kann ein Hilfsmittel und Links haben.
   - **Strafzeit startet automatisch:** Erkennt das Hilfsmittel selbst einen Fehlversuch, startet sie sofort (ohne Rückfrage).
     Müssen Spieler selbst urteilen, gibt es einen Knopf „Daneben“ (Aktion `penalty`), der sie sofort startet. Nie zwei
     Bestätigungen hintereinander, kein Knopf „Strafzeit starten“. Gesperrt ist nur das Hilfsmittel dieser Quest (Countdown
@@ -78,6 +78,14 @@ Vertrauensbasis, keine Beweisfotos.
   - **Spielerauswahl** zeigt alle Namen, mit denen sich je jemand angemeldet hat (Server speichert sie in `data/players.json`
     beim Login und beim App-Start/Namenswechsel über `POST api/player`; `players` kommt mit jeder Spielstand-Antwort).
     Kein Eingabefeld für weitere Namen.
+  - **Geheime Eingaben** (`kind` secretTerms/secretRank/secretWord, Logik `updateSecret` in tools.js): zuerst wählen, wer
+    eingibt (Auswahl aus allen Spielern; „Andere Person“ bis zum Festschreiben). Nur diese Person kann auf ihrem Handy eingeben
+    (Name-Vergleich mit `sameName`). Nach dem Festschreiben überall verdeckt; nur auf ihrem Handy „Anzeigen“ (5 s, lokal).
+    „Auflösen“ deckt alles für alle auf. „Neue Runde“ = neue Eingabe derselben Person; Begriffe früherer Runden sind gesperrt
+    (`used`, App weist darauf hin). Geheimes liegt leicht verschleiert im Spielstand (`hide`/`unhide`, Vertrauensbasis, kein
+    echter Schutz). Wortvergleich (`norm`): Groß-/Kleinschreibung, Leerzeichen am Rand und Akzente egal; ä=ae, ö=oe, ü=ue, ß=ss.
+  - Entwürfe vor dem Festschreiben (Sortierung, Auswahl) bleiben nur auf dem jeweiligen Handy; festgeschrieben wird synchron.
+  - Sortieren: Ziehen am Griff (Pointer-Events, `touch-action: none`) + Pfeile hoch/runter; während des Ziehens kein Neuzeichnen.
   Aktuelle Hilfsmittel:
   - Countdown: Light Show 10 s, Dreieck auf Dreieck 10 s, Werdet brava … 30 s, Treibgutkreuz 30 s (Start/Abbrechen/Neustart, Ende: Anzeige + Vibration).
   - „Fahrzeit schätzen und stoppen“ (Seilbahn): Schätzung festschreiben, Stoppuhr, ≤ 15 s daneben, sonst neue Runde.
@@ -88,9 +96,19 @@ Vertrauensbasis, keine Beweisfotos.
     „Hier ist Rio!“, Ziel 208° ± **50°**; eine Runde = 2 Messungen, eine Treffer reicht, beide daneben → automatisch 5 min
     Strafzeit; ohne Kompass Hinweis auf Kompass-App + Wert eintragen.
   - „Tic-Tac-Toe-Spielfeld“ (Tic-Tac-São-Bento): 2 Spielende wählen, Sieg/Unentschieden, Zug zurück, neue Runde.
-  - Links: „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
+  - „Fünf geheime Begriffe“ (Was Churchill sah): 5 Begriffe festschreiben; „Tipps: X von 6“ mit „+1 Tipp“/−1; nur die
+    eingebende Person tippt Begriffe als „erraten“ an (erratene sind für alle sichtbar); ≥ 3 erraten → „Geschafft!“,
+    6 Tipps und < 3 → „Daneben“ + „Neue Runde“ (neue Begriffe, keine Wiederholung).
+  - „Geheime Rangfolge“ (Früchteschweiger): Person trägt 3 Früchte ein (Namen für alle sichtbar), sortiert geheim (oben = beste)
+    und schreibt fest; die anderen sortieren ihre Vermutung und schreiben fest → sofort Vergleich; „Daneben“ zeigt die richtige
+    Rangfolge mit grün/rot je Platz + „Neue Runde – mit anderen Früchten“.
+  - „Geheimes Wort“ (Baumstaben): Wort ≥ 5 Buchstaben festschreiben; andere sehen „Wort mit X Buchstaben“; Tipps werden mit `norm`
+    verglichen; falsch → „Daneben“, die eingebende Person kann „Trotzdem richtig“ tippen; weitere Tipps erlaubt; „Neue Runde“.
+  - „Zwei Kriterien wählen“ (Mit Lorbeeren und UNESCO gekrönt): 10 UNESCO-Kriterien (i)–(x) mit deutscher Kurzfassung
+    (`UNESCO_CRITERIA`), genau 2 wählen und festschreiben; Lösung (ix)+(x) in tools.js, vorher nie gezeigt; daneben →
+    automatisch 10 min Strafzeit, Lösung wird dabei **nicht** gezeigt.
+  - Links (`LINKS` in tools.js, eigene Zeilen): „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
     „Die zehn UNESCO-Kriterien“ (Mit Lorbeeren und UNESCO gekrönt) → https://whc.unesco.org/en/criteria/.
-    Lorbeeren: Strafzeit (10 min) kommt später über ein Auswahl-Hilfsmittel.
 - Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann Zertifikat (PDF).
 
 ## Aufbau und Gestaltung
