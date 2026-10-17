@@ -431,3 +431,46 @@ h2 .ic, h3 .ic { width: 1em; height: 1em; vertical-align: -0.12em; }
 .login-sub { margin: 2px 0 6px; font-size: .8rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .shop-item h3 .used { font-family: var(--font); font-size: .85rem; font-weight: 600; color: var(--muted); white-space: nowrap; }
 .pie-legend small { font-size: .8rem; font-weight: 500; white-space: nowrap; }
+
+/* ---------- Rang-Figuren ---------- */
+.fig { display: block; overflow: visible; }
+.fig path, .fig circle { vector-effect: non-scaling-stroke; }
+.fig .dot { fill: currentColor; stroke: none; }
+.fig .thin { stroke-width: 1.4; }
+.fig .accent-fill { fill: var(--fig-accent, #f5a700); }
+.fig.fig-sm path, .fig.fig-sm circle { stroke-width: 1.5; }
+
+/* ---------- Kopfzeile: Schriftzug + Rang-Abzeichen ---------- */
+.topbar { display: block; }
+.topbar-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.brand { min-width: 0; overflow: visible; display: flex; align-items: center; }
+.logo { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; color: #fff; }
+.logo-ic .ic { width: clamp(16px, 4.6vw, 22px); height: clamp(16px, 4.6vw, 22px); vertical-align: 0; display: block; color: #f2c14e; }
+.logo-txt { font-family: "Bebas Neue", var(--display); font-size: clamp(19px, 6vw, 27px); line-height: 1; letter-spacing: .02em; padding-top: 2px; }
+.logo-img { display: block; height: 34px; max-width: 46vw; object-fit: contain; }
+.rank-badge {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; border: 0; cursor: pointer;
+  background: rgba(255,255,255,.14); color: #fff; border-radius: 999px; padding: 3px 12px 3px 6px; font-size: .85rem; font-weight: 600;
+}
+.rank-badge .rb-fig .fig { width: 24px; height: 24px; }
+.rank-badge .rb-sep { opacity: .6; }
+.rank-badge .hdr-points { font-weight: 800; }
+
+/* ---------- Statistik: Rang-Figuren ---------- */
+.rank-top { display: flex; align-items: center; gap: 14px; }
+.rank-hero { width: 84px; height: 84px; flex: 0 0 auto; background: rgba(255,255,255,.1); border-radius: 18px; padding: 4px; --fig-accent: #f5a700; }
+.rank-hero .fig { width: 100%; height: 100%; }
+.rank-ladder { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.rl-item { display: grid; justify-items: center; gap: 4px; padding: 8px 4px 6px; border-radius: 14px; opacity: .45; filter: grayscale(1); font-size: .78rem; font-weight: 600; text-align: center; }
+.rl-item .fig { width: 40px; height: 40px; }
+.rl-item.reached { opacity: .75; filter: none; }
+.rl-item.current { opacity: 1; filter: none; background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.5); }
+.rl-name .ic { width: .95em; height: .95em; }
+
+/* ---------- Legenden der Tortendiagramme: Zahlen rechtsbündig ---------- */
+.pie-legend li { display: grid; grid-template-columns: 14px 1fr auto; align-items: center; column-gap: 10px; }
+.pie-legend li span:not(.pv) { line-height: 1.25; }
+.pie-legend .pv { display: grid; justify-items: end; text-align: right; min-width: 4.2em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.pie-legend .pv small { font-size: .78rem; }
+.hdr-btn { width: 46px; }
+.logo-txt { font-size: 27px; }

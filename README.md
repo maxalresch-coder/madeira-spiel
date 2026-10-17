@@ -32,6 +32,10 @@ gegen Belohnungen eintauschen – mit Zertifikat als PDF.
 Alle regionalen Quests (inkl. Pin-Koordinaten als Breiten-/Längengrad), Stapel-Quests und
 Belohnungen stehen in [`public/content.js`](public/content.js).
 
+**Eigenes Logo:** Eine Datei `public/images/logo.svg` (bevorzugt) oder `public/images/logo.png`
+ersetzt automatisch den Schriftzug „Operação Madeira“ oben links. Gut geeignet: querformatig,
+transparenter Hintergrund, helle Farben (die Kopfzeile ist dunkelblau), PNG ca. 600 × 120 Pixel.
+
 ## Aufbau
 
 | Datei | Zweck |
@@ -39,6 +43,8 @@ Belohnungen stehen in [`public/content.js`](public/content.js).
 | `server.py` | kleiner Python-Server ohne Abhängigkeiten (Passwort, geheimer Link, Spielstand) |
 | `public/logic.js` | Spielregeln (Punkte, Stufen, Stapel, Shop, Rückgängig) |
 | `public/app.js` | Oberfläche |
+| `public/figures.js` | Rang-Figuren (Landstreicher, Abenteurer, Inselkönig) als Strichzeichnung |
+| `public/icons.js` | Linien-Icons (Lucide, ISC-Lizenz) |
 | `public/content.js` | Regionale Quests, Stapel-Quests, Belohnungen |
 | `public/map-data.js` | Umrisse der 10 Gemeinden (Quelle: CAOP, Direção-Geral do Território, vereinfacht) |
 | `tests/logic.test.js` | Tests der Spielregeln (`node tests/logic.test.js`) |

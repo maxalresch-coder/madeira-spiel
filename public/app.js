@@ -151,6 +151,8 @@
   function start() {
     $("#login").hidden = true;
     $("#app").hidden = false;
+    requestAnimationFrame(fitLogo);
+    if (document.fonts && document.fonts.load) document.fonts.load('27px "Bebas Neue"', "Operação Madeira").then(fitLogo, () => {});
     render();
     poll();
   }
@@ -165,6 +167,7 @@
     $("#hdr-points").textContent = fmt(s.balance) + " P";
     $("#hdr-points").classList.toggle("neg", s.balance < 0);
     $("#hdr-rank").textContent = s.rankName;
+    $("#rb-fig").innerHTML = rankFigure(s.rank, "fig-sm");
     const views = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats };
     const view = views[app.view] ? app.view : "home";
     $$(".hdr-btn[data-go]").forEach((b) => b.classList.toggle("active", b.dataset.go === view));
@@ -179,6 +182,7 @@
     closeAll();
     $("#hdr-points").textContent = "–";
     $("#hdr-rank").textContent = "Neue Spielinhalte";
+    $("#rb-fig").innerHTML = "";
     $("#view").innerHTML = '<div class="panel"><h2>Neue Spielinhalte ' + icon("party-popper") + '</h2>' +
       '<p>Das Spiel hat die finalen Quests bekommen. Der gespeicherte Spielstand stammt noch von der alten Version und passt nicht mehr dazu.</p>' +
       '<p class="muted small">Ein Neustart setzt alles auf null und mischt den Stapel neu – für alle Handys.</p>' +
@@ -720,16 +724,18 @@
 
   function viewStats(s) {
     const kp = L.rankProgress(s.earned, s.maxPoints);
-    const rankChecks = kp.ranks.map((r) => '<span class="ms' + (r.reached ? " on" : "") + '">' + (r.reached ? icon("check") + " " : "") + esc(r.name) + "</span>").join("");
+    const ladder = kp.ranks.map((r, i) => '<div class="rl-item' + (i === s.rank ? " current" : "") + (r.reached ? " reached" : "") + '">' +
+      rankFigure(i) + '<span class="rl-name">' + (r.reached ? icon("check") + " " : "") + esc(r.name) + "</span></div>").join("");
     const days = L.dayCount(app.state, Date.now());
     const perDay = L.pointsPerDay(app.state, Date.now());
     const lvlCounts = [0, 0, 0, 0];
     C.regions.forEach((r) => lvlCounts[s.levels[r.id]]++);
     return '' +
-      '<div class="panel rank-panel"><div class="muted small">Team-Rang</div><div class="rank-big">' + esc(s.rankName) + "</div>" +
+      '<div class="panel rank-panel"><div class="rank-top"><div class="rank-hero">' + rankFigure(s.rank) + "</div>" +
+      '<div><div class="muted small">Team-Rang</div><div class="rank-big">' + esc(s.rankName) + "</div></div></div>" +
       '<div class="small rank-sub">' + fmt(s.earned) + " Punkte verdient · " + esc(kp.text) + "</div>" +
       stageBar(kp, "Teamrang") +
-      '<div class="ms-row">' + rankChecks + "</div></div>" +
+      '<div class="rank-ladder">' + ladder + "</div></div>" +
       regionsSection(s) +
       '<div class="kpis">' +
         kpi(fmt(s.earned), "Punkte verdient") + kpi(fmt(s.balance), "Kontostand") +
@@ -786,7 +792,8 @@
     const label = parts.map((p) => p[0] + ": " + fmt(p[1])).join(", ");
     return '<div class="pie"><svg viewBox="0 0 128 128" role="img" aria-label="' + esc(unit + " – " + label) + '">' + slices + "</svg>" +
       '<ul class="pie-legend">' + parts.map((p) => '<li><i style="background:' + p[2] + '"></i><span>' + esc(p[0]) + "</span>" +
-        (asPercent ? "<strong>" + (total ? Math.round(p[1] / total * 100) : 0) + ' %</strong><small class="muted"> · ' + fmt(p[1]) + " P</small>" : "<strong>" + fmt(p[1]) + "</strong>") +
+        (asPercent ? '<span class="pv"><strong>' + (total ? Math.round(p[1] / total * 100) : 0) + ' %</strong><small class="muted">' + fmt(p[1]) + " P</small></span>"
+          : '<span class="pv"><strong>' + fmt(p[1]) + "</strong></span>") +
         "</li>").join("") + "</ul></div>";
   }
   function kpi(v, l) { return '<div class="kpi"><div class="v">' + v + '</div><div class="l">' + l + "</div></div>"; }
@@ -1192,5 +1199,24 @@
 
   // Start: Icons in der Kopfzeile und im Login einsetzen
   $$("[data-icon]").forEach((el) => { el.innerHTML = icon(el.dataset.icon); });
+  // Schriftzug so groß wie möglich, aber immer in einer Zeile neben den Icons
+  function fitLogo() {
+    const txt = $(".logo-txt"), logo = $(".logo"), nav = $(".hdr-nav");
+    if (!txt || !logo || !nav) return;
+    txt.style.fontSize = "27px";
+    const free = nav.getBoundingClientRect().left - logo.getBoundingClientRect().left - 10;
+    const w = logo.getBoundingClientRect().width;
+    if (w > free && free > 0) txt.style.fontSize = Math.max(12, Math.floor(27 * (free - 24) / (w - 24))) + "px";
+  }
+  window.addEventListener("resize", fitLogo);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitLogo);
+  // Eigenes Logo: liegt public/images/logo.svg (oder logo.png) vor, ersetzt es den Schriftzug
+  (function loadLogo(files) {
+    if (!files.length) return;
+    const im = new Image();
+    im.onload = () => { $("#brand-logo").innerHTML = '<img class="logo-img" src="' + files[0] + '" alt="Operação Madeira">'; };
+    im.onerror = () => loadLogo(files.slice(1));
+    im.src = files[0];
+  })(["images/logo.svg", "images/logo.png"]);
   if (app.token && app.name) start(); else showLogin();
 })();

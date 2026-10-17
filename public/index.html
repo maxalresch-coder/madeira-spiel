@@ -14,7 +14,7 @@
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -41,9 +41,9 @@
   <!-- App -->
   <div id="app" hidden>
     <header class="topbar">
-      <div class="brand">
-        <span class="brand-title">Operação Madeira <span class="brand-sub">Das Spiel</span></span>
-        <span class="brand-rank"><span id="hdr-points" class="hdr-points"></span><span id="hdr-rank"></span></span>
+      <div class="topbar-row">
+      <div class="brand" id="brand-logo" aria-label="Operação Madeira">
+        <span class="logo"><span class="logo-ic" aria-hidden="true" data-icon="compass"></span><span class="logo-txt">Operação Madeira</span></span>
       </div>
       <nav class="hdr-nav" aria-label="Bereiche">
         <button class="hdr-btn" data-go="shop" aria-label="Shop" title="Shop"><span class="hdr-ic" aria-hidden="true" data-icon="shopping-bag"></span><span class="hdr-lbl">Shop</span></button>
@@ -51,6 +51,10 @@
         <button class="hdr-btn" data-go="stats" aria-label="Statistik" title="Statistik: Regionen, Fortschritt, Urlaub beenden, Reset"><span class="hdr-ic" aria-hidden="true" data-icon="chart-column"></span><span class="hdr-lbl">Statistik</span></button>
         <button class="hdr-btn" id="help-btn" aria-label="Spielanleitung" title="Spielanleitung"><span class="hdr-ic" aria-hidden="true" data-icon="circle-help"></span><span class="hdr-lbl">Hilfe</span></button>
       </nav>
+      </div>
+      <button class="rank-badge" data-go="stats" aria-label="Teamrang und Kontostand – zur Statistik">
+        <span class="rb-fig" id="rb-fig" aria-hidden="true"></span><span id="hdr-rank"></span><span class="rb-sep" aria-hidden="true">·</span><span id="hdr-points" class="hdr-points"></span>
+      </button>
     </header>
     <div id="offline" class="offline" hidden>Keine Verbindung – Änderungen können gerade nicht gespeichert werden.</div>
     <main id="view" class="view"></main>
@@ -64,6 +68,7 @@
   <script src="map-data.js"></script>
   <script src="logic.js"></script>
   <script src="icons.js"></script>
+  <script src="figures.js"></script>
   <script src="vendor/jspdf.umd.min.js" defer></script>
   <script src="app.js"></script>
 </body>
