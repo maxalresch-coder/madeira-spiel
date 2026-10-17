@@ -8,6 +8,8 @@ Aufgaben:
     damit alle drei Handys denselben Stand sehen
   * nimmt Fotos der Hilfsmittel entgegen (data/photos/, nur vorübergehend: Fotos, auf die der
     Spielstand nicht mehr verweist, werden automatisch gelöscht – z. B. nach „Geschafft“, „Neue Runde“ oder Reset)
+  * führt ein Fehlerprotokoll für den Foto-Upload (data/client-errors.log, eine JSON-Zeile je Fehler),
+    das die Handys automatisch füllen – anzusehen in der App unter Einstellungen → Fehlerprotokoll
   * merkt sich alle Namen, mit denen sich jemand angemeldet hat (data/players.json),
     z. B. für die Spielerauswahl beim Tic-Tac-Toe (bleibt auch nach einem Reset)
 
@@ -37,6 +39,8 @@ MAX_BODY = 2 * 1024 * 1024
 MAX_PHOTO = 600 * 1024          # Fotos werden im Browser auf ~1.000 px / < 200 KB verkleinert
 PHOTO_ID = re.compile(r"p[0-9a-f]{24}")
 PHOTO_GRACE = 120               # Sekunden: frisch hochgeladene Fotos nicht sofort wieder löschen
+ERRLOG_KEEP = 500               # so viele Einträge behält das Fehlerprotokoll höchstens
+ERRLOG_FIELDS = ("stage", "name", "message", "fileName", "fileType", "fileSize", "attempts", "player", "detail")
 _lock = threading.Lock()
 
 
@@ -154,6 +158,41 @@ def _save_photo(conf, environ):
     return pid, None
 
 
+def _errlog_path(conf):
+    return os.path.join(conf["data_dir"], "client-errors.log")
+
+
+def _log_client_error(conf, environ, body):
+    """Hängt einen Fehler (vom Handy gemeldet) an data/client-errors.log an: Zeitpunkt, Gerät/Browser, Schritt,
+    Fehlername und -meldung, Dateityp, Dateigröße … Alte Einträge werden ab ERRLOG_KEEP abgeschnitten."""
+    entry = {"time": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+             "ua": str(environ.get("HTTP_USER_AGENT", ""))[:300]}
+    for key in ERRLOG_FIELDS:
+        val = body.get(key)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            entry[key] = val
+        elif val is not None:
+            entry[key] = str(val)[:500]
+    line = json.dumps(entry, ensure_ascii=False)
+    path = _errlog_path(conf)
+    with _lock:
+        os.makedirs(conf["data_dir"], exist_ok=True)
+        lines = _read_errlog(conf)
+        lines.append(line)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines[-ERRLOG_KEEP:]) + "\n")
+        os.replace(tmp, path)
+
+
+def _read_errlog(conf):
+    try:
+        with open(_errlog_path(conf), encoding="utf-8") as f:
+            return [ln for ln in f.read().splitlines() if ln.strip()]
+    except OSError:
+        return []
+
+
 def _now_ms():
     """Serverzeit in ms – alle Handys rechnen Timer damit, damit sie synchron laufen."""
     return int(time.time() * 1000)
@@ -227,6 +266,29 @@ def _api(path, environ, start_response, conf):
         if not pid:
             return _json(start_response, "400 Bad Request", {"error": err})
         return _json(start_response, "200 OK", {"id": pid})
+
+    # Fehlerprotokoll: melden, ansehen (neueste zuerst), leeren
+    if path == "client-error" and method == "POST":
+        body = _read_body(environ)
+        if not isinstance(body, dict):
+            return _json(start_response, "400 Bad Request", {"error": "Ungültige Anfrage"})
+        _log_client_error(conf, environ, body)
+        return _json(start_response, "200 OK", {"ok": True})
+    if path == "client-errors" and method == "GET":
+        entries = []
+        for ln in reversed(_read_errlog(conf)[-30:]):
+            try:
+                entries.append(json.loads(ln))
+            except ValueError:
+                pass
+        return _json(start_response, "200 OK", {"entries": entries, "total": len(_read_errlog(conf))})
+    if path == "client-errors/clear" and method == "POST":
+        with _lock:
+            try:
+                os.remove(_errlog_path(conf))
+            except OSError:
+                pass
+        return _json(start_response, "200 OK", {"ok": True})
 
     # Name melden (beim App-Start und nach „Name ändern“) – auch für schon Angemeldete
     if path == "player" and method == "POST":

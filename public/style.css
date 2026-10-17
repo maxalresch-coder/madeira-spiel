@@ -717,3 +717,7 @@ img.gone { visibility: hidden; }
 .pf-text details summary { cursor: pointer; color: var(--muted); min-height: 32px; display: flex; align-items: center; }
 .pf-btns { display: flex; gap: 8px; flex-wrap: wrap; }
 .pf-btns .btn { min-height: 44px; }
+/* Fehlerprotokoll */
+.errlog { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: .9rem; overflow-wrap: anywhere; }
+.errlog .small { margin-top: 2px; }
+.photo-zone { display: flex; flex-direction: column; gap: 10px; }

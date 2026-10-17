@@ -31,6 +31,18 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
 Konfiguration in der WSGI-Datei (`pythonanywhere_wsgi.py`): `MADEIRA_PASSWORD`, `MADEIRA_LINK_KEY` (geheimer Link-Teil).
 Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Fotos der Hilfsmittel: `data/photos/` (alles nicht in git). Details: ANLEITUNG.md.
 
+## Fehlerprotokoll (bei Problemen ZUERST hier nachsehen)
+- Jeder Fehler beim Foto-Upload wird vom Handy automatisch an den Server gemeldet (`POST api/client-error`, ohne Netz in
+  localStorage `errQueue` gemerkt und später nachgeschickt) und in **`data/client-errors.log`** gespeichert (auf PythonAnywhere:
+  `~/madeira-spiel/data/client-errors.log`; eine JSON-Zeile je Fehler, höchstens 500): `time`, `ua` (Gerät/Browser), `stage`
+  (Auswahl / Lesen / Verkleinern / Hochladen / Server / Eintragen), `name`, `message`, `fileName`, `fileType`, `fileSize`,
+  `attempts` (alle Fehlversuche davor), `player`, `detail` (RAM, Bildschirm, Zeit).
+- „Auswahl: Seite neu geladen“ = die Seite wurde neu geladen, während Kamera/Galerie offen war (Android hat den Browser wegen
+  Speichermangel beendet; erkannt über localStorage `photoPick`).
+- In der App: Einstellungen → **Fehlerprotokoll** (Unterseite `errors`): letzte 30 Einträge (`GET api/client-errors`),
+  „Kopieren“ (Text für den Nutzer zum Weiterschicken), „Protokoll leeren“ (`POST api/client-errors/clear`, mit Rückfrage).
+  Den Nutzer bei Foto-Problemen bitten, das Protokoll zu kopieren und zu schicken.
+
 ## Zweck
 Private Handy-Webseite für 3 Freunde im Madeira-Urlaub: als **ein Team** alle 10 Regionen erkunden,
 Quests erledigen, Punkte sammeln, am Ende Restpunkte in Belohnungen tauschen, Zertifikat als PDF.
@@ -119,25 +131,33 @@ Vertrauensbasis, keine Beweisfotos.
     (unverzerrt durch Verwerfen) und `rand32()` aus `crypto.getRandomValues`. Der Zufall wird beim Auslösen im Browser
     gezogen und als Teil der Aktion gespeichert (damit Warteschlange/Wiederholung dasselbe Ergebnis bringen). Test prüft Gleichverteilung.
   - **Fotos (wiederverwendbare Foto-Grundlage):** `photoPicker(qid, mehrere)` zeigt „Foto aufnehmen“ (`capture="environment"`)
-    und „Aus Galerie wählen“ (`multiple`: mehrere Bilder auf einmal); offline stattdessen ein Hinweis. `handlePhotos` verarbeitet
+    und „Aus Galerie wählen“ (`multiple`: mehrere Bilder auf einmal); offline stattdessen ein Hinweis. `processPhotos` verarbeitet
     die Bilder **nacheinander** (nie mehrere gleichzeitig im Speicher) mit Fortschrittsanzeige „Foto X von Y“, in der Reihenfolge,
     in der das Handy sie liefert. Die Datei-Felder (`#photo-camera`, `#photo-gallery`, Klasse `.photo-file`: unsichtbar, aber
-    nicht `display:none`) liegen **dauerhaft** außerhalb der Hilfsmittel (`photoInput`), Knöpfe rufen `choosePhotos` auf.
-    **Ablauf einer Auswahl (`onPhotosChosen`) – wichtig gegen zufällige Fehler auf Android** (Bilder aus der Fotoauswahl
-    gibt es nur „auf Abruf“; spätes/mehrfaches Lesen derselben Datei schlug sporadisch fehl): (1) **sofort** jede Datei genau
-    einmal vollständig lesen (`readPhotoFile`: `file.arrayBuffer()` → eigener Blob im Speicher, bis zu 3 Versuche mit Pause),
-    (2) erst danach `value = ""` (dieselbe Datei kann erneut gewählt werden), (3) **streng nacheinander** verkleinern
-    (`shrinkPhoto` aus der Kopie) → hochladen (`uploadPhoto`, bis zu 3 Versuche bei Netz-/Serverfehler) → eintragen.
-    Ergebnis jeder Verkleinerung prüfen (nicht leer, beginnt mit JPEG-Kennung, `isJpeg`); sonst automatisch kleiner/mit
-    weniger Qualität erneut; Dekodieren: (1) `createImageBitmap` in Zielgröße, (2) `img.decode()`, (3) nach Pause mit halber
-    Größe. Fehlgeschlagene Fotos bleiben (nur lokal, `toolUI.photoFailed`) mit „Erneut versuchen“ (ohne neu auswählen) und
-    „Entfernen“ sichtbar; die Meldung nennt die Stufe (`PHOTO_STAGES`: Lesen auf dem Handy / Verkleinern / Hochladen zum
-    Server / Eintragen) und unter „Details“ Fehlername, Dateityp, Größe. Server (`_save_photo`) lehnt nur ab: leer, zu groß
-    (> 600 KB), kein JPEG – jeweils mit eigener Meldung. Jedes Bild bekommt eigene, kurzlebige Canvas/Bitmap/Objekt-URL. **Speichersparend verkleinern** (`shrinkPhoto`, wichtig gegen „Zu wenig Speicher“ auf iPhones):
-    Abmessungen + EXIF-Ausrichtung aus dem Dateianfang lesen (`readImageInfo`, ohne zu dekodieren), dann
-    `createImageBitmap(file, {resizeWidth})` – dekodiert direkt in Zielgröße (nur die Breite vorgeben, damit nichts verzerrt);
-    hat der Browser nicht selbst gedreht (Seitenverhältnis), dreht das Canvas nach EXIF. **Nie ein Canvas in voller
-    Kameraauflösung**; Canvas danach auf 0×0 setzen, Bitmaps (`close()`) und Objekt-URLs sofort freigeben. Ergebnis: lange Seite ≤ 1.000 px, JPEG < 200 KB. Jedes Foto wird
+    nicht `display:none`) liegen **dauerhaft** direkt im `<body>` außerhalb aller neu gezeichneten Bereiche und werden nie ersetzt (`photoInput`; sonst kann Android den Zugriff auf gewählte Dateien entziehen), Knöpfe rufen `choosePhotos` auf.
+    **Ablauf einer Auswahl (`onPhotosChosen` → `processPhotos`):** Dateien **nie** komplett in den Speicher kopieren
+    (kein `file.arrayBuffer()`/neuer Blob der ganzen Datei – das verdoppelte bei großen Kamerafotos den Speicher und Android
+    beendete den Browser: „Zu wenig Speicher für vorherige Operation“). Streng nacheinander, immer nur ein Foto:
+    `shrinkPhoto(file)` direkt aus der Datei → `uploadPhoto` (bis zu 3 Versuche bei Netz-/Serverfehler) → eintragen
+    (`toolDo(…, quiet)`). Lesen nur des Dateianfangs (256 KB, `readHeader`, bis zu 3 Versuche mit Pause; 0 Byte → Hinweis
+    „nur in der Cloud?“). Das Datei-Feld wird erst vor der **nächsten** Auswahl geleert (`choosePhotos`), damit „Erneut
+    versuchen“ die Datei noch hat und dasselbe Bild erneut gewählt werden kann.
+    **Neuzeichnen pausieren:** Solange Kamera/Galerie offen ist (`toolUI.picking`, Ende über `change`/`cancel`/Rückkehr zur
+    Seite) oder Fotos verarbeitet werden (`toolUI.uploading`), gilt `photoBusy(qid)`: `rerenderTools`, `m.refresh` und das
+    Nachholen beim Verlassen der Felder werden aufgeschoben; nur die Foto-Zone (`[data-photo-zone]`, Fortschritt
+    „Foto X von Y“) wird aktualisiert (`updatePhotoZone`); danach holt `photoDone` alles nach.
+    **Dekodieren** (`decodePhoto`): (1) JPEG + `ImageDecoder` vorhanden (Chrome/Android): direkt verkleinert dekodieren mit
+    `desiredWidth/desiredHeight` = kleinste JPEG-Stufe n/8 (`ceil(w·n/8)`), deren lange Seite ≥ Ziel ist (andere Größen
+    lässt Chrome scheitern) – 48-MP-Foto: ~20 statt ~220 MB; dreht der Browser nicht selbst (`"rotation" in frame` fehlt),
+    dreht das Canvas nach EXIF (1–8); (2) `createImageBitmap(file, {resizeWidth})`; (3) Bild-Element mit Objekt-URL
+    (`img.decode()`, z. B. iPhone/HEIC). Scheitert alles: Dateianfang erneut lesen → nicht lesbar = Stufe „Lesen“, sonst
+    kleiner erneut (3 Runden) → „Verkleinern“. Ergebnis jeder Verkleinerung prüfen (nicht leer, `isJpeg`), sonst kleiner/mit
+    weniger Qualität erneut. Fehlgeschlagene Fotos bleiben (nur lokal, `toolUI.photoFailed`) mit „Erneut versuchen“ und
+    „Entfernen“ sichtbar; Meldung nennt die Stufe (`PHOTO_STAGES`: Auswahl / Lesen auf dem Handy / Verkleinern / Hochladen
+    zum Server / Server hat abgelehnt / Eintragen), „Details“ zeigen Fehlername, Dateityp, Größe und alle Fehlversuche;
+    jeder Fehler landet im Fehlerprotokoll (`reportPhotoError`). Server (`_save_photo`) lehnt nur ab: leer, zu groß
+    (> 600 KB), kein JPEG – jeweils mit eigener Meldung. Jedes Bild bekommt eigene, kurzlebige Canvas/Bitmap/Frame/Objekt-URL,
+    sofort freigegeben (`close()`, Canvas 0×0, `revokeObjectURL`). **Nie ein Canvas in voller Kameraauflösung.** Ergebnis: lange Seite ≤ 1.000 px, JPEG < 200 KB. Jedes Foto wird
     **sofort** per `POST api/photo` (roh, image/jpeg, Bearer-Token) hochgeladen → Antwort `{id}` (`p` + 24 Hex),
     dann `toolDo(qid, {type: "addPhoto", photo: id})` – so liegt es auf dem Server, falls das Handy den Browser beim Öffnen
     der Kamera aus dem Speicher wirft. Das offene Hilfsmittel wird gemerkt (`openTool` in localStorage, 1 h) und nach dem
@@ -206,12 +226,12 @@ Vertrauensbasis, keine Beweisfotos.
   Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett.
 - **Navigation (Regel):** Bereiche Shop / Erfolge / Aktivitäten / Einstellungen (Views `shop`, `stats`, `log`, `settings`) haben
   oben „← Zu den Quests“ (direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
-  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `backup`, `end`, `reset`) haben stattdessen zwei Knöpfe:
+  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `backup`, `errors`, `end`, `reset`) haben stattdessen zwei Knöpfe:
   „← Einstellungen“ und „Zu den Quests“. Wird eine Unterseite durch **Abbrechen einer Sicherheitsabfrage** verlassen
   (Reset, RESET-Eingabe, Urlaub beenden, Belohnungs-Fenster schließen, Wiederherstellen), landet man in den Einstellungen
   (`backToSettings(view)`). Neue Unterseiten der Einstellungen in `SETTINGS_PAGES` eintragen.
 - **Einstellungen** = Menü aus antippbaren Zeilen (Reihenfolge): Spielanleitung · Spieler (angemeldeter Name, „Name ändern“,
-  „Abmelden“) · Spielstand sichern (sichern/wiederherstellen) · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
+  „Abmelden“) · Spielstand sichern (sichern/wiederherstellen) · Fehlerprotokoll · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
   „Belohnungen & Zertifikat ansehen“ → Erfolge) · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
   Unterseite; alle Sicherheitsabfragen bleiben.
 - Erfolge (früher „Statistik“): Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);
