@@ -433,6 +433,10 @@ assert.deepStrictEqual([dup2.draft.length, dup2.draft[2].key, dup2.draft[2].phot
 // zweimal dieselbe Datei hochgeladen (zwei Server-IDs) oder dieselbe ID zweimal: beides erlaubt
 const same = tb("q-pmz-3", tb("q-pmz-3", null, { type: "addPhoto", photo: pid(1), key: "ka1" }, "A"), { type: "addPhoto", photo: pid(1), key: "ka2" }, "A");
 assert.deepStrictEqual(same.draft.map((d) => d.photo), [pid(1), pid(1)]);
+// an einer bestimmten Stelle einfügen (Foto, das beim ersten Mal nicht gelesen werden konnte), ungültige Stelle = hinten
+const atp = tb("q-pmz-3", ts, { type: "addPhoto", photo: pid(20), letter: "x", at: 2 }, "Ben");
+assert.deepStrictEqual([atp.draft[2].photo, T.unhide(atp.draftLetters).join("")], [pid(20), "LOXRBER"]);
+assert.strictEqual(tb("q-pmz-3", ts, { type: "addPhoto", photo: pid(21), at: 99 }, "Ben").draft[6].photo, pid(21));
 // alter Entwurf ohne Schlüssel bekommt automatisch welche
 assert.strictEqual(new Set(T.draftEntries([{ photo: pid(1) }, { photo: pid(2) }]).map((d) => d.key)).size, 2);
 ts = tb("q-pmz-3", ts, { type: "fix" }, "Ben");

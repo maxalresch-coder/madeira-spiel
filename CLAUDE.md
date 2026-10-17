@@ -35,8 +35,13 @@ Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Fotos der Hilf
 - Jeder Fehler beim Foto-Upload wird vom Handy automatisch an den Server gemeldet (`POST api/client-error`, ohne Netz in
   localStorage `errQueue` gemerkt und später nachgeschickt) und in **`data/client-errors.log`** gespeichert (auf PythonAnywhere:
   `~/madeira-spiel/data/client-errors.log`; eine JSON-Zeile je Fehler, höchstens 500): `time`, `ua` (Gerät/Browser), `stage`
-  (Auswahl / Lesen / Verkleinern / Hochladen / Server / Eintragen), `name`, `message`, `fileName`, `fileType`, `fileSize`,
+  (Auswahl / Lesen / Verkleinern / Hochladen / Server / Eintragen / Aufnahme / Kamera), `name`, `message`, `fileName`, `fileType`, `fileSize`,
   `attempts` (alle Fehlversuche davor), `player`, `detail` (RAM, Bildschirm, Zeit).
+- „Kamera: Kamera-Erlaubnis abgelehnt“ / „Kamera: Kamera nicht verfügbar“ (getUserMedia fehlt, kein Gerät, Wechsel
+  fehlgeschlagen), „Aufnahme: …“ = Foto aus dem Videobild ging schief.
+- Bisher gefundene Ursachen (Android 10, Chrome, 4 GB): `NotReadableError … permission problems …` = Android entzieht die
+  Leseerlaubnis kurz nach der Auswahl (→ Lesen startet synchron im change-Event); „Seite neu geladen“ während der
+  Kamera-App (→ Kamera in der Seite).
 - „Auswahl: Seite neu geladen“ = die Seite wurde neu geladen, während Kamera/Galerie offen war (Android hat den Browser wegen
   Speichermangel beendet; erkannt über localStorage `photoPick`).
 - In der App: Einstellungen → **Fehlerprotokoll** (Unterseite `errors`): letzte 30 Einträge (`GET api/client-errors`),
@@ -130,19 +135,34 @@ Vertrauensbasis, keine Beweisfotos.
     auch die richtige Lösung; nichts ausschließen oder bevorzugen. Dafür `T.shuffle` (Fisher-Yates) mit `T.randomInt`
     (unverzerrt durch Verwerfen) und `rand32()` aus `crypto.getRandomValues`. Der Zufall wird beim Auslösen im Browser
     gezogen und als Teil der Aktion gespeichert (damit Warteschlange/Wiederholung dasselbe Ergebnis bringen). Test prüft Gleichverteilung.
-  - **Fotos (wiederverwendbare Foto-Grundlage):** `photoPicker(qid, mehrere)` zeigt „Foto aufnehmen“ (`capture="environment"`)
-    und „Aus Galerie wählen“ (`multiple`: mehrere Bilder auf einmal); offline stattdessen ein Hinweis. `processPhotos` verarbeitet
+  - **Fotos (wiederverwendbare Foto-Grundlage):** `photoPicker(qid, mehrere)` zeigt „Foto aufnehmen“ (**Kamera in der Seite**,
+    s. u.; nur als Rückfall die Kamera-App über `capture="environment"`) und „Aus Galerie wählen“ (`multiple`: mehrere Bilder auf einmal); offline stattdessen ein Hinweis. `processPhotos` verarbeitet
     die Bilder **nacheinander** (nie mehrere gleichzeitig im Speicher) mit Fortschrittsanzeige „Foto X von Y“, in der Reihenfolge,
     in der das Handy sie liefert. Die Datei-Felder (`#photo-camera`, `#photo-gallery`, Klasse `.photo-file`: unsichtbar, aber
     nicht `display:none`) liegen **dauerhaft** direkt im `<body>` außerhalb aller neu gezeichneten Bereiche und werden nie ersetzt (`photoInput`; sonst kann Android den Zugriff auf gewählte Dateien entziehen), Knöpfe rufen `choosePhotos` auf.
-    **Ablauf einer Auswahl (`onPhotosChosen` → `processPhotos`):** Dateien **nie** komplett in den Speicher kopieren
-    (kein `file.arrayBuffer()`/neuer Blob der ganzen Datei – das verdoppelte bei großen Kamerafotos den Speicher und Android
-    beendete den Browser: „Zu wenig Speicher für vorherige Operation“). Streng nacheinander, immer nur ein Foto:
-    `shrinkPhoto(file)` direkt aus der Datei → `uploadPhoto` (bis zu 3 Versuche bei Netz-/Serverfehler) → eintragen
-    (`toolDo(…, quiet)`). Lesen nur des Dateianfangs (256 KB, `readHeader`, bis zu 3 Versuche mit Pause; 0 Byte → Hinweis
-    „nur in der Cloud?“). Das Datei-Feld wird erst vor der **nächsten** Auswahl geleert (`choosePhotos`), damit „Erneut
-    versuchen“ die Datei noch hat und dasselbe Bild erneut gewählt werden kann.
-    **Neuzeichnen pausieren:** Solange Kamera/Galerie offen ist (`toolUI.picking`, Ende über `change`/`cancel`/Rückkehr zur
+    **Ablauf einer Galerie-Auswahl (`onPhotosChosen` → `processPhotos`):** Android entzieht die Leseerlaubnis kurz nach der
+    Auswahl (`NotReadableError … permission problems …`). Darum startet `onPhotosChosen` (nicht async) das Lesen **jeder**
+    Datei **synchron im change-Event** (`startRead`), vor jedem await, Neuzeichnen, Synchronisieren und Zurücksetzen des Feldes:
+    Dateien bis 15 MB (`MEM_READ`) sofort vollständig in den Speicher (`arrayBuffer` → eigener Blob), größere nur
+    Dateianfang (Zugriff prüfen) und später direkt aus der Datei verkleinert dekodieren (nie die ganze große Datei kopieren –
+    Speicher). Kein Wiederholen mit derselben Datei-Referenz (zwecklos). Danach streng nacheinander, immer nur ein Foto:
+    `addPhotoJob` = verkleinern (`shrinkPhoto`) → `uploadPhoto` (bis zu 3 Versuche bei Netz-/Serverfehler) → eintragen
+    (`toolDo(…, quiet)`). Jedes Foto merkt sich seinen Platz (`slot`); „Erneut versuchen“ nach einem **Lesefehler** öffnet
+    die Galerie (einzeln) für genau diesen Platz (`choosePhotos(…, {lid, at})`, Aktion `addPhoto` mit `at`), bei anderen
+    Fehlern wird die Kopie im Speicher erneut verarbeitet. 0 Byte → Hinweis „nur in der Cloud?“. Das Datei-Feld wird erst vor
+    der **nächsten** Auswahl geleert (`choosePhotos`), damit dasselbe Bild erneut gewählt werden kann.
+    **Kamera in der Seite** (`openCamera`, weil Android den Browser beendete, während die Kamera-App offen war):
+    `getUserMedia({video: {facingMode: "environment"}})`, Live-Vorschau im Hilfsmittel (`<video playsinline muted autoplay>`,
+    nötig fürs iPhone; Frontkamera-Vorschau gespiegelt, Foto nicht), großer Auslöser, Knopf Kamera wechseln (alte Tracks
+    erst stoppen), „Fertig“. Mehrere Fotos hintereinander: jedes Foto aus dem Videobild direkt in Zielgröße (≤ 1.000 px) ins
+    Canvas (`shoot`), JPEG prüfen, nacheinander hochladen (`cam.queue`), erscheint sofort in der Liste; Zähler + Status in der
+    Vorschau. Das Kamera-Element (`toolUI.cam.el`) wird einmal gebaut und nach jedem Neuzeichnen in seinen Platz
+    `[data-cam-slot]` zurückgehängt (`mountCamera` in `bindTools`/`rerenderTools`/`updatePhotoZone`) – das Video läuft weiter;
+    fehlt der Platz, wird die Kamera beendet. **Freigeben** (`stopCamera`, alle Tracks stoppen): „Fertig“, Schließen des
+    Hilfsmittels (`m.onClose`), Seite im Hintergrund (`visibilitychange`/`pagehide`). Abgelehnt/nicht verfügbar
+    (`camFail`, ins Fehlerprotokoll) → Rückfall `toolUI.camFallback`: Hinweis, „Foto aufnehmen“ über die Kamera-App mit
+    „Falls die Seite abstürzt, nutze ‚Aus Galerie wählen‘“, plus „Kamera in der Seite erneut versuchen“.
+    **Neuzeichnen pausieren:** Solange Kamera-App/Galerie offen ist (`toolUI.picking`, Ende über `change`/`cancel`/Rückkehr zur
     Seite) oder Fotos verarbeitet werden (`toolUI.uploading`), gilt `photoBusy(qid)`: `rerenderTools`, `m.refresh` und das
     Nachholen beim Verlassen der Felder werden aufgeschoben; nur die Foto-Zone (`[data-photo-zone]`, Fortschritt
     „Foto X von Y“) wird aktualisiert (`updatePhotoZone`); danach holt `photoDone` alles nach.
@@ -154,7 +174,7 @@ Vertrauensbasis, keine Beweisfotos.
     kleiner erneut (3 Runden) → „Verkleinern“. Ergebnis jeder Verkleinerung prüfen (nicht leer, `isJpeg`), sonst kleiner/mit
     weniger Qualität erneut. Fehlgeschlagene Fotos bleiben (nur lokal, `toolUI.photoFailed`) mit „Erneut versuchen“ und
     „Entfernen“ sichtbar; Meldung nennt die Stufe (`PHOTO_STAGES`: Auswahl / Lesen auf dem Handy / Verkleinern / Hochladen
-    zum Server / Server hat abgelehnt / Eintragen), „Details“ zeigen Fehlername, Dateityp, Größe und alle Fehlversuche;
+    zum Server / Server hat abgelehnt / Eintragen / Aufnahme), „Details“ zeigen Fehlername, Dateityp, Größe und alle Fehlversuche;
     jeder Fehler landet im Fehlerprotokoll (`reportPhotoError`). Server (`_save_photo`) lehnt nur ab: leer, zu groß
     (> 600 KB), kein JPEG – jeweils mit eigener Meldung. Jedes Bild bekommt eigene, kurzlebige Canvas/Bitmap/Frame/Objekt-URL,
     sofort freigegeben (`close()`, Canvas 0×0, `revokeObjectURL`). **Nie ein Canvas in voller Kameraauflösung.** Ergebnis: lange Seite ≤ 1.000 px, JPEG < 200 KB. Jedes Foto wird

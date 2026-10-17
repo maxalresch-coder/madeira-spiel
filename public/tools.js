@@ -284,8 +284,11 @@
           inPhase1();
           if (!/^p[0-9a-f]{24}$/.test(String(op.photo))) fail("Ungültiges Foto.");
           if (draft.length >= 20) fail("Höchstens 20 Fotos.");
-          draft.push({ key: op.key ? newKey(op.key) : "k" + op.photo.slice(1, 13) + draft.length, photo: op.photo });
-          letters.push(letter(op.letter) || "");
+          { // optional an einer Stelle einfügen (z. B. ein Foto, das beim ersten Mal nicht gelesen werden konnte)
+            const pos = Number.isInteger(op.at) && op.at >= 0 && op.at < draft.length ? op.at : draft.length;
+            draft.splice(pos, 0, { key: op.key ? newKey(op.key) : "k" + op.photo.slice(1, 13) + draft.length, photo: op.photo });
+            letters.splice(pos, 0, letter(op.letter) || "");
+          }
           return saveDraft();
         case "duplicate": { // Kopie direkt darunter, ohne erneutes Hochladen, mit eigenem Buchstabenfeld
           inPhase1();

@@ -642,7 +642,7 @@
   // in einem eigenen Fenster. Der Zustand liegt in state.tools und wird über den Server geteilt.
   // Änderungen laufen über eine Warteschlange, damit schnelles Antippen (z. B. „+1 Auto“) nichts
   // verliert. Hilfsmittel haken nie ab und geben keine Punkte.
-  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, picking: null, dragging: false, refreshPending: false };
+  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false };
   const compass = { on: false, failed: "", samples: [], last: 0 };
   const tcfg = (qid) => T.config(qid, C);
   function serverNow() { return Date.now() + app.clockOffset; }
@@ -708,7 +708,7 @@
     // Offenes Hilfsmittel merken: Wirft das Handy den Browser beim Öffnen der Kamera aus dem Speicher, öffnet es
     // sich nach dem Neuladen wieder (die Fotos liegen ohnehin schon auf dem Server)
     store.set("openTool", JSON.stringify({ qid, t: Date.now() }));
-    m.onClose = () => store.set("openTool", null);
+    m.onClose = () => { store.set("openTool", null); if (toolUI.cam && toolUI.cam.qid === qid) stopCamera(); }; // Kamera sofort freigeben
   }
   function restoreOpenTool() {
     let saved = null;
@@ -1087,21 +1087,30 @@
     return '<div class="photo-zone" data-photo-zone="' + qid + '"' + (multiple ? " data-multiple" : "") + ">" + photoZoneInner(qid, multiple) + "</div>";
   }
   function photoZoneInner(qid, multiple) {
-    const failed = photoFailedHTML(qid);
+    const failed = photoFailedHTML(qid), cam = toolUI.cam;
+    const gallery = '<button class="btn btn-ghost" data-tool-ui="photo-gallery"' + (multiple ? " data-multiple" : "") + ">" + icon("image") + " Aus Galerie wählen</button>";
+    // Kamera in der Seite: Platz für die Live-Vorschau (das Kamera-Element selbst bleibt beim Neuzeichnen erhalten, mountCamera)
+    if (cam && cam.qid === qid) return '<div data-cam-slot="' + qid + '"></div>' + failed;
     if (!app.online) return '<div class="tool-warn">' + icon("wifi-off") + " Offline – Fotos aufnehmen geht erst wieder mit Netz.</div>" + failed;
     const up = toolUI.uploading[qid];
     if (up) {
       return '<div class="tool-wait photo-progress">' + icon("camera") + "<div><strong>Foto " + Math.min(up.done + 1, up.total) + " von " + up.total + "</strong> wird verkleinert und hochgeladen …" +
         '<div class="progress"><div style="width:' + Math.round(up.done / up.total * 100) + '%"></div></div></div></div>' + failed;
     }
-    return '<div class="grid2 photo-pick">' +
-      '<button class="btn btn-primary" data-tool-ui="photo-camera">' + icon("camera") + " Foto aufnehmen</button>" +
-      '<button class="btn btn-ghost" data-tool-ui="photo-gallery"' + (multiple ? " data-multiple" : "") + ">" + icon("image") + " Aus Galerie wählen</button></div>" + failed;
+    const fb = toolUI.camFallback;
+    if (fb) { // Kamera in der Seite geht nicht (abgelehnt/nicht vorhanden): Rückfall auf die Kamera-App
+      return '<div class="tool-warn">' + icon("camera-off") + " " + esc(fb.text) + "</div>" +
+        '<div class="grid2 photo-pick"><button class="btn btn-primary" data-tool-ui="photo-camera">' + icon("camera") + " Foto aufnehmen</button>" + gallery + "</div>" +
+        '<p class="muted small">Falls die Seite abstürzt, nutze „Aus Galerie wählen“.</p>' +
+        '<button class="btn btn-small btn-ghost" data-tool-ui="cam-open">' + icon("rotate-ccw") + " Kamera in der Seite erneut versuchen</button>" + failed;
+    }
+    return '<div class="grid2 photo-pick"><button class="btn btn-primary" data-tool-ui="cam-open">' + icon("camera") + " Foto aufnehmen</button>" + gallery + "</div>" + failed;
   }
-  // Während Fotos ausgewählt und verarbeitet werden, wird nur diese Foto-Zone (Fortschritt) aktualisiert; das Neuzeichnen
-  // des übrigen Hilfsmittels (z. B. durch die Synchronisierung) wird aufgeschoben und danach nachgeholt (photoDone).
+  // Während Fotos aus der Galerie ausgewählt und verarbeitet werden, wird nur diese Foto-Zone (Fortschritt) aktualisiert;
+  // das Neuzeichnen des übrigen Hilfsmittels (z. B. durch die Synchronisierung) wird aufgeschoben und danach nachgeholt.
   function updatePhotoZone(qid) {
     $$('[data-photo-zone="' + qid + '"]').forEach((z) => { z.innerHTML = photoZoneInner(qid, z.hasAttribute("data-multiple")); });
+    mountCamera();
   }
   const photoBusy = (qid) => (qid ? !!toolUI.uploading[qid] || !!(toolUI.picking && toolUI.picking.qid === qid)
     : Object.keys(toolUI.uploading).length > 0 || !!toolUI.picking);
@@ -1113,8 +1122,8 @@
   }
   // Fotos, die nicht geklappt haben, bleiben (nur auf diesem Handy) sichtbar – mit „Erneut versuchen“ und „Entfernen“
   const PHOTO_STAGES = { select: "Auswahl fehlgeschlagen", read: "Lesen auf dem Handy fehlgeschlagen", shrink: "Verkleinern fehlgeschlagen",
-    upload: "Hochladen zum Server fehlgeschlagen", server: "Server hat das Foto abgelehnt", add: "Eintragen fehlgeschlagen" };
-  const STAGE_LOG = { select: "Auswahl", read: "Lesen", shrink: "Verkleinern", upload: "Hochladen", server: "Server", add: "Eintragen" };
+    upload: "Hochladen zum Server fehlgeschlagen", server: "Server hat das Foto abgelehnt", add: "Eintragen fehlgeschlagen", capture: "Aufnahme fehlgeschlagen" };
+  const STAGE_LOG = { select: "Auswahl", read: "Lesen", shrink: "Verkleinern", upload: "Hochladen", server: "Server", add: "Eintragen", capture: "Aufnahme", camera: "Kamera" };
   function photoFailedHTML(qid) {
     const list = toolUI.photoFailed[qid] || [];
     if (!list.length) return "";
@@ -1126,9 +1135,9 @@
       '<div class="pf-btns"><button class="btn btn-small btn-primary" data-tool-ui="photo-retry" data-lid="' + j.lid + '">' + icon("rotate-ccw") + " Erneut versuchen</button>" +
       '<button class="btn btn-small btn-ghost" data-tool-ui="photo-drop" data-lid="' + j.lid + '">Entfernen</button></div></div></div>').join("") + "</div>";
   }
-  // EIN dauerhaftes Datei-Feld je Art (Kamera, Galerie), direkt im <body> – außerhalb aller Bereiche, die neu gezeichnet
-  // werden; es wird nie ersetzt oder entfernt (sonst gibt Android den Zugriff auf die gewählten Dateien teils wieder frei).
-  // Unsichtbar, aber nicht „display:none“ (sonst öffnet Safari die Auswahl teils nicht). Die Knöpfe lösen es nur aus.
+  // EIN dauerhaftes Datei-Feld je Art (Kamera-App, Galerie), direkt im <body> – außerhalb aller Bereiche, die neu gezeichnet
+  // werden; es wird nie ersetzt oder entfernt. Unsichtbar, aber nicht „display:none“ (sonst öffnet Safari die Auswahl teils
+  // nicht). Die Knöpfe lösen es nur aus.
   function photoInput(kind) {
     let el = document.getElementById("photo-" + kind);
     if (!el) {
@@ -1142,15 +1151,17 @@
     }
     return el;
   }
-  function choosePhotos(qid, kind, multiple) {
+  // replace: { lid, at } – „Erneut versuchen“ nach einem Lesefehler wählt das Bild für genau diesen Platz neu aus
+  function choosePhotos(qid, kind, multiple, replace) {
     if (!app.online) { toast(OFFLINE_MSG, true); return; }
     if (toolUI.uploading[qid]) { toast("Bitte warten, bis die Fotos hochgeladen sind.", true); return; }
     const el = photoInput(kind);
-    el.multiple = kind === "gallery" && !!multiple;
-    el.value = ""; // erst hier zurücksetzen: dieselbe Datei kann erneut gewählt werden, „Erneut versuchen“ behält die alte
+    el.multiple = kind === "gallery" && !!multiple && !replace;
+    el.value = ""; // erst hier zurücksetzen: dieselbe Datei kann erneut gewählt werden
     toolUI.photoTarget = qid;
+    toolUI.photoReplace = replace || null;
     toolUI.picking = { qid, kind };
-    // Merken, dass Kamera/Galerie offen ist: Lädt die Seite währenddessen neu (Android hat den Browser wegen
+    // Merken, dass Kamera-App/Galerie offen ist: Lädt die Seite währenddessen neu (Android hat den Browser wegen
     // Speichermangel beendet), wird das beim Start erkannt und ins Fehlerprotokoll geschrieben
     store.set("photoPick", JSON.stringify({ qid, kind, t: Date.now() }));
     el.click();
@@ -1161,10 +1172,12 @@
     store.set("photoPick", null);
     photoDone();
   }
-  // Zurück aus Kamera/Galerie ohne Auswahl (ältere Browser kennen „cancel“ nicht): kurz warten, ob noch „change“ kommt
+  // Zurück aus Kamera-App/Galerie ohne Auswahl (ältere Browser kennen „cancel“ nicht): kurz warten, ob noch „change“ kommt
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && toolUI.picking) setTimeout(() => { if (toolUI.picking && !toolUI.uploading[toolUI.picking.qid]) endPicking(); }, 2500);
+    if (document.visibilityState === "hidden" && toolUI.cam) stopCamera(); // Kamera sofort freigeben
   });
+  window.addEventListener("pagehide", () => { if (toolUI.cam) stopCamera(); });
   function checkPhotoPickReload() {
     let p = null;
     try { p = JSON.parse(store.get("photoPick") || "null"); } catch (e) { p = null; }
@@ -1172,7 +1185,7 @@
     if (!p || Date.now() - p.t > 15 * 60000) return;
     reportPhotoError({ err: { stage: "select", name: "Seite neu geladen", message: "Während " + (p.kind === "camera" ? "die Kamera" : "die Galerie") +
       " offen war, wurde die Seite neu geladen – vermutlich hat das Handy den Browser wegen Speichermangel beendet." } });
-    toast("Die Seite wurde neu geladen, während " + (p.kind === "camera" ? "die Kamera" : "die Galerie") + " offen war (zu wenig Speicher?). Bitte nochmal versuchen – " +
+    toast("Die Seite wurde neu geladen, während " + (p.kind === "camera" ? "die Kamera-App" : "die Galerie") + " offen war (zu wenig Speicher?). Bitte nochmal versuchen – " +
       (p.kind === "camera" ? "notfalls Foto mit der Kamera-App machen und „Aus Galerie wählen“." : "notfalls weniger Bilder auf einmal."), true);
   }
   const photoUrl = (id) => "api/photo/" + encodeURIComponent(id) + "?t=" + encodeURIComponent(app.token || "");
@@ -1184,20 +1197,46 @@
   }
   const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(n ? 1 : 0, Math.round(n / 1024)) + " KB");
 
-  // Ablauf einer Auswahl: Die gewählten Dateien werden NICHT in den Speicher kopiert (ein großes Kamerafoto doppelt im
-  // Speicher ließ Android den Browser beenden), sondern streng nacheinander direkt aus der Datei verkleinert
-  // (shrinkPhoto) → hochgeladen (bis zu 3 Versuche) → eingetragen. Immer nur ein Foto gleichzeitig.
-  async function onPhotosChosen(el) {
-    const qid = toolUI.photoTarget;
+  // ---- Galerie-Auswahl. Ursache der Lesefehler (Fehlerprotokoll, Android 10): Android entzieht die Leseerlaubnis für
+  // gewählte Dateien kurz nach der Auswahl („NotReadableError … permission problems …“) – spätere Versuche mit derselben
+  // Datei-Referenz sind zwecklos. Darum startet das Lesen JEDER Datei synchron im change-Event, vor jedem await, jedem
+  // Neuzeichnen, jeder Synchronisierung und jedem Zurücksetzen des Feldes (startRead). Bis 15 MB wird die Datei sofort
+  // vollständig in den Speicher gelesen; größere werden später direkt aus der Datei verkleinert dekodiert.
+  const MEM_READ = 15 * 1024 * 1024;
+  const READ_HINT = "Android hat den Zugriff auf die Datei entzogen. „Erneut versuchen“ öffnet die Galerie – bitte dieses Bild dort noch einmal wählen.";
+  function startRead(f) {
+    let p;
+    try {
+      if (!f.size) p = Promise.reject(Object.assign(new Error("Die Datei ist leer (0 Byte)"), { name: "EmptyFile" }));
+      else if (f.size <= MEM_READ) {
+        p = f.arrayBuffer().then((buf) => {
+          if (!buf.byteLength) throw Object.assign(new Error("0 Byte gelesen"), { name: "EmptyRead" });
+          return new Blob([buf], { type: f.type || "image/jpeg" });
+        });
+      } else p = f.slice(0, 256 * 1024).arrayBuffer().then(() => f); // groß: Zugriff sofort sichern, später direkt aus der Datei
+    } catch (e) { p = Promise.reject(e); }
+    return p.then((data) => ({ data }), (e) => ({ e }));
+  }
+  function onPhotosChosen(el) {
+    const qid = toolUI.photoTarget, replace = toolUI.photoReplace;
     let files = [];
     try { files = Array.from(el.files || []); } catch (e) {
       reportPhotoError({ err: { stage: "select", name: e.name || "Fehler", message: e.message || "Dateien nicht lesbar" } });
     }
-    toolUI.picking = null;
+    // SOFORT lesen – noch vor allem anderen
+    const jobs = files.map((f) => ({ lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, err: null, notes: [], read: startRead(f) }));
+    toolUI.picking = null; toolUI.photoReplace = null;
     store.set("photoPick", null);
-    if (!qid || !files.length) { photoDone(); return; }
+    if (!qid || !jobs.length) { photoDone(); return; }
     if (toolUI.uploading[qid]) { toast("Bitte warten, bis die Fotos hochgeladen sind.", true); return; }
-    await processPhotos(qid, files.map((f) => ({ lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, err: null, notes: [] })));
+    if (replace) { // „Erneut versuchen“: altes Fehl-Foto ersetzen, an seinem Platz einfügen
+      toolUI.photoFailed[qid] = (toolUI.photoFailed[qid] || []).filter((j) => j.lid !== replace.lid);
+      jobs[0].at = replace.at;
+    } else {
+      const ts = toolState(qid), base = ts && ts.draft ? ts.draft.length : 0;
+      jobs.forEach((j, i) => { j.slot = base + i; }); // gewünschter Platz, falls das Foto später neu gewählt werden muss
+    }
+    processPhotos(qid, jobs);
   }
   async function processPhotos(qid, jobs) {
     const up = toolUI.uploading[qid] = { done: 0, total: jobs.length };
@@ -1206,15 +1245,10 @@
     let bad = 0;
     for (const job of jobs) { // streng nacheinander, nie parallel
       try {
-        const small = await shrinkPhoto(job.file, job.notes);
-        const id = await uploadPhoto(small);
-        if (!toolDo(qid, { type: "addPhoto", photo: id, key: newKey() }, true)) throw new PhotoError("add", "Nicht eingetragen", "Das Foto passt gerade nicht in die Runde (z. B. schon festgeschrieben oder 20 Fotos).");
-        job.file = null;
+        await addPhotoJob(qid, job);
       } catch (e) {
-        job.err = e instanceof PhotoError ? { stage: e.stage, name: e.errName, message: e.message === e.errName ? "" : e.message, hint: e.hint }
-          : { stage: "shrink", name: e.name || "Fehler", message: e.message || "" };
-        bad++; failed.push(job);
-        reportPhotoError(job);
+        failPhotoJob(qid, job, e);
+        bad++;
       }
       up.done++;
       updatePhotoZone(qid);
@@ -1223,13 +1257,174 @@
     photoDone(qid);
     if (bad) toast((bad === 1 ? "Ein Foto" : bad + " Fotos") + " nicht hochgeladen – siehe Liste: „Erneut versuchen“ oder „Entfernen“.", true);
   }
-  async function retryPhoto(qid, lid) {
+  // Ein Foto: (gelesen) → verkleinern → hochladen → eintragen. job.small = schon fertig verkleinert (Kamera in der Seite).
+  async function addPhotoJob(qid, job) {
+    if (!job.data && job.read) {
+      const r = await job.read;
+      job.read = null;
+      if (r.e) throw new PhotoError("read", r.e.name || "Lesefehler", r.e.message || "",
+        r.e.name === "EmptyFile" ? "Liegt das Bild nur in der Cloud? Bitte erst auf dem Handy öffnen (herunterladen) und neu auswählen." : READ_HINT);
+      job.data = r.data;
+    }
+    if (!job.data) throw new PhotoError("read", "Datei nicht mehr verfügbar", "", READ_HINT);
+    const small = job.small ? job.data : await shrinkPhoto(job.data, job.notes);
+    const id = await uploadPhoto(small);
+    const op = { type: "addPhoto", photo: id, key: newKey() };
+    if (job.at != null) op.at = job.at;
+    if (!toolDo(qid, op, true)) throw new PhotoError("add", "Nicht eingetragen", "Das Foto passt gerade nicht in die Runde (z. B. schon festgeschrieben oder 20 Fotos).");
+    job.data = null; job.file = null; // Speicher freigeben
+  }
+  function failPhotoJob(qid, job, e) {
+    job.err = e instanceof PhotoError ? { stage: e.stage, name: e.errName, message: e.message === e.errName ? "" : e.message, hint: e.hint }
+      : { stage: "shrink", name: e.name || "Fehler", message: e.message || "" };
+    if (job.err.stage === "read") { job.data = null; job.file = null; if (job.at == null) job.at = job.slot; }
+    (toolUI.photoFailed[qid] = toolUI.photoFailed[qid] || []).push(job);
+    reportPhotoError(job);
+  }
+  function retryPhoto(qid, lid) { // bewusst nicht async: die Galerie muss direkt aus dem Antippen heraus öffnen
     const list = toolUI.photoFailed[qid] || [], i = list.findIndex((j) => j.lid === lid);
     if (i < 0 || toolUI.uploading[qid]) return;
     if (!app.online) { toast(OFFLINE_MSG, true); return; }
-    const job = list.splice(i, 1)[0];
+    const job = list[i];
+    if (!job.data && job.err.stage === "capture") { list.splice(i, 1); updatePhotoZone(qid); toast("Bitte einfach nochmal auslösen."); return; }
+    if (!job.data) return choosePhotos(qid, "gallery", false, { lid, at: job.at }); // Lesefehler: Bild neu wählen
+    list.splice(i, 1);
     job.err = null; job.notes = [];
-    await processPhotos(qid, [job]);
+    return processPhotos(qid, [job]);
+  }
+
+  // ---- Kamera direkt in der Seite (getUserMedia): Android beendete den Browser, während die Kamera-App offen war.
+  // Live-Vorschau im Hilfsmittel, großer Auslöser, Kamera wechseln, „Fertig“; mehrere Fotos hintereinander. Jedes Foto wird
+  // aus dem Videobild direkt in Zielgröße (lange Seite ≤ 1.000 px) aufgenommen, sofort (nacheinander) hochgeladen und
+  // erscheint in der Liste. Das Kamera-Element wird einmal gebaut und nach jedem Neuzeichnen wieder in seinen Platz
+  // ([data-cam-slot]) gehängt (mountCamera) – das Video läuft dabei weiter. Freigegeben (alle Tracks gestoppt) wird bei
+  // „Fertig“, beim Schließen des Hilfsmittels, wenn die Seite in den Hintergrund geht oder der Platz verschwindet.
+  // Nur falls getUserMedia fehlt oder abgelehnt wird: Rückfall auf die Kamera-App (toolUI.camFallback).
+  function buildCamEl() {
+    const el = document.createElement("div");
+    el.className = "cam";
+    el.innerHTML = '<div class="cam-view"><video playsinline muted autoplay></video><div class="cam-flash"></div>' +
+      '<div class="cam-msg">' + icon("camera") + " Kamera wird gestartet …</div><span class=\"cam-count\" hidden></span></div>" +
+      '<div class="cam-bar"><button class="btn btn-ghost cam-side" data-cam="switch" aria-label="Kamera wechseln (vorne/hinten)">' + icon("switch-camera") + "</button>" +
+      '<button class="cam-shoot" data-cam="shoot" aria-label="Foto aufnehmen"><span></span></button>' +
+      '<button class="btn btn-primary cam-side" data-cam="done">' + icon("check") + " Fertig</button></div>" +
+      '<p class="cam-status small muted" aria-live="polite"></p>';
+    el.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-cam]");
+      if (!b) return;
+      ev.stopPropagation();
+      if (b.dataset.cam === "shoot") shoot(b);
+      else if (b.dataset.cam === "switch") switchCamera();
+      else if (b.dataset.cam === "done") stopCamera();
+    });
+    return el;
+  }
+  function mountCamera() {
+    const cam = toolUI.cam;
+    if (!cam) return;
+    const slot = $('[data-cam-slot="' + cam.qid + '"]');
+    if (!slot) { stopCamera(); return; } // Hilfsmittel geschlossen oder andere Phase
+    if (cam.el.parentNode !== slot) {
+      slot.appendChild(cam.el);
+      if (cam.stream && cam.video.paused) cam.video.play().catch(() => {});
+    }
+  }
+  async function openCamera(qid) {
+    if (!app.online) { toast(OFFLINE_MSG, true); return; }
+    if (toolUI.cam) stopCamera();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return camFail(qid, Object.assign(new Error("getUserMedia gibt es in diesem Browser nicht (oder Seite ohne https)"), { name: "NichtUnterstützt" }));
+    }
+    const el = buildCamEl();
+    const cam = toolUI.cam = { qid, el, video: $("video", el), facing: "environment", stream: null, shots: 0, pending: 0, queue: Promise.resolve() };
+    toolUI.camFallback = null;
+    updatePhotoZone(qid);
+    try { await startStream(cam); } catch (e) { if (toolUI.cam === cam) { stopCamera(); camFail(qid, e); } }
+  }
+  async function startStream(cam) {
+    stopTracks(cam); // erst die alte Kamera freigeben – viele Handys können nur eine gleichzeitig öffnen
+    $(".cam-msg", cam.el).hidden = false;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+      video: { facingMode: { ideal: cam.facing }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    if (toolUI.cam !== cam) { stream.getTracks().forEach((t) => t.stop()); return; } // inzwischen geschlossen
+    cam.stream = stream;
+    cam.video.srcObject = stream;
+    cam.video.classList.toggle("mirror", cam.facing === "user"); // Selfie-Vorschau gespiegelt, Foto nicht
+    await cam.video.play().catch(() => {});
+    $(".cam-msg", cam.el).hidden = true;
+    if (cam.el.scrollIntoView) cam.el.scrollIntoView({ block: "end", behavior: "smooth" }); // Auslöser sichtbar
+  }
+  function stopTracks(cam) {
+    if (cam.stream) cam.stream.getTracks().forEach((t) => t.stop());
+    cam.stream = null;
+    if (cam.video) cam.video.srcObject = null;
+  }
+  function stopCamera() {
+    const cam = toolUI.cam;
+    if (!cam) return;
+    toolUI.cam = null;
+    stopTracks(cam);
+    cam.el.remove();
+    updatePhotoZone(cam.qid);
+  }
+  async function switchCamera() {
+    const cam = toolUI.cam;
+    if (!cam) return;
+    const before = cam.facing;
+    cam.facing = before === "user" ? "environment" : "user";
+    try { await startStream(cam); } catch (e) {
+      reportPhotoError({ err: { stage: "camera", name: "Kamera nicht verfügbar", message: "Wechsel auf " + (cam.facing === "user" ? "Frontkamera" : "Rückkamera") + ": " + errText(e) } });
+      toast("Die andere Kamera lässt sich nicht öffnen.", true);
+      cam.facing = before;
+      try { await startStream(cam); } catch (e2) { stopCamera(); camFail(cam.qid, e2); }
+    }
+  }
+  // Kamera abgelehnt/nicht verfügbar → ins Fehlerprotokoll, Rückfall auf die Kamera-App
+  function camFail(qid, e) {
+    const denied = e && (e.name === "NotAllowedError" || e.name === "SecurityError" || e.name === "PermissionDeniedError");
+    reportPhotoError({ err: { stage: "camera", name: denied ? "Kamera-Erlaubnis abgelehnt" : "Kamera nicht verfügbar", message: errText(e) } });
+    toolUI.camFallback = { text: denied ? "Die Kamera-Erlaubnis wurde abgelehnt. Erlauben geht in den Browser-Einstellungen (Website-Einstellungen → Kamera). Bis dahin über die Kamera-App:"
+      : "Die Kamera lässt sich in der Seite nicht öffnen. Stattdessen über die Kamera-App:" };
+    updatePhotoZone(qid);
+  }
+  function camStatus(cam) {
+    const n = $(".cam-count", cam.el);
+    n.hidden = !cam.shots; n.textContent = cam.shots + (cam.shots === 1 ? " Foto" : " Fotos");
+    $(".cam-status", cam.el).textContent = cam.pending ? (cam.pending === 1 ? "1 Foto wird hochgeladen …" : cam.pending + " Fotos werden hochgeladen …") : cam.shots ? "Alle Fotos sind hochgeladen." : "";
+  }
+  function shoot(btn) {
+    const cam = toolUI.cam;
+    if (!cam || !cam.stream) return;
+    if (!app.online) { toast(OFFLINE_MSG, true); return; }
+    const v = cam.video, w = v.videoWidth, h = v.videoHeight, qid = cam.qid;
+    const job = { lid: newKey(), name: "Kamera-Foto", type: "image/jpeg", size: 0, err: null, notes: [], small: true };
+    if (!w || !h) return failPhotoJob(qid, job, new PhotoError("capture", "Kein Videobild", "Die Kamera liefert noch kein Bild", "Kurz warten und nochmal auslösen.")), updatePhotoZone(qid);
+    const sc = Math.min(1, PHOTO_SIDE / Math.max(w, h)), dw = Math.round(w * sc), dh = Math.round(h * sc);
+    const c = document.createElement("canvas");
+    let blobP;
+    try {
+      c.width = dw; c.height = dh;
+      c.getContext("2d").drawImage(v, 0, 0, dw, dh); // direkt in Zielgröße – nie ein Canvas in voller Auflösung
+      blobP = new Promise((r) => c.toBlob(r, "image/jpeg", 0.85)).finally(() => { c.width = 0; c.height = 0; });
+    } catch (e) { c.width = 0; c.height = 0; blobP = Promise.reject(e); }
+    const fl = $(".cam-flash", cam.el); fl.classList.remove("go"); void fl.offsetWidth; fl.classList.add("go");
+    tapFeedback(btn);
+    cam.shots++; cam.pending++; camStatus(cam);
+    job.name = "Kamera-Foto " + cam.shots;
+    cam.queue = cam.queue.then(async () => { // nacheinander hochladen; die Kamera bleibt dabei offen
+      try {
+        const blob = await blobP.catch((e) => { throw new PhotoError("capture", e.name || "Fehler", e.message || "Bild konnte nicht erzeugt werden", "Bitte nochmal auslösen."); });
+        if (!blob || blob.size < 200 || !(await isJpeg(blob))) throw new PhotoError("capture", "LeeresBild", "Aus dem Videobild entstand kein gültiges Foto", "Bitte nochmal auslösen.");
+        job.data = blob; job.size = blob.size;
+        await addPhotoJob(qid, job);
+        rerenderTools(qid); // Foto erscheint sofort in der Liste (die Kamera wird danach wieder eingehängt)
+      } catch (e) {
+        failPhotoJob(qid, job, e);
+        updatePhotoZone(qid);
+      } finally {
+        cam.pending--; camStatus(cam);
+      }
+    });
   }
 
   // ---- Fehlerprotokoll: Jeder Fehler beim Foto-Upload geht an den Server (data/client-errors.log) – mit Gerät/Browser,
@@ -1297,19 +1492,16 @@
   // Datei überhaupt lesbar ist (→ Fehler „Lesen“, nach Pause erneut), sonst kleiner erneut (→ „Verkleinern“). Jedes
   // Ergebnis wird geprüft (nicht leer, echtes JPEG); sonst automatisch kleiner/mit weniger Qualität. Canvas, Bitmap und
   // Objekt-URL sind kurzlebig, werden sofort freigegeben und nie wiederverwendet.
-  const READ_HINT = "Das Handy hat die Datei gerade nicht herausgegeben. Bitte „Erneut versuchen“; klappt es wiederholt nicht, das Foto neu auswählen.";
   const errText = (e) => ((e && e.name) || "Fehler") + (e && e.message ? " (" + String(e.message).slice(0, 80) + ")" : "");
+  // Dateianfang lesen (meist aus der Kopie im Speicher). Kein Wiederholen mit derselben Datei-Referenz – zwecklos, wenn
+  // Android die Erlaubnis entzogen hat (dann „Erneut versuchen“ = Bild neu wählen).
   async function readHeader(file, notes) {
-    if (!file) throw new PhotoError("read", "Datei nicht mehr verfügbar", "", "Bitte das Foto neu auswählen.");
+    if (!file) throw new PhotoError("read", "Datei nicht mehr verfügbar", "", READ_HINT);
     if (!file.size) throw new PhotoError("read", "EmptyFile", "Die Datei ist leer (0 Byte)", "Liegt das Bild nur in der Cloud? Bitte erst auf dem Handy öffnen (herunterladen) und neu auswählen.");
-    let last = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      let buf = null;
-      try { buf = await file.slice(0, 256 * 1024).arrayBuffer(); } catch (e) { last = e; notes.push("Lesen " + attempt + ": " + errText(e)); await pause(400 * attempt); continue; }
-      if (!buf.byteLength) { last = { name: "EmptyRead", message: "0 Byte gelesen" }; notes.push("Lesen " + attempt + ": 0 Byte"); await pause(400 * attempt); continue; }
-      try { return readImageInfo(new DataView(buf)); } catch (e) { return null; } // unbekanntes Format (z. B. HEIC): Größe offen
-    }
-    throw new PhotoError("read", (last && last.name) || "Lesefehler", (last && last.message) || "", READ_HINT);
+    let buf = null;
+    try { buf = await file.slice(0, 256 * 1024).arrayBuffer(); } catch (e) { notes.push("Lesen: " + errText(e)); throw new PhotoError("read", e.name || "Lesefehler", e.message || "", READ_HINT); }
+    if (!buf.byteLength) throw new PhotoError("read", "EmptyRead", "0 Byte gelesen", READ_HINT);
+    try { return readImageInfo(new DataView(buf)); } catch (e) { return null; } // unbekanntes Format (z. B. HEIC): Größe offen
   }
   // (1) Chrome/Android: ImageDecoder dekodiert ein JPEG direkt verkleinert (Stufen 1/8 … 8/8) – ein 48-Megapixel-Foto
   // braucht so ~3 statt ~190 MB. Die Wunschgröße muss genau eine dieser Stufen sein (sonst Fehler), darum die kleinste
@@ -1506,6 +1698,7 @@
       $$(".sort-list", body).forEach(bindSort);
       $$("[data-keep]", body).forEach((i) => { if (kept[i.dataset.keep] != null) i.value = kept[i.dataset.keep]; if (focus === i.dataset.keep) i.focus(); });
     });
+    mountCamera();
   }
 
   function bindTools(el) {
@@ -1524,6 +1717,7 @@
       bindPeekHold(t);
     });
     $$(".sort-list", el).forEach(bindSort);
+    mountCamera(); // Kamera-Vorschau nach dem Neuzeichnen wieder einhängen
   }
 
   // „Anzeigen“ nur durch langes Drücken (0,6 s) – blendet das Geheimnis 5 s lang auf diesem Handy ein
@@ -1616,6 +1810,7 @@
     const ui = b.dataset.toolUi;
     if (ui === "compass-on") return enableCompass();
     if (ui === "peek-off") { toolUI.peek[qid] = 0; return rerenderTools(qid); }
+    if (ui === "cam-open") return openCamera(qid);
     if (ui === "photo-camera") return choosePhotos(qid, "camera");
     if (ui === "photo-retry") return retryPhoto(qid, b.dataset.lid);
     if (ui === "photo-drop") { toolUI.photoFailed[qid] = (toolUI.photoFailed[qid] || []).filter((j) => j.lid !== b.dataset.lid); return rerenderTools(qid); }
