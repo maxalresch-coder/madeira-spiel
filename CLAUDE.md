@@ -22,7 +22,7 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
 3. Nur wenn nötig: auf der Seite „Neues Spiel starten“ bzw. Reset. Ein Reset ist nötig, wenn sich Quest-/Stapel-IDs
    oder die Spielstand-Struktur ändern (dann `SCHEMA` in logic.js erhöhen → App zeigt automatisch „Neue Spielinhalte“).
 Konfiguration in der WSGI-Datei (`pythonanywhere_wsgi.py`): `MADEIRA_PASSWORD`, `MADEIRA_LINK_KEY` (geheimer Link-Teil).
-Spielstand: `data/state.json`, Spielernamen: `data/players.json` (beide nicht in git). Details: ANLEITUNG.md.
+Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Fotos der Hilfsmittel: `data/photos/` (alles nicht in git). Details: ANLEITUNG.md.
 
 ## Zweck
 Private Handy-Webseite für 3 Freunde im Madeira-Urlaub: als **ein Team** alle 10 Regionen erkunden,
@@ -85,7 +85,21 @@ Vertrauensbasis, keine Beweisfotos.
     (`used`, App weist darauf hin). Geheimes liegt leicht verschleiert im Spielstand (`hide`/`unhide`, Vertrauensbasis, kein
     echter Schutz). Wortvergleich (`norm`): Groß-/Kleinschreibung, Leerzeichen am Rand und Akzente egal; ä=ae, ö=oe, ü=ue, ß=ss.
   - Entwürfe vor dem Festschreiben (Sortierung, Auswahl) bleiben nur auf dem jeweiligen Handy; festgeschrieben wird synchron.
-  - Sortieren: Ziehen am Griff (Pointer-Events, `touch-action: none`) + Pfeile hoch/runter; während des Ziehens kein Neuzeichnen.
+  - Sortieren (`sortList`/`bindSort`): Ziehen am Griff (Pointer-Events, `touch-action: none`) – gezogene Box hebt sich ab
+    (Schatten, etwas größer) und folgt dem Finger, die anderen rutschen animiert, Platznummern wandern mit – plus Pfeile
+    hoch/runter; während des Ziehens kein Neuzeichnen. `sync` = gemeinsame Sortierung über den Server (Aktion `arrange`).
+  - **Zufall:** Ordnet ein Hilfsmittel etwas zufällig an oder mischt, muss jede mögliche Anordnung gleich wahrscheinlich sein,
+    auch die richtige Lösung; nichts ausschließen oder bevorzugen. Dafür `T.shuffle` (Fisher-Yates) mit `T.randomInt`
+    (unverzerrt durch Verwerfen) und `rand32()` aus `crypto.getRandomValues`. Der Zufall wird beim Auslösen im Browser
+    gezogen und als Teil der Aktion gespeichert (damit Warteschlange/Wiederholung dasselbe Ergebnis bringen). Test prüft Gleichverteilung.
+  - **Fotos (wiederverwendbare Komponente):** `photoPicker(qid, hinweis)` zeigt „Foto aufnehmen“ (`capture="environment"`)
+    und „Aus Galerie“; offline stattdessen ein Hinweis. Das Foto wird im Browser verkleinert (`shrinkPhoto`: lange Seite
+    ≤ 1.000 px, JPEG < 200 KB), per `POST api/photo` (roh, image/jpeg, Bearer-Token) hochgeladen → Antwort `{id}` (`p` + 24 Hex),
+    dann `toolDo(qid, {type: "addPhoto", photo: id})`. Anzeigen mit `photoImg(id)` (`GET api/photo/<id>?t=<token>`, weil `<img>`
+    keinen Header schickt). Gespeichert in `data/photos/` (nicht in git). **Nur temporär:** Nach jedem Speichern des Spielstands
+    löscht der Server alle Fotos, auf die der Spielstand nicht mehr verweist (nach 2 min Schonfrist für frische Uploads;
+    nach Reset sofort). Ein Hilfsmittel beendet eine Runde also, indem es die Foto-IDs aus seinem Zustand entfernt
+    (Geschafft → `photos: []`, Neue Runde/Reset → Zustand leer). Foto-IDs nie verschleiern (`hide`), sonst findet der Server sie nicht.
   Aktuelle Hilfsmittel:
   - Countdown: Light Show 10 s, Dreieck auf Dreieck 10 s, Werdet brava … 30 s, Treibgutkreuz 30 s (Start/Abbrechen/Neustart, Ende: Anzeige + Vibration).
   - „Fahrzeit schätzen und stoppen“ (Seilbahn): Schätzung festschreiben, Stoppuhr, ≤ 15 s daneben, sonst neue Runde.
@@ -100,13 +114,19 @@ Vertrauensbasis, keine Beweisfotos.
     eingebende Person tippt Begriffe als „erraten“ an (erratene sind für alle sichtbar); ≥ 3 erraten → „Geschafft!“,
     6 Tipps und < 3 → „Daneben“ + „Neue Runde“ (neue Begriffe, keine Wiederholung).
   - „Geheime Rangfolge“ (Früchteschweiger): Person trägt 3 Früchte ein (Namen für alle sichtbar), sortiert geheim (oben = beste)
-    und schreibt fest; die anderen sortieren ihre Vermutung und schreiben fest → sofort Vergleich; „Daneben“ zeigt die richtige
-    Rangfolge mit grün/rot je Platz + „Neue Runde – mit anderen Früchten“.
-  - „Geheimes Wort“ (Baumstaben): Wort ≥ 5 Buchstaben festschreiben; andere sehen „Wort mit X Buchstaben“; Tipps werden mit `norm`
-    verglichen; falsch → „Daneben“, die eingebende Person kann „Trotzdem richtig“ tippen; weitere Tipps erlaubt; „Neue Runde“.
+    und schreibt fest; dabei wird eine zufällige Startreihenfolge für die Ratenden gemischt (Zufallsregel, jede Reihenfolge
+    gleich wahrscheinlich, auch die richtige). Die Ratenden sortieren **gemeinsam** (synchron auf beiden Handys, `guessOrder`)
+    und schreiben fest → jede Position grün/rot („richtig wäre: …“); alle richtig = „Geschafft!“, sonst „Daneben“ + „Neue Runde – mit anderen Früchten“.
+  - „Buchstaben-Fotos“ (Baumstaben, `kind: "photoWord"`): eingebende Person nimmt ≥ 5 Fotos auf (Foto-Komponente) und trägt
+    zu jedem genau einen Buchstaben ein (A–Z, Ä, Ö, Ü, ß; `T.letter`); vor dem Festschreiben löschen/umsortieren (Entwurf
+    `draft` + verdeckte `draftLetters`, synchron). „Festschreiben“ setzt die Buchstaben in Foto-Reihenfolge zum geheimen Wort
+    zusammen (keine Wörter früherer Runden). Ratende sehen die Fotos in Reihenfolge ohne Buchstaben, tragen je einen Buchstaben
+    ein und schreiben fest → Vergleich Buchstabe für Buchstabe (Groß/klein egal), grün/rot; alle richtig = „Geschafft!“ mit Wort
+    (Fotos werden dann gelöscht), sonst „Daneben“: korrigieren und erneut festschreiben; eingebende Person: „Trotzdem richtig“; „Neue Runde“.
   - „Zwei Kriterien wählen“ (Mit Lorbeeren und UNESCO gekrönt): 10 UNESCO-Kriterien (i)–(x) mit deutscher Kurzfassung
-    (`UNESCO_CRITERIA`), genau 2 wählen und festschreiben; Lösung (ix)+(x) in tools.js, vorher nie gezeigt; daneben →
-    automatisch 10 min Strafzeit, Lösung wird dabei **nicht** gezeigt.
+    (`UNESCO_CRITERIA`), genau 2 wählen und festschreiben; Lösung (ix)+(x) in tools.js, vorher nie gezeigt. Danach wird jedes
+    gewählte Kriterium einzeln bewertet („(x) richtig“, „(ii) falsch“, grün/rot); nicht gewählte werden nie verraten;
+    nicht beide richtig → automatisch 10 min Strafzeit.
   - Links (`LINKS` in tools.js, eigene Zeilen): „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
     „Die zehn UNESCO-Kriterien“ (Mit Lorbeeren und UNESCO gekrönt) → https://whc.unesco.org/en/criteria/.
 - Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann Zertifikat (PDF).

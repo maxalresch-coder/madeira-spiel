@@ -6,6 +6,8 @@ Aufgaben:
   * prüft das Passwort und gibt ein Token aus
   * speichert den gemeinsamen Spielstand (data/state.json) mit Versionsnummer,
     damit alle drei Handys denselben Stand sehen
+  * nimmt Fotos der Hilfsmittel entgegen (data/photos/, nur vorübergehend: Fotos, auf die der
+    Spielstand nicht mehr verweist, werden automatisch gelöscht – z. B. nach „Geschafft“, „Neue Runde“ oder Reset)
   * merkt sich alle Namen, mit denen sich jemand angemeldet hat (data/players.json),
     z. B. für die Spielerauswahl beim Tic-Tac-Toe (bleibt auch nach einem Reset)
 
@@ -24,12 +26,17 @@ import hmac
 import json
 import mimetypes
 import os
+import re
+import secrets
 import threading
 import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 MAX_BODY = 2 * 1024 * 1024
+MAX_PHOTO = 600 * 1024          # Fotos werden im Browser auf ~1.000 px / < 200 KB verkleinert
+PHOTO_ID = re.compile(r"p[0-9a-f]{24}")
+PHOTO_GRACE = 120               # Sekunden: frisch hochgeladene Fotos nicht sofort wieder löschen
 _lock = threading.Lock()
 
 
@@ -97,6 +104,48 @@ def _add_player(conf, name):
         return names
 
 
+def _photo_dir(conf):
+    return os.path.join(conf["data_dir"], "photos")
+
+
+def _gc_photos(conf, state):
+    """Löscht Fotos, auf die der Spielstand nicht (mehr) verweist. Nach einem Reset (kein „tools“)
+    sofort, sonst erst nach einer kurzen Schonfrist (Upload kommt kurz vor dem Speichern)."""
+    folder = _photo_dir(conf)
+    if not os.path.isdir(folder):
+        return
+    used = set(PHOTO_ID.findall(json.dumps(state)))
+    grace = PHOTO_GRACE if isinstance(state, dict) and state.get("tools") else 0
+    now = time.time()
+    for name in os.listdir(folder):
+        pid = name[:-4]
+        if not name.endswith(".jpg") or pid in used:
+            continue
+        path = os.path.join(folder, name)
+        try:
+            if now - os.path.getmtime(path) >= grace:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def _save_photo(conf, environ):
+    try:
+        length = int(environ.get("CONTENT_LENGTH") or 0)
+    except ValueError:
+        length = 0
+    if length <= 0 or length > MAX_PHOTO:
+        return None
+    data = environ["wsgi.input"].read(length)
+    if data[:3] != b"\xff\xd8\xff":  # nur JPEG
+        return None
+    os.makedirs(_photo_dir(conf), exist_ok=True)
+    pid = "p" + secrets.token_hex(12)
+    with open(os.path.join(_photo_dir(conf), pid + ".jpg"), "wb") as f:
+        f.write(data)
+    return pid
+
+
 def _now_ms():
     """Serverzeit in ms – alle Handys rechnen Timer damit, damit sie synchron laufen."""
     return int(time.time() * 1000)
@@ -146,8 +195,30 @@ def _api(path, environ, start_response, conf):
         time.sleep(1)  # bremst Rateversuche
         return _json(start_response, "401 Unauthorized", {"error": "Falsches Passwort"})
 
+    # Fotos anzeigen: <img> kann keinen Header schicken, daher Token als ?t=…
+    if path.startswith("photo/") and method == "GET":
+        pid = path[6:]
+        qs = environ.get("QUERY_STRING", "")
+        tok = next((part[2:] for part in qs.split("&") if part.startswith("t=")), "")
+        if not PHOTO_ID.fullmatch(pid) or not hmac.compare_digest(tok, _token(conf)):
+            return _not_found(start_response)
+        full = os.path.join(_photo_dir(conf), pid + ".jpg")
+        if not os.path.isfile(full):
+            return _not_found(start_response)
+        with open(full, "rb") as f:
+            body = f.read()
+        start_response("200 OK", [("Content-Type", "image/jpeg"), ("Content-Length", str(len(body))),
+                                  ("Cache-Control", "private, max-age=86400")])
+        return [body]
+
     if not _authorized(environ, conf):
         return _json(start_response, "401 Unauthorized", {"error": "Nicht angemeldet"})
+
+    if path == "photo" and method == "POST":
+        pid = _save_photo(conf, environ)
+        if not pid:
+            return _json(start_response, "400 Bad Request", {"error": "Foto ungültig oder zu groß"})
+        return _json(start_response, "200 OK", {"id": pid})
 
     # Name melden (beim App-Start und nach „Name ändern“) – auch für schon Angemeldete
     if path == "player" and method == "POST":
@@ -179,6 +250,7 @@ def _api(path, environ, start_response, conf):
                 return _json(start_response, "409 Conflict", doc)
             doc = {"version": doc["version"] + 1, "state": body["state"]}
             _save(conf, doc)
+            _gc_photos(conf, body["state"])
         return _json(start_response, "200 OK", {"version": doc["version"], "now": _now_ms()})
 
     return _not_found(start_response)

@@ -26,7 +26,7 @@
     // Geheime Eingaben (eine gewählte Person gibt etwas ein, das für die anderen verdeckt bleibt)
     "q-cdl-2": { kind: "secretTerms", count: 5, need: 3, maxTips: 6, label: "Fünf geheime Begriffe", icon: "key-round" }, // Was Churchill sah
     "q-fun-3": { kind: "secretRank", count: 3, label: "Geheime Rangfolge", icon: "list-ordered" },                       // Früchteschweiger
-    "q-pmz-3": { kind: "secretWord", minLetters: 5, label: "Geheimes Wort", icon: "type" },                               // Baumstaben
+    "q-pmz-3": { kind: "photoWord", minLetters: 5, label: "Buchstaben-Fotos", icon: "camera" },                               // Baumstaben
     // Auswahl: genau 2 der 10 UNESCO-Kriterien; Lösung (ix) + (x) wird bei „Daneben“ nie gezeigt
     "q-san-3": { kind: "choice", pick: 2, solution: ["ix", "x"], penalty: 10, label: "Zwei Kriterien wählen", icon: "list-checks" } // Mit Lorbeeren und UNESCO gekrönt
   };
@@ -82,7 +82,35 @@
     try { return JSON.parse(decodeURIComponent(escape(atob(h.slice(2))))); } catch (e) { return null; }
   }
   const usedList = (ts) => unhide(ts.used) || [];
-  const isSecret = (cfg) => cfg.kind === "secretTerms" || cfg.kind === "secretRank" || cfg.kind === "secretWord";
+  const isSecret = (cfg) => cfg.kind === "secretTerms" || cfg.kind === "secretRank" || cfg.kind === "photoWord";
+
+  // ---------------------------------------------------------------- Zufall
+  // Regel: Jede mögliche Anordnung muss gleich wahrscheinlich sein (auch die richtige Lösung).
+  // randomInt zieht ohne Verzerrung (Verwerfen statt Modulo), shuffle ist Fisher-Yates.
+  // rand32 liefert eine Zufallszahl 0 … 2^32−1 (im Browser aus crypto.getRandomValues).
+  function randomInt(n, rand32) {
+    const limit = Math.floor(4294967296 / n) * n;
+    let x;
+    do { x = rand32(); } while (x >= limit);
+    return x % n;
+  }
+  function shuffle(arr, rand32) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = randomInt(i + 1, rand32);
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  // ---------------------------------------------------------------- Buchstaben (Buchstaben-Fotos)
+  // Genau ein Buchstabe A–Z, Ä, Ö, Ü oder ß; gespeichert in Großbuchstaben (ß bleibt ß)
+  function letter(v) {
+    const t = String(v == null ? "" : v).trim();
+    if (!/^[a-zäöüß]$/i.test(t)) return null;
+    return t === "ß" || t === "ẞ" ? "ß" : t.toUpperCase();
+  }
+  const sameLetter = (a, b) => letter(a) != null && letter(a) === letter(b);
 
   // ---------------------------------------------------------------- Auswertung
   function penaltyLeft(ts, now) {
@@ -145,8 +173,8 @@
         const places = order.map((f, i) => ts.guess[i] === f);
         return { ok: places.every(Boolean), places, order };
       }
-      case "secretWord":
-        return ts.secret && (ts.accepted || (ts.guesses || []).some((g) => g.ok)) ? { ok: true } : null;
+      case "photoWord":
+        return ts.secret && ts.solved ? { ok: true } : null;
       case "choice":
         return ts.ok ? { ok: true } : null;
       default:
@@ -174,18 +202,21 @@
       if (again.length) fail("Schon in einer früheren Runde verwendet: " + again.join(", ") + ". Bitte etwas Neues.");
     };
     const distinct = (words) => { if (new Set(words.map(norm)).size !== words.length) fail("Bitte keine doppelten Einträge."); };
-    const round0s = { secret: null, fruits: null, guess: null, guessed: null, tips: 0, guesses: [], accepted: null, revealed: false };
+    const round0s = {
+      secret: null, fruits: null, guess: null, guessed: null, tips: 0, revealed: false, guessOrder: null,
+      photos: null, draft: null, draftLetters: null, attempts: [], solved: false, accepted: false, letters: null
+    };
 
     switch (op.type) {
       case "setSetter": {
-        if (ts.secret || ts.fruits) fail("Die Eingabe läuft schon.");
+        if (ts.secret || ts.fruits || (ts.draft || []).length) fail("Die Eingabe läuft schon.");
         const n = String(op.name || "").trim();
         if (!n) fail("Bitte eine Person auswählen.");
         return Object.assign(ts, { setter: n.slice(0, 24) });
       }
       case "clearSetter":
         if (ts.secret) fail("Schon festgeschrieben.");
-        return Object.assign(ts, { setter: null, fruits: null });
+        return Object.assign(ts, { setter: null, fruits: null, draft: null, draftLetters: null });
       case "reveal":
         if (!ts.secret) fail("Es gibt noch nichts aufzulösen.");
         return Object.assign(ts, { revealed: true });
@@ -194,7 +225,7 @@
         const used = usedList(ts);
         const add = (w) => { const k = norm(w); if (k && used.indexOf(k) < 0) used.push(k); };
         if (cfg.kind === "secretTerms") (unhide(ts.secret) || []).forEach(add);
-        if (cfg.kind === "secretWord" && ts.secret) add(unhide(ts.secret));
+        if (cfg.kind === "photoWord" && ts.secret) add((unhide(ts.secret) || []).join(""));
         if (cfg.kind === "secretRank") (ts.fruits || []).forEach(add);
         return Object.assign(ts, round0s, { used: hide(used), round: (ts.round || 1) + 1 });
       }
@@ -240,39 +271,84 @@
         setterOnly();
         if (!ts.fruits) fail("Erst die Früchte eintragen.");
         if (ts.secret) fail("Schon festgeschrieben.");
-        return Object.assign(ts, { secret: hide(checkOrder(ts.fruits, op.order)) });
+        // op.start = zufällige Startreihenfolge für die Ratenden (gleichmäßig gemischt, siehe shuffle)
+        return Object.assign(ts, { secret: hide(checkOrder(ts.fruits, op.order)), guessOrder: checkOrder(ts.fruits, op.start) });
+      }
+      if (op.type === "arrange") { // gemeinsame Sortierung der Ratenden, auf beiden Handys gleich
+        guessersOnly();
+        if (!ts.secret || ts.guess) fail("Gerade wird nicht sortiert.");
+        return Object.assign(ts, { guessOrder: checkOrder(ts.fruits, op.order) });
       }
       if (op.type === "guess") {
         guessersOnly();
         if (!ts.secret) fail("Die Rangfolge ist noch nicht festgeschrieben.");
         if (ts.guess) fail("Eure Rangfolge ist schon festgeschrieben.");
-        return Object.assign(ts, { guess: checkOrder(ts.fruits, op.order), guessBy: by, revealed: true });
+        return Object.assign(ts, { guess: checkOrder(ts.fruits, op.order || ts.guessOrder), guessBy: by, revealed: true });
       }
     }
 
-    if (cfg.kind === "secretWord") {
-      if (op.type === "fix") {
-        setterOnly();
-        if (ts.secret) fail("Schon festgeschrieben.");
-        const w = String(op.word || "").trim().slice(0, 60);
-        if (letterCount(w) < cfg.minLetters) fail("Das Wort braucht mindestens " + cfg.minLetters + " Buchstaben.");
-        fresh([w]);
-        return Object.assign(ts, round0s, { secret: hide(w), letters: letterCount(w) });
+    if (cfg.kind === "photoWord") {
+      // Entwurf: Fotos (für alle sichtbar, damit der Server sie nicht löscht) + Buchstaben (verdeckt)
+      const draft = (ts.draft || []).slice(), letters = (unhide(ts.draftLetters) || []).slice();
+      const saveDraft = () => Object.assign(ts, { draft, draftLetters: hide(letters) });
+      const at = (i) => { i = Number(i); if (!(i >= 0 && i < draft.length)) fail("Unbekanntes Foto."); return i; };
+      switch (op.type) {
+        case "addPhoto":
+          setterOnly();
+          if (ts.secret) fail("Schon festgeschrieben.");
+          if (!/^p[0-9a-f]{24}$/.test(String(op.photo))) fail("Ungültiges Foto.");
+          if (draft.length >= 20) fail("Höchstens 20 Fotos.");
+          draft.push({ photo: op.photo });
+          letters.push(letter(op.letter) || "");
+          return saveDraft();
+        case "setLetter": {
+          setterOnly();
+          const i = at(op.i), l = op.letter === "" ? "" : letter(op.letter);
+          if (l == null) fail("Bitte genau einen Buchstaben (A–Z, Ä, Ö, Ü oder ß).");
+          letters[i] = l;
+          return saveDraft();
+        }
+        case "removePhoto": {
+          setterOnly();
+          const i = at(op.i);
+          draft.splice(i, 1); letters.splice(i, 1);
+          return saveDraft();
+        }
+        case "movePhoto": {
+          setterOnly();
+          const i = at(op.i), j = i + (op.d < 0 ? -1 : 1);
+          if (j < 0 || j >= draft.length) fail("Geht nicht weiter.");
+          [draft[i], draft[j]] = [draft[j], draft[i]];
+          [letters[i], letters[j]] = [letters[j], letters[i]];
+          return saveDraft();
+        }
+        case "fix": {
+          setterOnly();
+          if (ts.secret) fail("Schon festgeschrieben.");
+          if (draft.length < cfg.minLetters) fail("Mindestens " + cfg.minLetters + " Fotos – eines pro Buchstabe.");
+          if (letters.some((l) => !l)) fail("Zu jedem Foto fehlt noch ein Buchstabe.");
+          fresh([letters.join("")]);
+          return Object.assign(ts, round0s, { setter: ts.setter, photos: draft.map((d) => d.photo), secret: hide(letters), letters: letters.length });
+        }
       }
-      if (!ts.secret) fail("Erst das Wort festschreiben.");
+      if (!ts.secret) fail("Erst die Fotos mit Buchstaben festschreiben.");
+      const word = unhide(ts.secret) || [];
       if (op.type === "guess") {
         guessersOnly();
-        if (result(cfg, ts, now)) fail("Schon geschafft.");
-        const text = String(op.text || "").trim().slice(0, 60);
-        if (!text) fail("Bitte einen Tipp eintippen.");
-        ts.guesses = (ts.guesses || []).concat({ text, by, ok: norm(text) === norm(unhide(ts.secret)), t: now });
+        if (ts.solved) fail("Schon geschafft.");
+        const g = (op.letters || []).map(letter);
+        if (g.length !== word.length || g.some((l) => !l)) fail("Bitte unter jedes Foto genau einen Buchstaben eintragen.");
+        const marks = word.map((l, i) => sameLetter(l, g[i]));
+        ts.attempts = (ts.attempts || []).concat({ letters: g, marks, by, t: now });
+        // geschafft → Runde beendet, die Fotos werden nicht mehr gebraucht (Server löscht sie)
+        if (marks.every(Boolean)) Object.assign(ts, { solved: true, photos: [] });
         return ts;
       }
       if (op.type === "accept") {
         setterOnly();
-        const last = (ts.guesses || [])[(ts.guesses || []).length - 1];
-        if (!last || last.ok) fail("Es gibt keinen falschen Tipp, der zählen könnte.");
-        return Object.assign(ts, { accepted: last.text });
+        const last = (ts.attempts || [])[(ts.attempts || []).length - 1];
+        if (ts.solved || !last) fail("Es gibt keinen falschen Versuch, der zählen könnte.");
+        return Object.assign(ts, { solved: true, accepted: true, photos: [] });
       }
     }
     fail("Das geht hier nicht.");
@@ -370,10 +446,10 @@
         if (op.type === "fix") {
           const picks = Array.from(new Set((op.picks || []).map(String)));
           if (picks.length !== cfg.pick || !picks.every((p) => UNESCO_CRITERIA.some((c) => c.id === p))) fail("Bitte genau " + cfg.pick + " Kriterien auswählen.");
-          const ok = cfg.solution.every((id) => picks.indexOf(id) >= 0);
-          // daneben → sofort Strafzeit; die Lösung wird dabei nicht verraten
-          if (!ok) return startPenalty({ picks });
-          return Object.assign(ts, { picks, ok: true, by, lastMiss: null });
+          // jedes gewählte Kriterium einzeln bewerten; nicht gewählte werden nie verraten
+          const marks = picks.map((id) => cfg.solution.indexOf(id) >= 0);
+          if (!marks.every(Boolean)) return startPenalty({ picks, marks });
+          return Object.assign(ts, { picks, marks, ok: true, by, lastMiss: null });
         }
         break;
 
@@ -406,7 +482,7 @@
 
   const api = {
     TOOLS, LINKS, ARRIVALS_URL, UNESCO_URL, UNESCO_CRITERIA, ToolError, config, links, hasState, update, result, penaltyLeft,
-    angleDiff, compassHit, tttStatus, norm, letterCount, sameName, hide, unhide, isSecret
+    angleDiff, compassHit, tttStatus, norm, letterCount, sameName, hide, unhide, isSecret, randomInt, shuffle, letter, sameLetter
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.QuestTools = api;

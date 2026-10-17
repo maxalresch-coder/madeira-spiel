@@ -355,40 +355,78 @@ ts = tb("q-cdl-2", ts, { type: "newRound" }, "Ben");
 assert.deepStrictEqual([ts.setter, ts.secret, ts.tips, ts.round], ["Anna", null, 0, 2]);
 assert.throws(() => tb("q-cdl-2", ts, { type: "fix", terms: ["Möwen", "BOOTE", "Wolken", "Wind", "Hafen"] }, "Anna"), /Boote|BOOTE/);
 ts = tb("q-cdl-2", ts, { type: "fix", terms: ["Möwen", "Wellen", "Wolken", "Wind", "Hafen"] }, "Anna");
-// Früchteschweiger: Rangfolge
+// Zufall: Fisher-Yates mit unverzerrtem randomInt – alle 6 Reihenfolgen gleich oft (auch die richtige)
+const cr = require("crypto");
+const rand32 = () => cr.randomBytes(4).readUInt32BE(0);
+const counts = {};
+for (let i = 0; i < 60000; i++) { const k = T.shuffle(["A", "B", "C"], rand32).join(""); counts[k] = (counts[k] || 0) + 1; }
+assert.strictEqual(Object.keys(counts).length, 6);
+Object.values(counts).forEach((c) => assert(Math.abs(c - 10000) < 600, "ungleichmäßig: " + JSON.stringify(counts)));
+const seq = [4294967295, 7]; // 4294967295 liegt oberhalb der Grenze und wird verworfen (nicht per Modulo verzerrt)
+assert.strictEqual(T.randomInt(3, () => seq.shift()), 1);
+assert.strictEqual(seq.length, 0);
+// Früchteschweiger: Rangfolge, zufällige Startreihenfolge, gemeinsames Sortieren der Ratenden
 ts = tb("q-fun-3", tb("q-fun-3", null, { type: "setSetter", name: "Carla" }, "Carla"), { type: "setFruits", fruits: ["Mango", "Maracuja", "Banane"] }, "Carla");
-tbf("q-fun-3", ts, { type: "fix", order: ["Mango", "Banane"] }, "Carla");
-ts = tb("q-fun-3", ts, { type: "fix", order: ["Maracuja", "Mango", "Banane"] }, "Carla");
-tbf("q-fun-3", ts, { type: "guess", order: ["Maracuja", "Mango", "Banane"] }, "Carla");
-const wrong = tb("q-fun-3", ts, { type: "guess", order: ["Maracuja", "Banane", "Mango"] }, "Ben");
+tbf("q-fun-3", ts, { type: "fix", order: ["Mango", "Banane"], start: ["Mango", "Maracuja", "Banane"] }, "Carla");
+tbf("q-fun-3", ts, { type: "fix", order: ["Maracuja", "Mango", "Banane"], start: ["Mango", "Mango", "Banane"] }, "Carla");
+ts = tb("q-fun-3", ts, { type: "fix", order: ["Maracuja", "Mango", "Banane"], start: ["Banane", "Mango", "Maracuja"] }, "Carla");
+assert.deepStrictEqual(ts.guessOrder, ["Banane", "Mango", "Maracuja"]);
+tbf("q-fun-3", ts, { type: "arrange", order: ["Mango", "Banane", "Maracuja"] }, "Carla");
+ts = tb("q-fun-3", ts, { type: "arrange", order: ["Maracuja", "Banane", "Mango"] }, "Ben");
+tbf("q-fun-3", ts, { type: "guess" }, "Carla");
+const wrong = tb("q-fun-3", ts, { type: "guess" }, "Anna");
+assert.deepStrictEqual(wrong.guess, ["Maracuja", "Banane", "Mango"]);
 assert.deepStrictEqual(T.result(T.config("q-fun-3"), wrong, 0).places, [true, false, false]);
 assert.strictEqual(T.result(T.config("q-fun-3"), wrong, 0).ok, false);
+tbf("q-fun-3", wrong, { type: "arrange", order: ["Maracuja", "Mango", "Banane"] }, "Ben");
 assert.strictEqual(T.result(T.config("q-fun-3"), tb("q-fun-3", ts, { type: "guess", order: ["Maracuja", "Mango", "Banane"] }, "Ben"), 0).ok, true);
 ts = tb("q-fun-3", wrong, { type: "newRound" }, "Ben");
+assert.strictEqual(ts.guessOrder, null);
 tbf("q-fun-3", ts, { type: "setFruits", fruits: ["Papaya", "Anone", "banane"] }, "Carla");
-// Baumstaben: Wort ≥ 5 Buchstaben, Tipps, „Trotzdem richtig“
+// Buchstaben-Fotos (Baumstaben): Fotos + Buchstaben, Vergleich Buchstabe für Buchstabe
+assert.deepStrictEqual(["a", "ä", "ß", "Ü", "AB", "1", ""].map(T.letter), ["A", "Ä", "ß", "Ü", null, null, null]);
+const pid = (n) => "p" + String(n).padStart(24, "0");
 ts = tb("q-pmz-3", null, { type: "setSetter", name: "Ben" }, "Anna");
-tbf("q-pmz-3", ts, { type: "fix", word: "Baum" }, "Ben");
-ts = tb("q-pmz-3", ts, { type: "fix", word: "Lorbeer" }, "Ben");
-assert.strictEqual(ts.letters, 7);
-tbf("q-pmz-3", ts, { type: "guess", text: "Lorbeer" }, "Ben");
-ts = tb("q-pmz-3", ts, { type: "guess", text: "Lorber" }, "Anna");
+tbf("q-pmz-3", ts, { type: "addPhoto", photo: pid(1), letter: "L" }, "Anna");
+tbf("q-pmz-3", ts, { type: "addPhoto", photo: "../hack", letter: "L" }, "Ben");
+"LOBRER".split("").forEach((l, i) => { ts = tb("q-pmz-3", ts, { type: "addPhoto", photo: pid(i), letter: i === 5 ? "" : l }, "Ben"); });
+assert(!JSON.stringify(ts).includes('"LOBRE'), "Buchstaben verschleiert");
+tbf("q-pmz-3", ts, { type: "fix" }, "Ben"); // ein Buchstabe fehlt
+tbf("q-pmz-3", ts, { type: "setLetter", i: 5, letter: "RR" }, "Ben");
+ts = tb("q-pmz-3", ts, { type: "setLetter", i: 5, letter: "e" }, "Ben");
+ts = tb("q-pmz-3", ts, { type: "movePhoto", i: 2, d: 1 }, "Ben");          // LOBRER → LORBER … (Foto 2 ↔ 3)
+ts = tb("q-pmz-3", ts, { type: "removePhoto", i: 5 }, "Ben");               // → LORBE
+ts = tb("q-pmz-3", ts, { type: "addPhoto", photo: pid(9), letter: "r" }, "Ben"); // → LORBER
+assert.deepStrictEqual(T.unhide(ts.draftLetters), ["L", "O", "R", "B", "E", "R"]);
+ts = tb("q-pmz-3", ts, { type: "fix" }, "Ben");
+assert.deepStrictEqual([ts.letters, ts.photos.length, ts.draft], [6, 6, null]);
+assert.deepStrictEqual(ts.photos, [pid(0), pid(1), pid(3), pid(2), pid(4), pid(9)]);
+tbf("q-pmz-3", ts, { type: "guess", letters: "LORBER".split("") }, "Ben");
+tbf("q-pmz-3", ts, { type: "guess", letters: ["L", "O"] }, "Anna");
+ts = tb("q-pmz-3", ts, { type: "guess", letters: "lorbar".split("") }, "Anna");
+assert.deepStrictEqual(ts.attempts[0].marks, [true, true, true, true, false, true]);
 assert.strictEqual(T.result(T.config("q-pmz-3"), ts, 0), null);
+assert.strictEqual(ts.photos.length, 6);
 tbf("q-pmz-3", ts, { type: "accept" }, "Anna");
-assert.strictEqual(T.result(T.config("q-pmz-3"), tb("q-pmz-3", ts, { type: "accept" }, "Ben"), 0).ok, true);
-assert.strictEqual(T.result(T.config("q-pmz-3"), tb("q-pmz-3", ts, { type: "guess", text: " LORBEER " }, "Carla"), 0).ok, true);
+const acc = tb("q-pmz-3", ts, { type: "accept" }, "Ben");
+assert.deepStrictEqual([T.result(T.config("q-pmz-3"), acc, 0).ok, acc.photos], [true, []]);
+const hit = tb("q-pmz-3", ts, { type: "guess", letters: "LORBER".split("") }, "Carla");
+assert.deepStrictEqual([T.result(T.config("q-pmz-3"), hit, 0).ok, hit.photos], [true, []]);
 ts = tb("q-pmz-3", ts, { type: "newRound" }, "Anna");
-tbf("q-pmz-3", ts, { type: "fix", word: "lorbeer" }, "Ben");
-// Lorbeeren: genau 2 Kriterien, (ix)+(x), daneben → 10 Minuten Strafzeit ohne Lösung
+assert.deepStrictEqual([ts.photos, ts.secret, ts.setter], [null, null, "Ben"]);
+"lorber".split("").forEach((l, i) => { ts = tb("q-pmz-3", ts, { type: "addPhoto", photo: pid(20 + i), letter: l }, "Ben"); });
+assert.throws(() => tb("q-pmz-3", ts, { type: "fix" }, "Ben"), /früheren Runde/);
+// Lorbeeren: genau 2 Kriterien, (ix)+(x), daneben → 10 Minuten Strafzeit, Einzelbewertung nur der gewählten
 assert.strictEqual(T.UNESCO_CRITERIA.length, 10);
 tbf("q-san-3", null, { type: "fix", picks: ["ix"] }, "Ben");
-ts = tb("q-san-3", null, { type: "fix", picks: ["vii", "x"] }, "Ben", 1000);
+ts = tb("q-san-3", null, { type: "fix", picks: ["x", "ii"] }, "Ben", 1000);
 assert.strictEqual(ts.penaltyUntil, 1000 + 600000);
+assert.deepStrictEqual(ts.lastMiss, { picks: ["x", "ii"], marks: [true, false] });
 assert.strictEqual(T.result(T.config("q-san-3"), ts, 2000), null);
-assert(!JSON.stringify(ts.lastMiss).includes("ix"));
+assert(!JSON.stringify(ts).includes('"ix"'), "nicht gewählte Lösung bleibt geheim");
 tbf("q-san-3", ts, { type: "fix", picks: ["ix", "x"] }, "Ben");
 ts = T.update(T.config("q-san-3"), ts, { type: "fix", picks: ["x", "ix"] }, 1000 + 600000, "Ben");
-assert.strictEqual(T.result(T.config("q-san-3"), ts, 0).ok, true);
+assert.deepStrictEqual([T.result(T.config("q-san-3"), ts, 0).ok, ts.marks], [true, [true, true]]);
 
 // Tools liegen im Spielstand, Aktionen behalten sie, Reset löscht sie
 g = L.newGame(C, 7, t);
