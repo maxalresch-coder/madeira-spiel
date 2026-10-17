@@ -10,6 +10,7 @@
   const SCHEMA = 2; // Version des Spielstands (2 = finale Inhalte, Stapel-Quests)
   const PRICES = { joker: 150, swap: 10, mult: 10 };
   const MAX_MULTS = 3;
+  const MAX_SWAPS = 5; // Tausch-Joker höchstens 5-mal pro Spiel (rückgängig gemachte zählen nicht)
   const REGION_POINTS = { explored: 100, tier: 20 };
   const MADEIRA_BONUS = 300;
   const MAX_POINTS = 2400; // ohne Multiplikator
@@ -238,6 +239,7 @@
         if (slot < 0) fail("Diese Stapel-Quest ist gerade nicht offen.");
         if (state.mults[id]) fail("Eine Stapel-Quest mit Multiplikator kann nicht getauscht werden.");
         if (!state.deck.length) fail("Der Stapel ist leer – es gibt nichts zum Tauschen.");
+        if (activeSwaps(state) >= MAX_SWAPS) fail("Der Tausch-Joker wurde schon " + MAX_SWAPS + "-mal benutzt – mehr geht nicht.");
         requireShop(before, PRICES.swap);
         const fresh = state.deck.shift();
         // feste, zufällig wirkende Position (nicht ganz oben): gleiches Ergebnis bei Wiederholung
@@ -377,7 +379,7 @@
   }
 
   const api = {
-    STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
+    STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MAX_SWAPS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
     newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible,
     canUndo, dayCount, pointsPerDay, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
   };

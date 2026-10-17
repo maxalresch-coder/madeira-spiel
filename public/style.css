@@ -273,15 +273,13 @@ input:focus, select:focus { outline: 2px solid var(--ocean); outline-offset: 1px
 }
 .pin { cursor: pointer; outline: none; }
 .pin-hit { fill: transparent; }
-.pin-head { fill: #fff; stroke: var(--ocean-deep); stroke-width: 2.5; }
-.pin-txt { font: 800 13px var(--font); fill: var(--ocean-deep); text-anchor: middle; pointer-events: none; }
-.pin.done .pin-head { fill: var(--laurel); stroke: #fff; }
-.pin.done .pin-txt { fill: #fff; }
+.pin-halo { fill: #fff; }
+.pin-head { stroke: #073b4c; stroke-width: 3; }
+.pin-core { fill: #073b4c; pointer-events: none; }
+.pin-txt { font: 800 13px var(--font); fill: #073b4c; text-anchor: middle; pointer-events: none; }
 .pin:focus-visible .pin-head { stroke: var(--hibiscus); stroke-width: 3.5; }
 .pin-stem { stroke: var(--ocean-deep); opacity: .75; pointer-events: none; }
 .pin-dot { fill: var(--ocean-deep); pointer-events: none; }
-.lg-pin { border-radius: 50% !important; background: #fff; border: 2px solid var(--ocean-deep); box-sizing: border-box; }
-.lg-pin.done { background: var(--laurel); border-color: var(--laurel); }
 .map-hint { margin: 0; line-height: 1.3; }
 
 /* ---------- Quest-Texte ---------- */
@@ -309,10 +307,6 @@ input:focus, select:focus { outline: 2px solid var(--ocean); outline-offset: 1px
 .ov-title { margin-top: 22px; padding-top: 10px; border-top: 2px solid var(--line); }
 .ov-group { margin: 14px 0 6px; }
 .ov-group h3 { margin: 0 0 4px; }
-.pin.group .pin-ring { fill: rgba(11, 95, 120, .25); }
-.pin.group .pin-head { fill: var(--ocean-deep); stroke: #fff; stroke-width: 2.5; }
-.pin.group .pin-txt { fill: #fff; }
-.pin.group.done .pin-head { fill: var(--laurel); }
 .pick-list { display: grid; gap: 8px; }
 .pick { display: flex; gap: 10px; align-items: center; text-align: left; border: 1.5px solid var(--line); background: var(--surface); border-radius: 12px; padding: 10px 12px; cursor: pointer; }
 
@@ -373,3 +367,12 @@ input:focus, select:focus { outline: 2px solid var(--ocean); outline-offset: 1px
 @media (prefers-color-scheme: dark) { .star path { stroke: #6f8289; } .star.on path { stroke: #ffd36b; } }
 .modal .stars .star { width: 20px; height: 20px; }
 .region-btn .stars { margin-left: auto; }
+.map-bar .legend { margin: 0; }
+.all-quests-btn { margin-bottom: 18px; }
+.hdr-btn { width: 54px; }
+.brand-rank { display: grid; line-height: 1.2; white-space: nowrap; overflow: visible; }
+.brand { overflow: hidden; }
+.brand-title { font-size: clamp(.92rem, 4.3vw, 1.1rem); }
+.hdr-nav { gap: 3px; }
+.hdr-btn { width: 49px; }
+.hdr-lbl { font-size: .6rem; }

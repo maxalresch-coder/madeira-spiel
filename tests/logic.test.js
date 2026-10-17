@@ -147,6 +147,22 @@ assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
   assert.strictEqual(m.log.reduce((a, e) => a + e.dE, 0), sm2.earned);
 }
 
+// Tausch-Limit: höchstens 5 Tausch-Joker, rückgängig gemachte zählen nicht
+{
+  let w = L.newGame(C, 11, t);
+  C.regions.forEach(r => { w = act(w, { type: "quest", questId: r.quests[0].id }); }); // genug Punkte
+  for (let i = 0; i < 5; i++) w = act(w, { type: "swap", questId: w.open[0] });
+  assert.strictEqual(L.summary(w, C).swaps, 5);
+  assert.throws(() => act(w, { type: "swap", questId: w.open[1] }), /5-mal/);
+  const lastSwap = w.log.filter(e => e.type === "swap" && !e.undone).pop();
+  w = act(w, { type: "undo", logId: lastSwap.id });
+  assert.strictEqual(L.summary(w, C).swaps, 4);
+  w = act(w, { type: "swap", questId: w.open[0] }); // wieder erlaubt
+  assert.strictEqual(L.summary(w, C).swaps, 5);
+  assert.throws(() => act(w, { type: "swap", questId: w.open[2] }), /5-mal/);
+  assert.strictEqual(L.summary(w, C).spent, 50);
+}
+
 // Belohnungen
 assert.strictEqual(L.formatReward(C.rewards[0], 350), "10 Min 30 Sek");
 assert.strictEqual(L.formatReward(C.rewards[0], 2000), "60 Min");

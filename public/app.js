@@ -189,7 +189,12 @@
   // des Handys führt wieder zur Startseite.
   function go(view) {
     if (view === "home" && history.state && history.state.view) { history.back(); return; }
-    if (view !== "home" && view !== app.view) history.pushState({ view }, "");
+    // Zwischen Shop/Logbuch/Statistik wird der Eintrag ersetzt statt gestapelt –
+    // so führt "Zurück" (Knopf oder Handy-Taste) immer direkt zur Startseite.
+    if (view !== "home" && view !== app.view) {
+      if (history.state && history.state.view) history.replaceState({ view }, "");
+      else history.pushState({ view }, "");
+    }
     show(view);
   }
   function show(view) {
@@ -244,29 +249,32 @@
 
   // Startseite: a) Inselkarte, b) offene Stapel-Quests, c) Regionen mit Sternen
   function viewHome(s) {
-    const legend = L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + "</span>").join("") +
-      '<span><i class="lg-pin"></i>offene Quest</span><span><i class="lg-pin done"></i>erledigt</span>';
-    const list = C.regions.map((r) => {
-      const lvl = s.levels[r.id];
-      return '<button class="region-btn" data-region="' + r.id + '"><span class="dot" style="background:' + L.LEVELS[lvl].color + '"></span><span class="region-name">' + esc(r.name) + "</span>" + stars(lvl) + "</button>";
-    }).join("");
+    const legend = L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + "</span>").join("");
     const labels = C.regions.map((r) => {
       const p = MAP.labels[r.name];
       return p ? '<text class="region-label" x="' + p[0] + '" y="' + p[1] + '">' + esc(r.name) + "</text>" : "";
     }).join("");
     const vb = mapUI.vb;
-    const milestones = [["allExplored", "erkundet"], ["allConquered", "erobert"], ["allDeveloped", "erschlossen"]]
-      .map(([k, w]) => '<span class="ms' + (s[k] ? " on" : "") + '">' + (s[k] ? "✓ " : "") + "Madeira " + w + "</span>").join("");
     return '' +
       (app.state.ended ? '<div class="panel ended-note"><strong>🏁 Urlaub beendet.</strong> <button class="btn btn-small btn-gold" data-go="stats">Zertifikat & Belohnungen</button></div>' : "") +
       '<section class="home-sec" aria-label="Inselkarte">' +
       '<div class="map-wrap"><svg id="island" viewBox="' + [vb.x, vb.y, vb.w, vb.h].join(" ") + '" xmlns="http://www.w3.org/2000/svg">' +
         '<g id="regions">' + regionPaths(s.levels) + '</g><g id="labels">' + labels + '</g><g id="pins"></g></svg></div>' +
       '<div class="map-bar"><div class="map-ctrl"><button data-zoom="out" aria-label="Herauszoomen">−</button><button data-zoom="in" aria-label="Hineinzoomen">+</button><button data-zoom="reset" aria-label="Ganze Insel">⤢</button></div>' +
-      '<p class="muted small map-hint">Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region. Zahl im Kreis = mehrere Quests nah beieinander.</p></div>' +
-      '<div class="legend">' + legend + "</div></section>" +
+      '<div class="legend">' + legend + "</div></div></section>" +
       stackZone(s) +
-      '<section class="home-sec regions-sec" aria-label="Regionen">' +
+      '<button class="btn btn-ghost btn-block all-quests-btn" data-all-quests>📋 Alle Quests anzeigen</button>';
+  }
+
+  // Regionsfortschritt (Meilensteine, Regionen mit Sternen) – wird in der Statistik angezeigt
+  function regionsSection(s) {
+    const list = C.regions.map((r) => {
+      const lvl = s.levels[r.id];
+      return '<button class="region-btn" data-region="' + r.id + '"><span class="dot" style="background:' + L.LEVELS[lvl].color + '"></span><span class="region-name">' + esc(r.name) + "</span>" + stars(lvl) + "</button>";
+    }).join("");
+    const milestones = [["allExplored", "erkundet"], ["allConquered", "erobert"], ["allDeveloped", "erschlossen"]]
+      .map(([k, w]) => '<span class="ms' + (s[k] ? " on" : "") + '">' + (s[k] ? "✓ " : "") + "Madeira " + w + "</span>").join("");
+    return '<section class="home-sec regions-sec" aria-label="Regionen">' +
         '<div class="sec-head"><h2>🗺️ Regionen</h2><button class="btn btn-small btn-ghost" data-all-quests>📋 Alle Quests</button></div>' +
         '<div class="panel">' +
           '<div class="row between"><strong>' + s.explored + " / " + C.regions.length + ' Regionen erkundet</strong><span class="muted small">' + s.questsDone + "/30 Regions-Quests</span></div>" +
@@ -279,6 +287,8 @@
   // Pins: feste Bildschirmgröße. Liegen Pins zu nah beieinander, werden sie zu
   // einer Gruppe (Kreis mit Anzahl) zusammengefasst; beim Hineinzoomen lösen sie sich auf.
   const PIN = { r: 14, hit: 22, lift: 20, gap: 34 };
+  // Pin-Farbe: offen = wie unbesuchte Region, erledigt = wie erkundete Region
+  function pinFill(done) { return L.LEVELS[done ? 1 : 0].color; }
   const MIN_W = MAP.w / 16;
   function mountMap() {
     const svg = $("#island");
@@ -332,15 +342,16 @@
       const tr = 'transform="translate(' + X(hx) + " " + Y(hy) + ") scale(" + U(1) + ')"';
       if (g.items.length === 1) {
         const o = g.items[0], q = o.p.q, done = !!app.state.quests[q.id];
-        heads.push('<g class="pin' + (done ? " done" : "") + '" data-pin="' + q.id + '" tabindex="0" role="button" aria-label="' + esc(q.title + " (" + o.p.region.name + ")" + (done ? ", erledigt" : "")) + '" ' + tr + ">" +
-          '<circle class="pin-hit" r="' + PIN.hit + '"/><circle class="pin-head" r="' + PIN.r + '"/>' +
-          '<text class="pin-txt" y="5">' + (done ? "✓" : o.p.n) + "</text></g>");
+        heads.push('<g class="pin' + (done ? " done" : "") + '" data-pin="' + q.id + '" tabindex="0" role="button" aria-label="' + esc(q.title + " (" + o.p.region.name + ")" + (done ? ", erledigt" : ", offen")) + '" ' + tr + ">" +
+          '<circle class="pin-hit" r="' + PIN.hit + '"/><circle class="pin-halo" r="' + (PIN.r + 2) + '"/>' +
+          '<circle class="pin-head" r="' + PIN.r + '" fill="' + pinFill(done) + '"/><circle class="pin-core" r="4"/></g>');
       } else {
         const nDone = g.items.filter((o) => app.state.quests[o.p.q.id]).length;
         const all = nDone === g.items.length;
         heads.push('<g class="pin group' + (all ? " done" : "") + '" data-group="' + gi + '" tabindex="0" role="button" aria-label="' + g.items.length + " Quests, " + nDone + ' erledigt" ' + tr + ">" +
-          '<circle class="pin-hit" r="' + (PIN.hit + 2) + '"/><circle class="pin-ring" r="' + (PIN.r + 4) + '"/><circle class="pin-head" r="' + (PIN.r + 1) + '"/>' +
-          '<text class="pin-txt" y="5">' + (all ? "✓" : g.items.length) + "</text></g>");
+          '<circle class="pin-hit" r="' + (PIN.hit + 2) + '"/><circle class="pin-halo" r="' + (PIN.r + 3) + '"/>' +
+          '<circle class="pin-head" r="' + (PIN.r + 1) + '" fill="' + pinFill(all) + '"/>' +
+          '<text class="pin-txt" y="5">' + g.items.length + "</text></g>");
       }
     });
     $("#pins", svg).innerHTML = stems.join("") + heads.join("");
@@ -598,7 +609,8 @@
       '<div class="pts">' + (m && pts !== base ? "<s>" + base + "</s>" : "") + pts + " Punkte</div>" +
       '<div class="actions">' +
         '<button class="btn btn-good" data-done="' + id + '">✓ Erledigt</button>' +
-        '<button class="btn btn-small btn-ghost" data-swap="' + id + '" ' + (m || !app.state.deck.length || !shopOk ? "disabled" : "") + '>⇄ Tauschen · ' + L.PRICES.swap + "</button>" +
+        (s.swaps >= L.MAX_SWAPS ? '<button class="btn btn-small btn-ghost" disabled>⇄ Tausch-Limit erreicht</button>' :
+          '<button class="btn btn-small btn-ghost" data-swap="' + id + '" ' + (m || !app.state.deck.length || !shopOk ? "disabled" : "") + '>⇄ Tauschen · ' + L.PRICES.swap + "</button>") +
         '<button class="btn btn-small btn-ghost" data-mult="' + id + '" ' + (m || s.multCount >= L.MAX_MULTS || !shopOk ? "disabled" : "") + ">✦ Multiplikator · " + L.PRICES.mult + "</button>" +
       "</div></div>";
   }
@@ -618,7 +630,7 @@
     }).join("");
     return '<section class="stack-zone" aria-label="Stapel-Quests">' +
       '<div class="zone-head"><div><h2>📚 Stapel-Quests</h2>' +
-      '<div class="zone-sub">' + open.length + " offen · " + s.deckLeft + " verdeckt im Stapel · " + s.doneStack + "/" + C.stackQuests.length + " erledigt · Multiplikatoren " + s.multCount + "/" + L.MAX_MULTS + "</div>" +
+      '<div class="zone-sub">' + open.length + " offen · " + s.deckLeft + " verdeckt im Stapel · " + s.doneStack + " von " + C.stackQuests.length + " erledigt · Multiplikatoren " + s.multCount + " von " + L.MAX_MULTS + " · Tauschen " + s.swaps + " von " + L.MAX_SWAPS + "</div>" +
       (s.balance < 0 ? '<div class="zone-warn">Kontostand negativ – Tausch-Joker und Multiplikator gesperrt</div>' : "") +
       '</div><div class="deck-stack" aria-hidden="true"></div></div>' +
       quests +
@@ -669,8 +681,9 @@
       '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">🧭 Region-Joker</h3><span class="price">' + L.PRICES.joker + " P</span></div>" +
       '<p class="muted small" style="margin:0">Eine Region gilt als erkundet, bringt aber keine 100 Punkte. Sie kann danach normal mit Quests auf Erobert und Erschlossen gebracht werden. <strong>Einmal pro Spiel.</strong></p>' + jokerBody + "</div>" +
       '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">⇄ Tausch-Joker</h3><span class="price">' + L.PRICES.swap + " P</span></div>" +
-      '<p class="muted small" style="margin:0">Eine offene Stapel-Quest geht zurück in den Stapel, eine neue wird vom Stapel gezogen. So oft ihr wollt (' + s.swaps + "× genutzt).</p>" +
-      '<div class="open-pick">' + openBtns("data-swap", (id) => locked || app.state.mults[id] || !app.state.deck.length) + "</div></div>" +
+      '<p class="muted small" style="margin:0">Eine offene Stapel-Quest geht zurück in den Stapel, eine neue wird vom Stapel gezogen. <strong>Höchstens ' + L.MAX_SWAPS + "-mal pro Spiel – " + s.swaps + " von " + L.MAX_SWAPS + " genutzt.</strong></p>" +
+      (s.swaps >= L.MAX_SWAPS ? '<div class="locked" style="margin:0">Tausch-Limit erreicht – Tauschen ist nicht mehr möglich.</div>' :
+        '<div class="open-pick">' + openBtns("data-swap", (id) => locked || app.state.mults[id] || !app.state.deck.length) + "</div>") + "</div>" +
       '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">✦ Multiplikator</h3><span class="price">' + L.PRICES.mult + " P</span></div>" +
       '<p class="muted small" style="margin:0">Zufälliger Faktor auf eine offene Stapel-Quest: 95 % ×0,5–×2,0, 5 % Jackpot ×5. Ergebnis wird aufgerundet. Lohnt sich vor allem bei schweren Stapel-Quests. <strong>' + (L.MAX_MULTS - s.multCount) + " von 3 übrig.</strong></p>" +
       '<div class="open-pick">' + openBtns("data-mult", (id) => locked || app.state.mults[id] || s.multCount >= L.MAX_MULTS) + "</div></div>";
@@ -706,6 +719,7 @@
       '<div class="panel rank-panel"><div class="muted small">Team-Rang</div><div class="rank-big">' + esc(s.rankName) + "</div>" +
       '<div class="progress" style="margin:10px 0 6px"><div style="width:' + pct + '%"></div></div>' +
       '<div class="small muted">' + (s.nextRank ? "Noch " + fmt(s.nextRank.min - s.earned) + " Punkte bis „" + s.nextRank.name + "“" : "Höchster Rang erreicht!") + "</div></div>" +
+      regionsSection(s) +
       '<div class="kpis">' +
         kpi(fmt(s.earned), "Punkte verdient") + kpi(fmt(s.balance), "Kontostand") +
         kpi(Math.round(s.earned / L.MAX_POINTS * 100) + " %", "von 2.400 möglichen") + kpi(s.bestMult ? L.fmtFactor(s.bestMult) : "–", "bester Multiplikator") +
@@ -898,13 +912,13 @@
       "<h3>📚 Stapel-Quests</h3><p>26 Stapel-Quests, überall auf der Insel machbar (einfach 15, mittel 25, schwer 50 Punkte). Sie liegen gemischt in einem Stapel; immer 3 sind offen, der Rest bleibt verdeckt. Ist eine erledigt, wird automatisch eine neue vom Stapel gezogen. Stapel-Quests erkunden keine Region.</p>" +
       "<p>„📋 Alle Quests“ zeigt alle 56 Quests zum Ansehen.</p>" +
       "<h3>🛒 Shop</h3><ul><li><strong>Region-Joker (150):</strong> Region gilt als erkundet, ohne die 100 Punkte. Einmal pro Spiel.</li>" +
-      "<li><strong>Tausch-Joker (10):</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen.</li>" +
+      "<li><strong>Tausch-Joker (10):</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen. Höchstens 5-mal pro Spiel (rückgängig gemachte Tausche zählen nicht).</li>" +
       "<li><strong>Multiplikator (10):</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. 3 pro Spiel, einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt.</p>" +
       "<h3>🏆 Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<h3>↩ Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder im Logbuch ↩). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
-      "<h3>🧭 Bedienung</h3><p>Die Startseite zeigt die Inselkarte, die 3 offenen Stapel-Quests und die Regionen. Oben rechts: 🛒 Shop, 📜 Logbuch, 📊 Mehr (Statistik, Urlaub beenden, Reset) und ❓ Hilfe.</p>" +
-      "<h3>🏁 Ende</h3><p>„Urlaub beenden“ (unter Mehr) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
+      "<h3>🧭 Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Oben rechts: 🛒 Shop, 📜 Logbuch, 📊 Statistik (Regionen, Fortschritt, Urlaub beenden, Reset) und ❓ Hilfe.</p>" +
+      "<h3>🏁 Ende</h3><p>„Urlaub beenden“ (unter Statistik) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
       "</div>");
   }
 
