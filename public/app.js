@@ -193,7 +193,7 @@
     const from = b.savedAt ? " vom " + new Date(b.savedAt).toLocaleString("de-DE", { day: "numeric", month: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
     const ok = await confirmBox("Spielstand wiederherstellen?", "Achtung: Der aktuelle Spielstand wird für ALLE drei Handys durch die Sicherung" + from +
       " ersetzt (" + fmt(L.summary(b.state, C).earned) + " Punkte verdient). Alles, was seitdem passiert ist, geht verloren.", "Überschreiben", true);
-    if (!ok) return;
+    if (!ok) { backToSettings("backup"); return; }
     if (!app.online) await poll();
     if (!app.online) { toast(OFFLINE_MSG, true); return; }
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -273,11 +273,18 @@
     $("#hdr-points").classList.toggle("neg", s.balance < 0);
     $("#hdr-rank").textContent = s.rankName;
     $("#rb-fig").innerHTML = rankFigure(s.rank, "fig-sm");
-    const views = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats, settings: viewSettings, help: viewHelp };
+    const views = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats, settings: viewSettings,
+      help: viewHelp, player: viewPlayer, backup: viewBackup, end: viewEnd, reset: viewReset };
     const view = views[app.view] ? app.view : "home";
-    $$(".hdr-btn[data-go]").forEach((b) => b.classList.toggle("active", b.dataset.go === view || (view === "help" && b.dataset.go === "settings")));
+    $$(".hdr-btn[data-go]").forEach((b) => b.classList.toggle("active", b.dataset.go === view || (SETTINGS_PAGES.indexOf(view) >= 0 && b.dataset.go === "settings")));
     const body = app.state.ended && view === "stats" ? viewEnded(s) : views[view](s);
-    $("#view").innerHTML = (view === "home" ? "" : '<button class="back-btn" data-go="home">' + icon("arrow-left") + ' Zu den Quests</button>') + body;
+    // Unterseiten der Einstellungen: „← Einstellungen“ und „Zu den Quests“; alle anderen Bereiche: „← Zu den Quests“
+    const back = view === "home" ? ""
+      : SETTINGS_PAGES.indexOf(view) >= 0
+        ? '<div class="back-row"><button class="back-btn" data-go="settings">' + icon("arrow-left") + ' Einstellungen</button>' +
+          '<button class="back-btn back-home" data-go="home">' + icon("map-pinned") + " Zu den Quests</button></div>"
+        : '<button class="back-btn" data-go="home">' + icon("arrow-left") + " Zu den Quests</button>";
+    $("#view").innerHTML = back + body;
     if (view === "home") mountMap();
     app.modals.forEach((m) => m.refresh());
   }
@@ -294,7 +301,11 @@
       '<button class="btn btn-primary btn-block" id="upgrade-btn">Neues Spiel starten</button></div>';
   }
 
-  // Bereiche (Shop, Logbuch, Statistik, Einstellungen, Spielanleitung) öffnen sich als eigene Seite; die Zurück-Taste
+  // Unterseiten der Einstellungen (Abbrechen einer Sicherheitsabfrage führt dorthin zurück)
+  const SETTINGS_PAGES = ["help", "player", "backup", "end", "reset"];
+  const backToSettings = (view) => { if (app.view === view) go("settings"); };
+
+  // Bereiche (Shop, Erfolge, Aktivitäten, Einstellungen und ihre Unterseiten) öffnen sich als eigene Seite; die Zurück-Taste
   // des Handys führt wieder zur Startseite.
   function go(view) {
     if (view === "home" && history.state && history.state.view) { history.back(); return; }
@@ -377,7 +388,7 @@
       '<button class="btn btn-ghost btn-block all-quests-btn" data-all-quests>' + icon("list-checks") + ' Alle Quests anzeigen</button>';
   }
 
-  // Regionsfortschritt (Meilensteine, Regionen mit Sternen) – wird in der Statistik angezeigt
+  // Regionsfortschritt (Meilensteine, Regionen mit Sternen) – wird bei den Erfolgen angezeigt
   function regionsSection(s) {
     const list = C.regions.map((r) => {
       const lvl = s.levels[r.id];
@@ -1129,7 +1140,7 @@
     }).join(" ");
   }
 
-  // Alle Spieler, die sich je angemeldet haben (merkt sich der Server), dazu Namen aus dem Logbuch
+  // Alle Spieler, die sich je angemeldet haben (merkt sich der Server), dazu Namen aus den Aktivitäten
   function knownNames() {
     const m = new Map();
     const add = (n) => { n = String(n || "").trim(); if (n && !m.has(n.toLowerCase())) m.set(n.toLowerCase(), n); };
@@ -1539,7 +1550,7 @@
     const unexplored = C.regions.filter((r) => s.levels[r.id] === 0);
     const jokerUsed = app.state.joker;
     const jokerBody = jokerUsed ?
-      '<div class="row"><p class="muted small" style="margin:0;flex:1">Eingesetzt für <strong>' + esc(IX.regions[jokerUsed.region].name) + "</strong> (" + esc(jokerUsed.by) + "). Rückgängig im Logbuch.</p>" +
+      '<div class="row"><p class="muted small" style="margin:0;flex:1">Eingesetzt für <strong>' + esc(IX.regions[jokerUsed.region].name) + "</strong> (" + esc(jokerUsed.by) + "). Rückgängig bei den Aktivitäten.</p>" +
         '<button class="btn btn-primary" disabled>Kaufen</button></div>' :
       unexplored.length ?
         '<div class="row"><select id="joker-region">' + unexplored.map((r) => '<option value="' + r.id + '">' + esc(r.name) + "</option>").join("") + "</select>" +
@@ -1563,7 +1574,7 @@
       '<div class="open-pick">' + openBtns("data-mult", (id) => locked || app.state.mults[id] || s.multCount >= L.MAX_MULTS) + "</div></div>";
   }
 
-  // ---- Logbuch
+  // ---- Aktivitäten
   function viewLog() {
     const items = app.state.log.slice().reverse().map((e) => {
       const d = e.dE - e.dS;
@@ -1572,7 +1583,7 @@
         (d ? '<span class="delta ' + (d > 0 ? "plus" : "minus") + '">' + signed(d) + "</span>" : "") +
         (L.canUndo(e) && !app.state.ended ? '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">' + icon("undo-2") + '</button>' : "") + "</div>";
     }).join("");
-    return '<h2>Logbuch</h2><p class="muted small">Alle Aktionen mit Uhrzeit und Name. Mit ' + icon("undo-2") + ' lässt sich gezielt etwas rückgängig machen – keine Aufgabe bringt je zweimal Punkte.</p>' +
+    return '<h2>' + icon("history") + ' Aktivitäten</h2><p class="muted small">Alle Aktionen mit Uhrzeit und Name. Mit ' + icon("undo-2") + ' lässt sich gezielt etwas rückgängig machen – keine Aufgabe bringt je zweimal Punkte.</p>' +
       '<div class="panel">' + (items || '<p class="muted" style="margin:0">Noch nichts passiert. Auf geht\'s!</p>') + "</div>";
   }
 
@@ -1582,7 +1593,7 @@
     if (await confirmBox("Rückgängig machen?", e.text, "Rückgängig")) await act({ type: "undo", logId });
   }
 
-  // ---- Statistik & Einstellungen
+  // ---- Erfolge & Einstellungen
   // Fortschrittsbalken in Etappen: Farbe = Farbe der Stufe auf der Inselkarte
   function stageBar(p, label) {
     return '<div class="progress stage" role="progressbar" aria-label="' + esc(label) + ": " + esc(p.text) + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(p.pct) + '">' +
@@ -1627,30 +1638,54 @@
       "</div>";
   }
 
-  // ---- Einstellungen: Anleitung, Spieler, Sichern, Urlaub beenden, Reset (ganz unten)
+  // ---- Einstellungen: Menü; jeder Punkt öffnet eine Unterseite mit „← Einstellungen“ und „Zu den Quests“
+  function setRow(page, ic, label, sub, cls) {
+    return '<button class="tool-line set-row' + (cls ? " " + cls : "") + '" data-go="' + page + '">' + icon(ic) +
+      '<span class="tl-label">' + label + (sub ? '<span class="set-sub">' + sub + "</span>" : "") + "</span>" + icon("chevron-right", "tl-end") + "</button>";
+  }
   function viewSettings() {
-    const ended = !!app.state.ended;
     return '<h2>' + icon("settings") + " Einstellungen</h2>" +
-      '<div class="panel set-panel"><button class="btn btn-ghost btn-block" data-go="help">' + icon("circle-help") + " Spielanleitung</button></div>" +
-      '<div class="section-title"><h3>Spieler</h3></div>' +
+      '<div class="set-menu">' +
+        setRow("help", "circle-help", "Spielanleitung", "Ziel, Quests, Shop, Hilfsmittel, Ränge") +
+        setRow("player", "user", "Spieler", "Angemeldet als " + esc(app.name) + " · Name ändern, Abmelden") +
+        setRow("backup", "download", "Spielstand sichern", "Sichern und wiederherstellen") +
+        setRow("end", "flag", "Urlaub beenden & Belohnungen", app.state.ended ? "Urlaub beendet – Belohnungen & Zertifikat" : "Restpunkte umtauschen, Zertifikat", "set-end") +
+      "</div>" +
+      '<div class="set-danger">' + setRow("reset", "rotate-ccw", "Kompletter Reset", "Alles auf null – für alle Handys", "set-reset") + "</div>";
+  }
+  const pageHead = (ic, title) => '<h2>' + icon(ic) + " " + title + "</h2>";
+  function viewPlayer() {
+    return pageHead("user", "Spieler") +
       '<div class="panel set-panel"><p class="set-line">' + icon("user") + " Angemeldet als <strong>" + esc(app.name) + "</strong></p>" +
-        '<div class="grid2"><button class="btn btn-ghost" id="rename-btn">Name ändern</button><button class="btn btn-ghost" id="logout-btn">Abmelden</button></div></div>' +
-      '<div class="section-title"><h3>Spielstand sichern</h3></div>' +
+        '<p class="muted small" style="margin:0">Unter diesem Namen erscheinen deine Aktionen bei den Aktivitäten.</p>' +
+        '<div class="grid2"><button class="btn btn-ghost" id="rename-btn">Name ändern</button><button class="btn btn-ghost" id="logout-btn">Abmelden</button></div></div>';
+  }
+  function viewBackup() {
+    return pageHead("download", "Spielstand sichern") +
       '<div class="panel set-panel">' +
         '<p class="muted small" style="margin:0">Lädt den kompletten Spielstand als Datei auf dieses Handy – zur Sicherheit, falls etwas schiefgeht.</p>' +
         '<button class="btn btn-primary btn-block" id="backup-btn">' + icon("download") + " Spielstand sichern</button>" +
+        '<p class="muted small" style="margin:0">Wiederherstellen ersetzt den aktuellen Spielstand auf allen drei Handys durch eine gesicherte Datei.</p>' +
         '<button class="btn btn-ghost btn-block" id="restore-btn">' + icon("upload") + " Spielstand wiederherstellen</button>" +
-      "</div>" +
-      '<div class="section-title"><h3>Urlaub beenden</h3></div>' +
+      "</div>";
+  }
+  function viewEnd() {
+    return pageHead("flag", "Urlaub beenden & Belohnungen") +
       '<div class="panel set-panel set-end">' +
-        (ended
-          ? '<p class="muted small" style="margin:0">Der Urlaub ist beendet. Belohnungen und Zertifikat findet ihr in der Statistik.</p>' +
-            '<button class="btn btn-gold btn-block" data-go="stats">' + icon("flag") + " Belohnungen & Zertifikat ansehen</button>"
-          : '<p class="muted small" style="margin:0">Am Ende des Urlaubs: Restpunkte in Belohnungen umtauschen, danach gibt es das Zertifikat als PDF.</p>' +
+        (app.state.ended
+          ? '<p class="muted small" style="margin:0">Der Urlaub ist beendet. Belohnungen und Zertifikat findet ihr bei den Erfolgen.</p>' +
+            '<button class="btn btn-gold btn-block" data-go="stats">' + icon("trophy") + " Belohnungen & Zertifikat ansehen</button>"
+          : '<p class="muted small" style="margin:0">Am Ende des Urlaubs: Restpunkte in Belohnungen umtauschen, danach gibt es das Zertifikat als PDF. Falls nötig, kann man den Urlaub später fortsetzen.</p>' +
             '<button class="btn btn-gold btn-block" id="end-btn">' + icon("flag") + " Urlaub beenden & Belohnungen</button>") +
-      "</div>" +
-      '<div class="set-danger"><p class="muted small">Setzt alles für alle Handys auf null und mischt den Stapel neu.</p>' +
-        '<button class="btn btn-danger btn-block" id="reset-btn">Kompletter Reset</button></div>';
+      "</div>";
+  }
+  function viewReset() {
+    return pageHead("rotate-ccw", "Kompletter Reset") +
+      '<div class="panel set-panel">' +
+        '<p style="margin:0">Setzt alles für alle drei Handys auf null und mischt den Stapel neu – auch alle Hilfsmittel. Das kann man nicht rückgängig machen.</p>' +
+        '<p class="muted small" style="margin:0">Tipp: Vorher unter „Spielstand sichern“ eine Sicherung herunterladen.</p>' +
+        '<button class="btn btn-danger btn-block" id="reset-btn">Kompletter Reset</button>' +
+      "</div>";
   }
 
   // "Maximum: 2.430 (Basis 2.400, Multiplikatoren +30)" bzw. nur "Maximum: 2.400"
@@ -1711,14 +1746,15 @@
   }
 
   async function startEnd() {
-    if (!(await confirmBox("Urlaub beenden?", "Die Restpunkte werden jetzt in Belohnungen umgetauscht. Danach gibt es das Zertifikat. (Falls nötig, kann man den Urlaub später fortsetzen.)", "Weiter"))) return;
+    if (!(await confirmBox("Urlaub beenden?", "Die Restpunkte werden jetzt in Belohnungen umgetauscht. Danach gibt es das Zertifikat. (Falls nötig, kann man den Urlaub später fortsetzen.)", "Weiter"))) { backToSettings("end"); return; }
     const s = sum();
     const rest = Math.max(0, s.balance);
     const alloc = {};
     C.rewards.forEach((r) => { alloc[r.id] = 0; });
     let names = players().slice(0, 3).join(", ");
     const remaining = () => rest - C.rewards.reduce((a, r) => a + (alloc[r.id] || 0), 0);
-    openModal(() => {
+    let finished = false;
+    const em = openModal(() => {
       const rem = remaining();
       return '<div class="modal-head"><h2>Belohnungen verteilen</h2><button class="modal-close" data-close aria-label="Schließen">' + icon("x") + '</button></div>' +
         '<div class="sticky-remaining"><div class="muted small">Restpunkte: ' + fmt(rest) + " (verdient " + fmt(s.earned) + " − ausgegeben " + fmt(s.spent) + ")</div>" +
@@ -1758,12 +1794,14 @@
         clean._players = names.trim();
         clean._rest = rest;
         if (await act({ type: "end", alloc: clean })) {
+          finished = true;
           closeAll();
           go("stats");
           confetti(200);
         }
       });
     }, { keepScroll: true });
+    em.onClose = () => { if (!finished) backToSettings("end"); }; // Verteilen abgebrochen
   }
 
   function viewEnded(s) {
@@ -1776,7 +1814,7 @@
       '<div class="panel"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG()) + '">' +
       '<button class="btn btn-primary btn-block" id="pdf-btn" style="margin-top:12px">' + icon("file-down") + ' Zertifikat als PDF herunterladen</button></div>' +
       '<div class="panel" style="display:grid;gap:10px"><button class="btn btn-ghost btn-block" id="reopen-btn">Urlaub fortsetzen (Verteilung aufheben)</button>' +
-      '<button class="btn btn-ghost btn-block" id="tab-stats-btn">Statistiken ansehen</button></div>';
+      '<button class="btn btn-ghost btn-block" id="tab-stats-btn">Erfolge ansehen</button></div>';
   }
 
   // ---- Zertifikat
@@ -1833,9 +1871,9 @@
 
   // ---- Reset
   async function doReset() {
-    if (!(await confirmBox("Kompletter Reset?", "Setzt ALLES auf null und mischt neu – für alle drei Handys. Das kann nicht rückgängig gemacht werden.", "Weiter", true))) return;
+    if (!(await confirmBox("Kompletter Reset?", "Setzt ALLES auf null und mischt neu – für alle drei Handys. Das kann nicht rückgängig gemacht werden.", "Weiter", true))) { backToSettings("reset"); return; }
     const typed = await promptBox("Wirklich zurücksetzen?", "Tippe zur Sicherheit RESET ein:", "RESET");
-    if (typed !== "RESET") { if (typed !== null) toast("Abgebrochen – nicht richtig eingetippt.", true); return; }
+    if (typed !== "RESET") { if (typed !== null) toast("Abgebrochen – nicht richtig eingetippt.", true); backToSettings("reset"); return; }
     if (await act({ type: "reset", seed: Math.floor(Math.random() * 2 ** 31) })) toast("Neues Spiel – viel Spaß!");
   }
 
@@ -1853,13 +1891,13 @@
       "<h3>" + icon("shopping-bag") + " Shop</h3><ul><li><strong>Region-Joker (150) · 1 im Spiel:</strong> Region gilt als erkundet, ohne die 100 Punkte.</li>" +
       "<li><strong>Tausch-Joker (10) · 5 im Spiel:</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen. Rückgängig gemachte Tausche zählen nicht.</li>" +
       "<li><strong>Multiplikator (10) · 3 im Spiel:</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. Einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
-      "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt. Shop und Statistik zeigen immer, wie viele Joker schon <em>genutzt</em> wurden, z. B. „Tausch-Joker · 2 von 5 genutzt“.</p>" +
+      "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt. Shop und Erfolge zeigen immer, wie viele Joker schon <em>genutzt</em> wurden, z. B. „Tausch-Joker · 2 von 5 genutzt“.</p>" +
       "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos oder Kriterien wählen. Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben tippt eine gewählte Person auf ihrem Handy ein – für alle anderen bleibt es verdeckt, bis jemand „Auflösen“ tippt. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
-      "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht in der Statistik.</p>" +
-      "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder im Logbuch " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
-      "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("book-open") + " Logbuch, " + icon("chart-column") + " Statistik (Rang, Regionen, Punkte und Diagramme) und " + icon("settings") + " Einstellungen (diese Spielanleitung, Spieler, Spielstand sichern, Urlaub beenden, Reset). „← Zu den Quests“ führt immer zurück zur Startseite.</p>" +
-      "<h3>" + icon("flag") + " Ende</h3><p>„Urlaub beenden“ (unter Einstellungen) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
+      "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
+      "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
+      "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("trophy") + " Erfolge (Rang, Regionen, Punkte und Diagramme), " + icon("history") + " Aktivitäten (alles, was passiert ist, mit Rückgängig) und " + icon("settings") + " Einstellungen (diese Spielanleitung, Spieler, Spielstand sichern, Urlaub beenden, Reset). „← Zu den Quests“ führt zurück zur Startseite; in den Unterseiten der Einstellungen gibt es zusätzlich „← Einstellungen“.</p>" +
+      "<h3>" + icon("flag") + " Ende</h3><p>„Urlaub beenden &amp; Belohnungen“ (unter Einstellungen) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
       "</div>";
   }
 
@@ -2072,7 +2110,7 @@
       case "backup-btn": return downloadBackup();
       case "restore-btn": return $("#restore-file").click();
       case "logout-btn": return logout();
-      case "rename-btn": return promptBox("Name ändern", "Unter diesem Namen erscheinen deine Aktionen im Logbuch.", app.name).then((n) => {
+      case "rename-btn": return promptBox("Name ändern", "Unter diesem Namen erscheinen deine Aktionen bei den Aktivitäten.", app.name).then((n) => {
         if (n) { app.name = n.slice(0, 24); store.set("name", app.name); registerName(); render(); }
       });
       case "pdf-btn": return downloadPDF().catch(() => toast("PDF konnte nicht erstellt werden.", true));

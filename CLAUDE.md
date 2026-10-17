@@ -43,7 +43,7 @@ Vertrauensbasis, keine Beweisfotos.
 - Stufen je Region: 0 unbesucht (#c9ced4), 1 **Erkundet** (1 Quest, +100, #a6e3a1), 2 **Erobert** (2 Quests, +20, #2f9e44),
   3 **Erschlossen** (3 Quests, +20, #e5b53b). Diese Farben exakt überall verwenden, wo Stufen gezeigt werden.
 - Alle 10 erkundet: „Madeira erkundet!“ +300 (Insel-Bonus). Alle erobert/erschlossen: Meilensteine
-  „Madeira erobert!“/„Madeira erschlossen!“ mit großer Animation, **ohne Punkte**, im Logbuch (auch „nicht mehr erfüllt“).
+  „Madeira erobert!“/„Madeira erschlossen!“ mit großer Animation, **ohne Punkte**, bei den Aktivitäten (auch „nicht mehr erfüllt“).
 - Stapel-Quests: einfach 15 (10×), mittel 25 (10×), schwer 50 (6×) = 700. Basis 1.000 + 300 + 700 = 2.000; mit Stufen 2.400.
 - Shop (gesperrt bei negativem Kontostand): **Region-Joker** 150 P, 1 im Spiel (Region gilt als erkundet, ohne 100 P;
   weitere Quests heben normal); **Tausch-Joker** 10 P, 5 im Spiel; **Multiplikator** 10 P, 3 im Spiel, einer pro Stapel-Quest:
@@ -52,7 +52,7 @@ Vertrauensbasis, keine Beweisfotos.
   sofort neu bei Kauf/Rückgängig. Anzeige: „Maximum: 2.430 (Basis 2.400, Multiplikatoren +30)“, ohne Mult. nur „Maximum: 2.400“.
 - Ränge nach **verdienten** Punkten (nicht Kontostand): Landstreicher ab 0, Abenteurer ab 700, Inselkönig ab 1.500 (fest).
 - Rückgängig für alles (nicht Meilensteine/Reset/Ende); gleiche Ergebnisse bei Wiederholung (Würfe/Stapel beim Start fest).
-  Punkte immer aus dem Spielstand berechnet. Logbuch mit Zeit + Name. Reset gilt für alle, Eingabe „RESET“.
+  Punkte immer aus dem Spielstand berechnet. Aktivitäten (früher „Logbuch“) mit Zeit + Name. Reset gilt für alle, Eingabe „RESET“.
 - **Offline-Schutz** (app.js): Server nicht erreichbar (Netz weg, Zeitüberschreitung, 5xx) → roter Streifen unter der Kopfzeile
   „Offline – Änderungen werden nicht gespeichert“, `body.is-offline`; speichernde Knöpfe (`SAVING_BUTTONS`: Abhaken, Rückgängig,
   Tausch, Multiplikator, Käufe, Ende, Reset, Wiederherstellen) sind ausgegraut und zeigen beim Antippen einen Hinweis. Ansehen
@@ -136,9 +136,11 @@ Vertrauensbasis, keine Beweisfotos.
   `pin:[lat,lon]`, `maps` = Google-Maps-Suchname oder null = Koordinaten, optional `mapsUrl` fester Link, optional `link` = Text in der Aufgabe als Link, `height` = Höhe für „Höhe schätzen“),
   `public/tools.js` (Hilfsmittel), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `tests/logic.test.js`.
 - Kopfzeile: links Schriftzug „Operação Madeira“ (Bebas Neue + goldener Kompass, einzeilig, Größe passt sich an),
-  rechts genau 4 Icons Shop / Logbuch / Statistik / Einstellungen (Zahnrad; beschriftet, aria-label; kein Hilfe-„?“ mehr).
-  Darunter Abzeichen: Rang-Figur · Rang · Kontostand. Bei 360 px: Knöpfe 44 px, „Einstellungen“-Beschriftung etwas kleiner,
-  Schriftzug passt sich an (fitLogo) – nach Änderungen an der Kopfzeile bei 360/390 px nachmessen.
+  rechts genau 4 Icons in dieser Reihenfolge: Shop (shopping-bag) / **Erfolge** (trophy, früher „Statistik“) /
+  **Aktivitäten** (history, früher „Logbuch“) / Einstellungen (settings, ganz rechts); beschriftet, aria-label; kein Hilfe-„?“.
+  Interne View-Namen bleiben `stats` und `log`. Darunter Abzeichen: Rang-Figur · Rang · Kontostand (führt zu den Erfolgen).
+  Bei ≤ 380 px: Knöpfe 44 px, lange Beschriftungen („Aktivitäten“, „Einstellungen“) kleiner (`.hdr-wide`, `.hdr-set`),
+  Schriftzug passt sich an (fitLogo, bei 360 px ca. 16 px) – nach Änderungen an der Kopfzeile bei 360/390 px nachmessen.
   Eigenes Logo: `public/images/logo.svg` oder `logo.png` ersetzt den Schriftzug.
 - Startseite (keine untere Leiste): Block „Regionale Quests“ (Überschrift auf Karten-Hintergrund) mit Inselkarte, Zoom (+/−/⤢),
   Legende nur 4 Stufen; darunter der kräftig blaue Block „Stapel-Quests“ (3 offene, Tausch/Multiplikator,
@@ -147,16 +149,21 @@ Vertrauensbasis, keine Beweisfotos.
   nahe Pins → Gruppe mit Anzahl (Antippen = Auswahl). Pin → einzelne Quest; Region → alle 3 Quests.
 - Quest-Fenster: Bild oben (`public/images/quests/<ID>.jpg`, erst beim Öffnen geladen, fehlend = nichts), Titel,
   Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett.
-- Unterseiten Shop/Logbuch/Statistik/Einstellungen/Spielanleitung (Views `shop`, `log`, `stats`, `settings`, `help`) mit
-  „← Zu den Quests“ (führt immer direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
-- **Einstellungen** (Reihenfolge): Spielanleitung (eigene Seite) · Spieler (angemeldeter Name, „Name ändern“, „Abmelden“) ·
-  Spielstand sichern/wiederherstellen · Urlaub beenden & Belohnungen (gold umrandet; nach Ende: „Belohnungen & Zertifikat
-  ansehen“ → Statistik) · Kompletter Reset ganz unten mit Abstand, rot. Alle Sicherheitsabfragen bleiben.
-- Statistik: Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);
+- **Navigation (Regel):** Bereiche Shop / Erfolge / Aktivitäten / Einstellungen (Views `shop`, `stats`, `log`, `settings`) haben
+  oben „← Zu den Quests“ (direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
+  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `backup`, `end`, `reset`) haben stattdessen zwei Knöpfe:
+  „← Einstellungen“ und „Zu den Quests“. Wird eine Unterseite durch **Abbrechen einer Sicherheitsabfrage** verlassen
+  (Reset, RESET-Eingabe, Urlaub beenden, Belohnungs-Fenster schließen, Wiederherstellen), landet man in den Einstellungen
+  (`backToSettings(view)`). Neue Unterseiten der Einstellungen in `SETTINGS_PAGES` eintragen.
+- **Einstellungen** = Menü aus antippbaren Zeilen (Reihenfolge): Spielanleitung · Spieler (angemeldeter Name, „Name ändern“,
+  „Abmelden“) · Spielstand sichern (sichern/wiederherstellen) · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
+  „Belohnungen & Zertifikat ansehen“ → Erfolge) · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
+  Unterseite; alle Sicherheitsabfragen bleiben.
+- Erfolge (früher „Statistik“): Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);
   Regionen-Block (Meilenstein-Abzeichen, Liste mit Sternen: voll gold/Umriss); Kacheln Punkte verdient | Kontostand,
   Regionale Quests | Stapel-Quests, % vom Maximum | bester Multiplikator; Maximum-Zeile; Punkte pro Tag + Durchschnitt;
   Tortendiagramme „Woher die Punkte kommen“ (Farben einfach/mittel/schwer, Legende % fett + Punkte klein, rechtsbündig)
-  und „Stufen der Regionen“ (Anzahlen); „Joker genutzt:“ eingerückt, „Insgesamt ausgegeben“. Statistik ist **nur zum Anschauen**
+  und „Stufen der Regionen“ (Anzahlen); „Joker genutzt:“ eingerückt, „Insgesamt ausgegeben“. Erfolge sind **nur zum Anschauen**
   (keine Spiel-Knöpfe, kein „Alle Quests“; nach Urlaubsende zeigt sie Belohnungen + Zertifikat). „Alle Quests anzeigen“ nur auf der Startseite.
 - Icons: nur Lucide-Linien-Icons, keine Emojis. Rang-Figuren: dieselbe Person (Landstreicher: Hut, Bündel, Flicken;
   Abenteurer: Wanderhut, Rucksack, Kompass; Inselkönig: Krone, Umhang), Strich 2 px, goldener Akzent.

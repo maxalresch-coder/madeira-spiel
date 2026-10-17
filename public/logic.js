@@ -293,7 +293,7 @@
     entry.dS = after.spent - before.spent;
     entry.undone = false;
     state.log.push(entry);
-    // Meilensteine "Madeira erobert/erschlossen" (ohne Punkte) im Logbuch festhalten –
+    // Meilensteine "Madeira erobert/erschlossen" (ohne Punkte) bei den Aktivitäten festhalten –
     // auch wenn sie durch Rückgängigmachen wieder verloren gehen.
     MILESTONES.forEach((m) => {
       if (before[m.key] === after[m.key]) return;
@@ -368,7 +368,7 @@
   }
 
   // ---------------------------------------------------------------- Fortschritt in Etappen
-  // Für die Balken in der Statistik: jede Etappe hat die Farbe der Stufe auf der Inselkarte
+  // Für die Balken bei den Erfolgen: jede Etappe hat die Farbe der Stufe auf der Inselkarte
   // (1 = Erkundet, 2 = Erobert, 3 = Erschlossen). Ist eine Etappe geschafft, beginnt die
   // nächste wieder bei 0. Alles wird aus dem Spielstand berechnet – Rückgängig passt also.
   function regionProgress(sum, content) {

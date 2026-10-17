@@ -18,11 +18,11 @@ gegen Belohnungen eintauschen – mit Zertifikat als PDF.
 - **Alle Quests**: Übersicht über alle 56 Quests (nur zum Ansehen)
 - **Shop**: Region-Joker (150, 1 im Spiel), Tausch-Joker (10, 5 im Spiel), Multiplikator (10, 3 im Spiel,
   95 % ×0,5–×2,0 / 5 % Jackpot ×5, aufgerundet); gesperrt bei negativem Kontostand
-- **Rückgängig** für alles, mit identischem Ergebnis bei Wiederholung; **Logbuch** mit Zeit und Name
+- **Rückgängig** für alles, mit identischem Ergebnis bei Wiederholung; **Aktivitäten** mit Zeit und Name
 - **Kompletter Reset** mit doppelter Sicherheitsabfrage („RESET“ eintippen)
 - **Ränge** Landstreicher / Abenteurer / Inselkönig nach verdienten Punkten
 - **Animationen** beim Abhaken, beim Erkunden einer Region und groß bei „Madeira erkundet!“ (+300)
-- **Statistiken** mit Rang, Punkten, bestem Multiplikator, Tagen, Punkten pro Tag (Diagramm)
+- **Erfolge** mit Rang, Punkten, bestem Multiplikator, Tagen, Punkten pro Tag (Diagramm)
 - **Spielanleitung** über den „?“-Knopf
 - **Urlaub beenden**: Restpunkte mit +/− auf Belohnungen verteilen, Live-Umrechnung,
   danach **Zertifikat als PDF** (gilt als Gutschein)
