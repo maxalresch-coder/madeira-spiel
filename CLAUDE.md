@@ -78,11 +78,19 @@ Vertrauensbasis, keine Beweisfotos.
   - **Spielerauswahl** zeigt alle Namen, mit denen sich je jemand angemeldet hat (Server speichert sie in `data/players.json`
     beim Login und beim App-Start/Namenswechsel über `POST api/player`; `players` kommt mit jeder Spielstand-Antwort).
     Kein Eingabefeld für weitere Namen.
-  - **Geheime Eingaben** (`kind` secretTerms/secretRank/secretWord, Logik `updateSecret` in tools.js): zuerst wählen, wer
-    eingibt (Auswahl aus allen Spielern; „Andere Person“ bis zum Festschreiben). Nur diese Person kann auf ihrem Handy eingeben
-    (Name-Vergleich mit `sameName`). Nach dem Festschreiben überall verdeckt; nur auf ihrem Handy „Anzeigen“ (5 s, lokal).
-    „Auflösen“ deckt alles für alle auf. „Neue Runde“ = neue Eingabe derselben Person; Begriffe früherer Runden sind gesperrt
-    (`used`, App weist darauf hin). Geheimes liegt leicht verschleiert im Spielstand (`hide`/`unhide`, Vertrauensbasis, kein
+  - **Rollen hängen nie an einem Handy (Grundregel):** Wir spielen als Team und reichen Handys herum. Jeder Schritt eines
+    Hilfsmittels (geheim eingeben, festschreiben, raten, auflösen, neue Runde) geht auf **jedem** eingeloggten Handy, auch auf
+    dem, auf dem eingegeben wurde. Keine Auswahl „Wer gibt ein?“, keine Prüfung nach Spieler oder Gerät. Der Ablauf richtet
+    sich nur nach der **Phase** des gemeinsamen Zustands (`T.phase`: 1 „Geheim eingeben“ → 2 „Raten“ → 3 „Ergebnis“, als
+    Leiste `phaseBar` angezeigt); alle Handys zeigen immer dieselbe Phase.
+  - **Geheime Eingaben** (`kind` secretTerms/secretRank/photoWord, Logik `updateSecret` in tools.js): In Phase 1 tippt, wer
+    eingibt (die anderen schauen weg). Nach dem Festschreiben ist das Geheimnis auf **allen** Handys verdeckt, auch auf dem
+    eingebenden. „Anzeigen“ ist auf jedem Handy möglich, aber nur durch **langes Drücken** (0,6 s → 5 s sichtbar, nur lokal)
+    mit dem Hinweis „Nur für die Person, die eingegeben hat“ (Vertrauen). „Auflösen“ deckt alles für alle auf (→ Phase 3).
+    „Neue Runde“ führt in **jeder** Phase zurück zu Phase 1; Begriffe früherer Runden sind gesperrt (`used`, App weist darauf hin).
+  - **Format-Version (`fv` in `TOOLS`):** Ändert sich das gespeicherte Format eines Hilfsmittels, `fv` erhöhen. Zustände mit
+    anderer/fehlender Version verwirft `T.sanitize` automatisch (in `update`, `result`, `phase` und `toolState`) – das
+    Hilfsmittel startet dann in Phase 1 statt mit kaputtem Altzustand (z. B. Baumstaben-Wort ohne Fotos aus der Vorversion). Geheimes liegt leicht verschleiert im Spielstand (`hide`/`unhide`, Vertrauensbasis, kein
     echter Schutz). Wortvergleich (`norm`): Groß-/Kleinschreibung, Leerzeichen am Rand und Akzente egal; ä=ae, ö=oe, ü=ue, ß=ss.
   - Entwürfe vor dem Festschreiben (Sortierung, Auswahl) bleiben nur auf dem jeweiligen Handy; festgeschrieben wird synchron.
   - Sortieren (`sortList`/`bindSort`): Ziehen am Griff (Pointer-Events, `touch-action: none`) – gezogene Box hebt sich ab
@@ -110,19 +118,20 @@ Vertrauensbasis, keine Beweisfotos.
     „Hier ist Rio!“, Ziel 208° ± **50°**; eine Runde = 2 Messungen, eine Treffer reicht, beide daneben → automatisch 5 min
     Strafzeit; ohne Kompass Hinweis auf Kompass-App + Wert eintragen.
   - „Tic-Tac-Toe-Spielfeld“ (Tic-Tac-São-Bento): 2 Spielende wählen, Sieg/Unentschieden, Zug zurück, neue Runde.
-  - „Fünf geheime Begriffe“ (Was Churchill sah): 5 Begriffe festschreiben; „Tipps: X von 6“ mit „+1 Tipp“/−1; nur die
-    eingebende Person tippt Begriffe als „erraten“ an (erratene sind für alle sichtbar); ≥ 3 erraten → „Geschafft!“,
-    6 Tipps und < 3 → „Daneben“ + „Neue Runde“ (neue Begriffe, keine Wiederholung).
-  - „Geheime Rangfolge“ (Früchteschweiger): Person trägt 3 Früchte ein (Namen für alle sichtbar), sortiert geheim (oben = beste)
-    und schreibt fest; dabei wird eine zufällige Startreihenfolge für die Ratenden gemischt (Zufallsregel, jede Reihenfolge
-    gleich wahrscheinlich, auch die richtige). Die Ratenden sortieren **gemeinsam** (synchron auf beiden Handys, `guessOrder`)
+  - „Fünf geheime Begriffe“ (Was Churchill sah): 5 Begriffe festschreiben; „Tipps: X von 6“ mit „+1 Tipp“/−1; erratene
+    Begriffe werden angetippt (auf jedem Handy; erratene sind für alle sichtbar); ≥ 3 erraten → „Geschafft!“ (Phase 3);
+    6 Tipps und < 3 → „Daneben“ + „Neue Runde“, bleibt aber Phase 2, damit der letzte Tipp noch als erraten markiert werden kann.
+  - „Geheime Rangfolge“ (Früchteschweiger): Phase 1: 3 Früchte eintragen (Namen später für alle sichtbar, „Früchte ändern“
+    bis zum Festschreiben), geheim sortieren (oben = beste, Entwurf nur lokal) und festschreiben; dabei wird eine zufällige Startreihenfolge für die Ratenden gemischt (Zufallsregel, jede Reihenfolge
+    gleich wahrscheinlich, auch die richtige). Geraten wird **gemeinsam** (synchron auf allen Handys, `guessOrder`)
     und schreiben fest → jede Position grün/rot („richtig wäre: …“); alle richtig = „Geschafft!“, sonst „Daneben“ + „Neue Runde – mit anderen Früchten“.
-  - „Buchstaben-Fotos“ (Baumstaben, `kind: "photoWord"`): eingebende Person nimmt ≥ 5 Fotos auf (Foto-Komponente) und trägt
-    zu jedem genau einen Buchstaben ein (A–Z, Ä, Ö, Ü, ß; `T.letter`); vor dem Festschreiben löschen/umsortieren (Entwurf
-    `draft` + verdeckte `draftLetters`, synchron). „Festschreiben“ setzt die Buchstaben in Foto-Reihenfolge zum geheimen Wort
-    zusammen (keine Wörter früherer Runden). Ratende sehen die Fotos in Reihenfolge ohne Buchstaben, tragen je einen Buchstaben
-    ein und schreiben fest → Vergleich Buchstabe für Buchstabe (Groß/klein egal), grün/rot; alle richtig = „Geschafft!“ mit Wort
-    (Fotos werden dann gelöscht), sonst „Daneben“: korrigieren und erneut festschreiben; eingebende Person: „Trotzdem richtig“; „Neue Runde“.
+  - „Buchstaben-Fotos“ (Baumstaben, `kind: "photoWord"`): Phase 1 zeigt oben gut sichtbar „Foto aufnehmen“ (Kamera) und
+    „Aus Galerie“; ≥ 5 Fotos (Foto-Komponente), unter jedem Foto ein Feld für genau einen Buchstaben (A–Z, Ä, Ö, Ü, ß;
+    `T.letter`), Fotos verschieben (◀ ▶) und löschen; Entwurf `draft` + verschleierte `draftLetters`, synchron, übersteht
+    Neuladen. „Festschreiben“ (ab 5 Fotos mit Buchstaben) setzt das geheime Wort zusammen (keine Wörter früherer Runden).
+    Phase 2: Fotos in Reihenfolge ohne Buchstaben, darunter je ein Feld → „Festschreiben und vergleichen“ → Buchstabe für
+    Buchstabe grün/rot (Groß/klein egal); alle richtig = „Geschafft!“ mit Wort (Phase 3, Fotos werden gelöscht), sonst
+    korrigieren und erneut festschreiben; „Trotzdem richtig“ (für knappe Fälle; entscheidet, wer das Wort ausgedacht hat).
   - „Zwei Kriterien wählen“ (Mit Lorbeeren und UNESCO gekrönt): 10 UNESCO-Kriterien (i)–(x) mit deutscher Kurzfassung
     (`UNESCO_CRITERIA`), genau 2 wählen und festschreiben; Lösung (ix)+(x) in tools.js, vorher nie gezeigt. Danach wird jedes
     gewählte Kriterium einzeln bewertet („(x) richtig“, „(ii) falsch“, grün/rot); nicht gewählte werden nie verraten;

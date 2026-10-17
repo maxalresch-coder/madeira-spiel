@@ -651,7 +651,7 @@
   // Stand eines Hilfsmittels inklusive noch nicht gesendeter Eingaben
   function toolState(qid) {
     const cfg = tcfg(qid);
-    let ts = (app.state.tools && app.state.tools[qid]) || null;
+    let ts = T.sanitize(cfg, (app.state.tools && app.state.tools[qid]) || null);
     toolUI.queue.forEach((x) => {
       if (x.qid !== qid) return;
       try { ts = T.update(cfg, ts, x.op, x.now, x.by); } catch (e) { /* von einem anderen Handy überholt */ }
@@ -855,28 +855,26 @@
   }
 
   // ---- Geheime Eingaben (Was Churchill sah, Früchteschweiger, Baumstaben)
-  // Eine gewählte Person gibt auf dem eigenen Handy etwas ein; danach ist es überall verdeckt.
-  // Nur sie kann es mit „Anzeigen“ kurz einblenden. „Auflösen“ deckt alles für alle auf.
-  const isMe = (name) => T.sameName(app.name, name);
+  // Rollen hängen nie an einem Handy: Handys werden herumgereicht, jeder Schritt geht auf jedem Handy. Der Ablauf
+  // folgt nur der gemeinsamen Phase (T.phase): 1 Geheim eingeben → 2 Raten → 3 Ergebnis. Nach dem Festschreiben ist
+  // das Geheimnis überall verdeckt; „Anzeigen“ (lange drücken, 5 s, nur auf diesem Handy) ist für die Person gedacht,
+  // die eingegeben hat – wir vertrauen uns. „Auflösen“ deckt alles für alle auf.
   const peeking = (qid) => (toolUI.peek[qid] || 0) > serverNow();
-  function pickSetter(qid, question) {
-    return '<p class="tool-label">' + esc(question) + "</p>" +
-      '<div class="chips">' + knownNames().map((n) => '<button class="chip" data-tool-act="setSetter" data-name="' + esc(n) + '">' + esc(n) + "</button>").join("") + "</div>" +
-      '<p class="muted small">Diese Person gibt das Geheime auf ihrem eigenen Handy ein. Für alle anderen bleibt es verdeckt.</p>';
+  const PHASES = ["Geheim eingeben", "Raten", "Ergebnis"];
+  function phaseBar(ph) {
+    return '<ol class="phase-bar" aria-label="Phase ' + ph + " von 3: " + PHASES[ph - 1] + '">' + PHASES.map((p, i) =>
+      '<li class="' + (i + 1 === ph ? "now" : i + 1 < ph ? "done" : "") + '"' + (i + 1 === ph ? ' aria-current="step"' : "") + '><span class="ph-no">' + (i + 1) + "</span>" + p + "</li>").join("") + "</ol>";
   }
-  function setterBar(ts, canChange) {
-    return '<div class="tool-fixed">' + icon("key-round") + " Geheime Eingabe: <strong>" + esc(ts.setter) + "</strong>" + (isMe(ts.setter) ? " (du)" : "") +
-      (canChange ? '<button class="btn btn-ghost btn-small tool-change" data-tool-act="clearSetter">Andere Person</button>' : "") + "</div>";
-  }
-  const waitFor = (ts, what) => '<p class="tool-wait">' + icon("key-round") + " " + esc(ts.setter) + " " + what + " … Danach geht es hier weiter.</p>";
   function peekBtn(qid) {
     return peeking(qid)
       ? '<button class="btn btn-ghost btn-block" data-tool-ui="peek-off" data-until="' + toolUI.peek[qid] + '">' + icon("eye-off") + " Verbergen</button>"
-      : '<button class="btn btn-ghost btn-block" data-tool-ui="peek">' + icon("eye") + " Anzeigen (nur auf deinem Handy, kurz)</button>";
+      : '<button class="btn btn-ghost btn-block peek-hold" data-peek-hold>' + icon("eye") + " Anzeigen (lange drücken)</button>" +
+        '<p class="muted small peek-hint">Nur für die Person, die eingegeben hat.</p>';
   }
   const revealBtn = (ts) => (ts.revealed ? "" : tBtn("reveal", icon("eye") + " Auflösen (für alle)", "btn-ghost btn-block"));
   const newRoundBtn = (miss, text) => tBtn("newRound", icon("rotate-ccw") + " " + (text || "Neue Runde"), (miss ? "btn-primary" : "btn-ghost") + " btn-block");
   const hiddenDots = '<span class="tool-hidden" aria-label="verdeckt">' + icon("lock") + " verdeckt</span>";
+  const lookAway = '<p class="tool-wait">' + icon("eye-off") + " Wer eingibt, tippt hier – die anderen schauen weg. Das geht auf jedem Handy.</p>";
 
   // Sortierbare Liste: Ziehen am Griff oder Pfeile hoch/runter. Ohne sync bleibt die Reihenfolge bis zum
   // Festschreiben nur auf diesem Handy (toolUI.order[key]); mit sync wird sie geteilt (Aktion „arrange“).
@@ -935,57 +933,53 @@
   }
 
   function secretTermsBody(qid, cfg, ts, now) {
-    if (!ts.setter) return pickSetter(qid, "Wer überlegt sich die fünf Begriffe?");
-    const me = isMe(ts.setter);
-    if (!ts.secret) {
-      if (!me) return setterBar(ts, true) + waitFor(ts, "tippt gerade die " + cfg.count + " Begriffe ein");
-      let h = setterBar(ts, true) + '<p class="tool-label">Deine ' + cfg.count + " Begriffe – was findest du an der Bucht besonders schön?</p>";
+    const ph = T.phase(cfg, ts);
+    if (ph === 1) {
+      let h = phaseBar(1) + lookAway + '<p class="tool-label">' + cfg.count + " Begriffe: Was findest du an der Bucht besonders schön?</p>";
       for (let i = 0; i < cfg.count; i++) h += tInput(qid, "t" + i, "Begriff " + (i + 1), "text");
       return h + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary btn-block") + '<p class="muted small">Begriffe aus früheren Runden zählen nicht noch einmal.</p>';
     }
     const terms = T.unhide(ts.secret) || [], res = T.result(cfg, ts, now), guessed = ts.guessed || [];
-    const show = ts.revealed || (me && peeking(qid));
+    const show = ts.revealed || peeking(qid);
     const n = guessed.filter(Boolean).length;
-    let h = setterBar(ts, false) +
+    let h = phaseBar(ph) +
       '<div class="tool-count-row"><div class="tool-clock"><div class="tool-big">' + (ts.tips || 0) + " von " + cfg.maxTips + '</div><div class="muted small">Tipps</div></div>' +
       '<div class="tool-clock"><div class="tool-big">' + n + " von " + cfg.count + '</div><div class="muted small">erraten (' + cfg.need + " nötig)</div></div></div>";
-    if (res) h += tResult(res.ok, res.ok ? n + " von " + cfg.count + " Begriffen erraten." : "Alle " + cfg.maxTips + " Tipps verbraucht, nur " + n + " erraten. Neue Runde: " + esc(ts.setter) + " wählt fünf neue Begriffe.");
-    h += (me ? '<p class="muted small">Tippe einen Begriff an, sobald er erraten ist.</p>' : "") + '<div class="term-list">' + terms.map((t, i) => {
-      const inner = '<span class="term-no">' + (i + 1) + "</span>" + (guessed[i] || show ? '<span class="term-text">' + esc(t) + "</span>" : hiddenDots) +
-        (guessed[i] ? '<span class="term-ok">' + icon("check") + " erraten</span>" : "");
-      return me ? '<button class="term' + (guessed[i] ? " ok" : "") + '" data-tool-act="mark" data-i="' + i + '">' + inner + "</button>"
-        : '<div class="term' + (guessed[i] ? " ok" : "") + '">' + inner + "</div>";
-    }).join("") + "</div>";
-    if (!res || res.ok === false) {
+    if (res) h += tResult(res.ok, res.ok ? n + " von " + cfg.count + " Begriffen erraten." : "Alle " + cfg.maxTips + " Tipps verbraucht, nur " + n + " erraten. Neue Runde: fünf neue Begriffe ausdenken.");
+    else if (ts.revealed) h += '<p class="tool-label">Aufgelöst – das waren die fünf Begriffe:</p>';
+    const canMark = ph === 2;
+    h += (canMark ? '<p class="muted small">Ist ein Begriff erraten, tippt ihn an (wer eingegeben hat, kann vorher lange auf „Anzeigen“ drücken).</p>' : "") +
+      '<div class="term-list">' + terms.map((t, i) => {
+        const inner = '<span class="term-no">' + (i + 1) + "</span>" + (guessed[i] || show ? '<span class="term-text">' + esc(t) + "</span>" : hiddenDots) +
+          (guessed[i] ? '<span class="term-ok">' + icon("check") + " erraten</span>" : "");
+        return canMark ? '<button class="term' + (guessed[i] ? " ok" : "") + '" data-tool-act="mark" data-i="' + i + '">' + inner + "</button>"
+          : '<div class="term' + (guessed[i] ? " ok" : "") + '">' + inner + "</div>";
+      }).join("") + "</div>";
+    if (ph === 2) {
       if ((ts.tips || 0) < cfg.maxTips) h += tBtn("tip", icon("plus") + " 1 Tipp", "btn-primary btn-block tool-tap", ' data-d="1"');
       h += tBtn("tip", icon("minus") + " 1 Tipp (Korrektur)", "btn-ghost btn-block", ' data-d="-1"' + ((ts.tips || 0) ? "" : " disabled"));
+      if (!ts.revealed) h += peekBtn(qid) + revealBtn(ts);
     }
-    if (me && !ts.revealed) h += peekBtn(qid);
-    h += revealBtn(ts);
-    if (res) h += newRoundBtn(!res.ok, res.ok ? "Neue Runde" : "Neue Runde – fünf neue Begriffe");
-    return h;
+    return h + newRoundBtn(!!res && !res.ok, res && !res.ok ? "Neue Runde – fünf neue Begriffe" : "Neue Runde");
   }
 
   function secretRankBody(qid, cfg, ts, now) {
-    if (!ts.setter) return pickSetter(qid, "Wer kauft die Früchte und legt die geheime Rangfolge fest?");
-    const me = isMe(ts.setter);
-    if (!ts.fruits) {
-      if (!me) return setterBar(ts, true) + waitFor(ts, "trägt gerade die drei Früchte ein");
-      let h = setterBar(ts, true) + '<p class="tool-label">Welche drei Früchte gibt es? (Die Namen sehen alle, nur die Rangfolge bleibt geheim.)</p>';
+    const ph = T.phase(cfg, ts);
+    if (ph === 1 && !ts.fruits) {
+      let h = phaseBar(1) + lookAway + '<p class="tool-label">Welche drei Früchte gibt es? (Die Namen sehen nachher alle, nur die Rangfolge bleibt geheim.)</p>';
       for (let i = 0; i < cfg.count; i++) h += tInput(qid, "f" + i, "Frucht " + (i + 1), "text");
       return h + tBtn("setFruits", "Weiter", "btn-primary btn-block") + '<p class="muted small">Früchte aus früheren Runden zählen nicht noch einmal.</p>';
     }
     const round = (ts.round || 1) + ":" + ts.fruits.join("|");
-    let h = setterBar(ts, !ts.secret) + '<p class="small">Früchte: <strong>' + ts.fruits.map(esc).join(" · ") + "</strong></p>";
-    if (!ts.secret) {
-      if (!me) return h + waitFor(ts, "legt gerade die geheime Rangfolge fest");
+    let h = phaseBar(ph) + '<p class="small">Früchte: <strong>' + ts.fruits.map(esc).join(" · ") + "</strong></p>";
+    if (ph === 1) {
       const key = qid + ":set:" + round;
-      return h + '<p class="tool-label">Deine geheime Rangfolge – oben die beste. Am Griff ziehen oder mit den Pfeilen verschieben.</p>' +
-        sortList(key, ts.fruits) + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary btn-block", ' data-key="' + esc(key) + '"');
+      return h + lookAway + '<p class="tool-label">Geheime Rangfolge – oben die beste. Am Griff ziehen oder mit den Pfeilen verschieben.</p>' +
+        sortList(key, ts.fruits) + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary btn-block", ' data-key="' + esc(key) + '"') +
+        tBtn("editFruits", "Früchte ändern", "btn-ghost btn-block");
     }
     const order = T.unhide(ts.secret) || [];
-    const orderList = (marks) => '<ol class="rank-result">' + order.map((f, i) => '<li class="' + (marks ? (marks[i] ? "ok" : "miss") : "") + '"><span class="sort-place">' + (i + 1) + ".</span> " + esc(f) +
-      (marks ? '<span class="term-ok">' + icon(marks[i] ? "check" : "x") + " eure Wahl: " + esc(ts.guess[i]) + "</span>" : "") + "</li>").join("") + "</ol>";
+    const orderList = () => '<ol class="rank-result">' + order.map((f, i) => '<li><span class="sort-place">' + (i + 1) + ".</span> " + esc(f) + "</li>").join("") + "</ol>";
     if (ts.guess) {
       const res = T.result(cfg, ts, now);
       return h + tResult(res.ok, res.ok ? "Ihr habt die Rangfolge genau erraten." : res.places.filter(Boolean).length + " von " + order.length + " Plätzen richtig.") +
@@ -993,63 +987,62 @@
           '<span class="term-ok">' + (res.places[i] ? icon("check") + " richtig" : icon("x") + " richtig wäre: " + esc(order[i])) + "</span></li>").join("") + "</ol>" +
         newRoundBtn(!res.ok, res.ok ? "Neue Runde" : "Neue Runde – mit anderen Früchten");
     }
-    if (ts.revealed) h += '<p class="tool-label">Aufgelöst – die geheime Rangfolge:</p>' + orderList(null);
-    if (me) {
-      h += '<p class="tool-wait">' + icon("lock") + " Deine Rangfolge ist festgeschrieben. Jetzt probieren die anderen und legen ihre Vermutung fest.</p>";
-      if (!ts.revealed) h += peeking(qid) ? '<div data-until="' + toolUI.peek[qid] + '">' + orderList(null) + "</div>" + peekBtn(qid) : peekBtn(qid);
-    } else if (!ts.revealed) {
-      h += '<p class="tool-label">Eure vermutete Rangfolge – oben die beste. Ihr sortiert gemeinsam: beide Handys zeigen dieselbe Reihenfolge.</p>' +
-        sortList(qid + ":guess:" + round, ts.guessOrder || ts.fruits, true) +
-        tBtn("guess", icon("lock") + " Festschreiben und vergleichen", "btn-primary btn-block");
-    }
-    return h + revealBtn(ts) + (ts.revealed ? newRoundBtn(false, "Neue Runde – mit anderen Früchten") : "");
+    if (ts.revealed) return h + '<p class="tool-label">Aufgelöst – die geheime Rangfolge (oben die beste):</p>' + orderList() + newRoundBtn(true, "Neue Runde – mit anderen Früchten");
+    h += '<p class="tool-label">Ratet die Rangfolge – oben die beste. Ihr sortiert gemeinsam: alle Handys zeigen dieselbe Reihenfolge.</p>' +
+      sortList(qid + ":guess:" + round, ts.guessOrder || ts.fruits, true) +
+      tBtn("guess", icon("lock") + " Festschreiben und vergleichen", "btn-primary btn-block");
+    if (peeking(qid)) h += '<p class="tool-label">Geheime Rangfolge:</p>' + orderList();
+    return h + peekBtn(qid) + revealBtn(ts) + newRoundBtn(false, "Neue Runde");
   }
 
-  // ---- Buchstaben-Fotos (Baumstaben): Fotos mit je einem Buchstaben → geheimes Wort; Ratende tragen Buchstaben ein
+  // ---- Buchstaben-Fotos (Baumstaben): Fotos mit je einem Buchstaben → geheimes Wort; beim Raten Buchstaben eintragen
   function photoWordBody(qid, cfg, ts, now) {
-    if (!ts.setter) return pickSetter(qid, "Wer denkt sich das Wort aus und fotografiert die Buchstaben?");
-    const me = isMe(ts.setter);
-    if (!ts.secret) {
-      const draft = ts.draft || [];
-      if (!me) return setterBar(ts, true) + waitFor(ts, "fotografiert gerade die Buchstaben (" + draft.length + (draft.length === 1 ? " Foto" : " Fotos") + ")");
-      const letters = T.unhide(ts.draftLetters) || [];
+    const ph = T.phase(cfg, ts);
+    const pbtn = (act, ic, i, d, label, off) => '<button class="sort-btn" data-tool-act="' + act + '" data-i="' + i + '"' + (d ? ' data-d="' + d + '"' : "") + ' aria-label="' + label + '"' + (off ? " disabled" : "") + ">" + icon(ic) + "</button>";
+    const letterInput = (attr, value, i) => '<input class="tool-input letter-input" maxlength="1" autocapitalize="characters" autocomplete="off" spellcheck="false" ' + attr +
+      ' value="' + esc(value || "") + '" aria-label="Buchstabe zu Foto ' + (i + 1) + '" placeholder="?">';
+    if (ph === 1) {
+      const draft = ts.draft || [], letters = T.unhide(ts.draftLetters) || [];
       const ready = draft.length >= cfg.minLetters && letters.length === draft.length && letters.every(Boolean);
-      const pbtn = (act, ic, i, d, label, off) => '<button class="sort-btn" data-tool-act="' + act + '" data-i="' + i + '"' + (d ? ' data-d="' + d + '"' : "") + ' aria-label="' + label + '"' + (off ? " disabled" : "") + ">" + icon(ic) + "</button>";
-      return setterBar(ts, true) +
-        '<p class="tool-label">Fotografiere für jeden Buchstaben einen Baum oder Ast, dessen Form ihn darstellt – in der richtigen Reihenfolge, mindestens ' + cfg.minLetters + ". Zu jedem Foto genau einen Buchstaben eintragen.</p>" +
-        '<div class="photo-list">' + draft.map((d, i) => '<div class="photo-item">' + photoImg(d.photo, "photo-thumb") +
-          '<div class="photo-side"><div class="photo-row"><span class="sort-place">' + (i + 1) + ".</span>" +
-          '<input class="tool-input letter-input" maxlength="1" autocapitalize="characters" autocomplete="off" spellcheck="false" data-letter="' + i + '" value="' + esc(letters[i] || "") + '" aria-label="Buchstabe zu Foto ' + (i + 1) + '" placeholder="?"></div>' +
-          '<div class="photo-btns">' + pbtn("movePhoto", "chevron-up", i, -1, "nach vorne", i === 0) + pbtn("movePhoto", "chevron-down", i, 1, "nach hinten", i === draft.length - 1) +
-          pbtn("removePhoto", "trash-2", i, 0, "Foto löschen") + "</div></div></div>").join("") + "</div>" +
-        photoPicker(qid, "Foto " + (draft.length + 1) + " – danach den Buchstaben eintragen.") +
+      return phaseBar(1) + lookAway +
+        '<p class="tool-label">Für jeden Buchstaben einen Baum oder Ast fotografieren, dessen Form ihn darstellt – in der richtigen Reihenfolge, mindestens ' + cfg.minLetters + ". Unter jedes Foto genau einen Buchstaben eintragen.</p>" +
+        photoPicker(qid, "") +
+        (draft.length ? '<div class="photo-grid edit">' + draft.map((d, i) => '<div class="pg-item"><span class="pg-no">' + (i + 1) + "</span>" + photoImg(d.photo, "pg-photo") +
+          letterInput('data-letter="' + i + '"', letters[i], i) +
+          '<div class="photo-btns">' + pbtn("movePhoto", "chevron-left", i, -1, "nach vorne", i === 0) + pbtn("movePhoto", "chevron-right", i, 1, "nach hinten", i === draft.length - 1) +
+          pbtn("removePhoto", "trash-2", i, 0, "Foto löschen") + "</div></div>").join("") + "</div>" : "") +
         tBtn("fix", icon("lock") + " Festschreiben" + (draft.length ? " (" + draft.length + " Buchstaben)" : ""), "btn-primary btn-block", ready ? "" : " disabled") +
-        '<p class="muted small">Erst nach dem Festschreiben sehen die anderen die Fotos. Wörter aus früheren Runden zählen nicht noch einmal.</p>';
+        '<p class="muted small">' + (draft.length < cfg.minLetters ? "Noch " + (cfg.minLetters - draft.length) + " Foto" + (cfg.minLetters - draft.length === 1 ? "" : "s") + " bis zum Festschreiben. " : "") +
+          "Wörter aus früheren Runden zählen nicht noch einmal.</p>" +
+        (draft.length ? newRoundBtn(false, "Neu beginnen (alle Fotos verwerfen)") : "");
     }
-    const word = T.unhide(ts.secret) || [], res = T.result(cfg, ts, now), attempts = ts.attempts || [], last = attempts[attempts.length - 1];
-    const show = ts.revealed || res || (me && peeking(qid));
-    let h = setterBar(ts, false) + '<div class="tool-word">' + icon("camera") + " Wort mit <strong>" + word.length + " Buchstaben</strong>" +
+    const word = T.unhide(ts.secret) || [], attempts = ts.attempts || [], last = attempts[attempts.length - 1];
+    const show = ph === 3 || peeking(qid);
+    let h = phaseBar(ph) + '<div class="tool-word">' + icon("camera") + " Wort mit <strong>" + word.length + " Buchstaben</strong>" +
       (show ? ': <strong class="tool-secret">' + esc(word.join("")) + "</strong>" : "") + "</div>";
     const row = (letters, marks) => '<div class="letter-row">' + letters.map((l, i) => '<span class="letter-box ' + (marks[i] ? "ok" : "miss") + '">' + esc(l) + "</span>").join("") + "</div>";
-    if (res) {
-      return h + tResult(true, "Das Wort: <strong>" + esc(word.join("")) + "</strong>" + (ts.accepted && last ? " – euer Versuch „" + esc(last.letters.join("")) + "“ zählt trotzdem." : "")) +
-        (last ? row(last.letters, ts.accepted ? last.marks : last.marks.map(() => true)) : "") + newRoundBtn(false, "Neue Runde – neues Wort, neue Fotos");
+    if (ph === 3) {
+      if (ts.solved) {
+        h += tResult(true, "Das Wort: <strong>" + esc(word.join("")) + "</strong>" + (ts.accepted && last ? " – euer Versuch „" + esc(last.letters.join("")) + "“ zählt trotzdem." : "")) +
+          (last ? row(last.letters, ts.accepted ? last.marks : last.marks.map(() => true)) : "");
+      } else {
+        h += '<p class="tool-label">Aufgelöst – das Wort war: <strong>' + esc(word.join("")) + "</strong></p>" + row(word, word.map(() => true));
+      }
+      return h + newRoundBtn(!ts.solved, "Neue Runde – neues Wort, neue Fotos");
     }
     if (last) {
       const n = last.marks.filter(Boolean).length;
-      h += tResult(false, n + " von " + word.length + " Buchstaben richtig (Versuch von " + esc(last.by) + "). " + (me ? "" : "Korrigiert die roten und schreibt erneut fest."));
-      if (me) h += row(last.letters, last.marks) + tBtn("accept", icon("check") + " Trotzdem richtig", "btn-good btn-block");
+      h += tResult(false, n + " von " + word.length + " Buchstaben richtig (Versuch von " + esc(last.by) + "). Korrigiert die roten und schreibt erneut fest.");
     }
     h += '<div class="photo-grid">' + (ts.photos || []).map((pid, i) => {
       const mark = last ? (last.marks[i] ? " ok" : " miss") : "";
       return '<div class="pg-item' + mark + '"><span class="pg-no">' + (i + 1) + "</span>" + photoImg(pid, "pg-photo") +
-        (me ? '<span class="pg-letter">' + (show ? esc(word[i]) : "") + "</span>"
-          : '<input class="tool-input letter-input" maxlength="1" autocapitalize="characters" autocomplete="off" spellcheck="false" data-keep="' + qid + ":g" + i + '" value="' + esc(last ? last.letters[i] : "") + '" aria-label="Buchstabe zu Foto ' + (i + 1) + '" placeholder="?">') +
-        "</div>";
-    }).join("") + "</div>";
-    if (!me) h += tBtn("guess", icon("lock") + " Festschreiben und vergleichen", "btn-primary btn-block");
-    else if (!ts.revealed) h += peekBtn(qid);
-    return h + revealBtn(ts) + newRoundBtn(false, "Neue Runde – neues Wort, neue Fotos");
+        letterInput('data-keep="' + qid + ":g" + i + '"', last ? last.letters[i] : "", i) +
+        (peeking(qid) ? '<span class="pg-letter">' + esc(word[i]) + "</span>" : "") + "</div>";
+    }).join("") + "</div>" +
+      tBtn("guess", icon("lock") + " Festschreiben und vergleichen", "btn-primary btn-block");
+    if (last) h += tBtn("accept", icon("check") + " Trotzdem richtig", "btn-good btn-block") + '<p class="muted small">„Trotzdem richtig“ für knappe Fälle – entscheidet, wer das Wort ausgedacht hat.</p>';
+    return h + peekBtn(qid) + revealBtn(ts) + newRoundBtn(false, "Neue Runde – neues Wort, neue Fotos");
   }
 
   // ---- Fotos für Hilfsmittel (wiederverwendbar)
@@ -1171,6 +1164,7 @@
     $$(".tool[data-tool]", el).forEach((t) => {
       t.addEventListener("click", onToolClick);
       t.addEventListener("input", onToolInput);
+      bindPeekHold(t);
       t.addEventListener("change", (ev) => {
         const inp = ev.target.closest("[data-photo-input]");
         if (!inp || !inp.files || !inp.files[0]) return;
@@ -1180,6 +1174,31 @@
       });
     });
     $$(".sort-list", el).forEach(bindSort);
+  }
+
+  // „Anzeigen“ nur durch langes Drücken (0,6 s) – blendet das Geheimnis 5 s lang auf diesem Handy ein
+  function bindPeekHold(t) {
+    let timer = null;
+    const stop = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    t.addEventListener("pointerdown", (ev) => {
+      const b = ev.target.closest("[data-peek-hold]");
+      if (!b) return;
+      stop();
+      b.classList.add("holding");
+      timer = setTimeout(() => {
+        timer = null;
+        toolUI.peek[t.dataset.tool] = serverNow() + 5000;
+        if (navigator.vibrate) navigator.vibrate(30);
+        rerenderTools(t.dataset.tool);
+      }, 600);
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((e) => t.addEventListener(e, (ev) => {
+      const b = ev.target.closest && ev.target.closest("[data-peek-hold]");
+      if (b) b.classList.remove("holding");
+      if (timer && e === "pointerup" && b) toast("Zum Anzeigen etwas länger gedrückt halten.");
+      stop();
+    }));
+    t.addEventListener("contextmenu", (ev) => { if (ev.target.closest("[data-peek-hold]")) ev.preventDefault(); });
   }
 
   // Buchstaben-Felder: genau ein Buchstabe; danach springt die Eingabe zum nächsten Feld
@@ -1207,7 +1226,6 @@
     const input = (key) => $('[data-keep="' + qid + ":" + key + '"]', t);
     const ui = b.dataset.toolUi;
     if (ui === "compass-on") return enableCompass();
-    if (ui === "peek") { toolUI.peek[qid] = serverNow() + 5000; return rerenderTools(qid); }
     if (ui === "peek-off") { toolUI.peek[qid] = 0; return rerenderTools(qid); }
     if (ui === "mv") {
       const sync = b.hasAttribute("data-sync");
@@ -1234,8 +1252,7 @@
     // Eingaben der geheimen Hilfsmittel und der Auswahl
     const texts = (prefix, n) => { const v = [], els = []; for (let i = 0; i < n; i++) { const el = input(prefix + i); els.push(el); v.push(el ? el.value.trim() : ""); } return { v, els }; };
     let clearAll = null;
-    if (act === "setSetter") op.name = b.dataset.name;
-    else if (kind === "secretTerms" && act === "fix") { const t = texts("t", tcfg(qid).count); op.terms = t.v; clearAll = t.els; }
+    if (kind === "secretTerms" && act === "fix") { const t = texts("t", tcfg(qid).count); op.terms = t.v; clearAll = t.els; }
     else if (kind === "secretRank" && act === "setFruits") { const t = texts("f", tcfg(qid).count); op.fruits = t.v; clearAll = t.els; }
     else if (kind === "secretRank" && act === "fix") {
       op.order = (toolUI.order[b.dataset.key] || []).slice();
@@ -1892,7 +1909,7 @@
       "<li><strong>Tausch-Joker (10) · 5 im Spiel:</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen. Rückgängig gemachte Tausche zählen nicht.</li>" +
       "<li><strong>Multiplikator (10) · 3 im Spiel:</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. Einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt. Shop und Erfolge zeigen immer, wie viele Joker schon <em>genutzt</em> wurden, z. B. „Tausch-Joker · 2 von 5 genutzt“.</p>" +
-      "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos oder Kriterien wählen. Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben tippt eine gewählte Person auf ihrem Handy ein – für alle anderen bleibt es verdeckt, bis jemand „Auflösen“ tippt. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst.</p>" +
+      "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos oder Kriterien wählen. Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben geht jeder Schritt auf jedem Handy (Phase 1 geheim eingeben, 2 raten, 3 Ergebnis): Wer eingibt, tippt, die anderen schauen weg. Danach ist alles verdeckt; „Anzeigen“ per langem Drücken ist nur für die Person gedacht, die eingegeben hat. „Auflösen“ deckt alles für alle auf. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +

@@ -665,3 +665,17 @@ button.term { cursor: pointer; }
   .hdr-wide, .hdr-set { padding-left: 1px; padding-right: 1px; min-width: 44px; }
   .hdr-wide .hdr-lbl, .hdr-set .hdr-lbl { font-size: .52rem; letter-spacing: -.02em; }
 }
+
+/* ---------- Geheime Eingaben: Phasen, Anzeigen per langem Drücken, Foto-Raster ---------- */
+.phase-bar { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.phase-bar li { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px; background: var(--sea); font-size: .78rem; font-weight: 600; color: var(--muted); line-height: 1.2; }
+.phase-bar li.now { background: var(--ocean); color: #fff; }
+.phase-bar li.done { color: var(--laurel); }
+.ph-no { flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,.5); font-weight: 800; font-size: .75rem; color: var(--ocean-deep); }
+.phase-bar li.now .ph-no { background: #fff; }
+.peek-hold { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; position: relative; overflow: hidden; }
+.peek-hold.holding { background: var(--sea); box-shadow: inset 0 -4px 0 var(--ocean); }
+.peek-hint { margin-top: -6px !important; text-align: center; }
+.photo-grid.edit { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.photo-grid .photo-btns { display: flex; gap: 4px; justify-content: center; }
+.photo-grid .photo-btns .sort-btn { width: 44px; height: 44px; background: var(--surface); }
