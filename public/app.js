@@ -20,7 +20,7 @@
   const app = {
     token: store.get("token"),
     name: store.get("name") || "",
-    view: store.get("view") || "map",
+    view: "home", // Startseite: Inselkarte, Stapel-Quests, Regionen
     version: -1,
     state: null,
     online: true,
@@ -164,12 +164,13 @@
     const s = sum();
     $("#hdr-points").textContent = fmt(s.balance) + " P";
     $("#hdr-points").classList.toggle("neg", s.balance < 0);
-    $("#hdr-rank").textContent = s.rankName + " · " + fmt(s.earned) + " verdient";
-    $$("#tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.view === app.view));
-    const views = { map: viewMap, stack: viewStack, shop: viewShop, log: viewLog, stats: viewStats };
-    const view = views[app.view] ? app.view : "map";
-    $("#view").innerHTML = app.state.ended && view === "stats" ? viewEnded(s) : views[view](s);
-    if (view === "map") mountMap();
+    $("#hdr-rank").textContent = s.rankName;
+    const views = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats };
+    const view = views[app.view] ? app.view : "home";
+    $$(".hdr-btn[data-go]").forEach((b) => b.classList.toggle("active", b.dataset.go === view));
+    const body = app.state.ended && view === "stats" ? viewEnded(s) : views[view](s);
+    $("#view").innerHTML = (view === "home" ? "" : '<button class="back-btn" data-go="home">← Zur Startseite</button>') + body;
+    if (view === "home") mountMap();
     app.modals.forEach((m) => m.refresh());
   }
 
@@ -184,12 +185,19 @@
       '<button class="btn btn-primary btn-block" id="upgrade-btn">Neues Spiel starten</button></div>';
   }
 
+  // Bereiche (Shop, Logbuch, Mehr) öffnen sich als eigene Seite; die Zurück-Taste
+  // des Handys führt wieder zur Startseite.
   function go(view) {
+    if (view === "home" && history.state && history.state.view) { history.back(); return; }
+    if (view !== "home" && view !== app.view) history.pushState({ view }, "");
+    show(view);
+  }
+  function show(view) {
     app.view = view;
-    store.set("view", view);
     window.scrollTo(0, 0);
     render();
   }
+  window.addEventListener("popstate", (ev) => { closeAll(); show((ev.state && ev.state.view) || "home"); });
 
   // ---- Inselkarte
   // Breiten-/Längengrad -> Kartenkoordinaten (UTM Zone 28N, wie die Gemeindegrenzen)
@@ -226,32 +234,46 @@
     return '<svg viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg">' + regionPaths(levels) + labels + "</svg>";
   }
 
-    function stars(lvl) { return "★".repeat(Math.max(0, lvl - 0)) + "☆".repeat(3 - lvl); }
+  // 3 Sterne für Erkundet / Erobert / Erschlossen: erreicht = voll und kräftig, sonst nur Umriss
+  const STAR_PATH = "M12 2.6l2.85 5.97 6.55.83-4.82 4.55 1.25 6.5L12 17.27l-5.83 3.18 1.25-6.5L2.6 9.4l6.55-.83z";
+  function stars(lvl) {
+    let h = "";
+    for (let i = 0; i < 3; i++) h += '<svg class="star' + (i < lvl ? " on" : "") + '" viewBox="0 0 24 24" aria-hidden="true"><path d="' + STAR_PATH + '"/></svg>';
+    return '<span class="stars" role="img" aria-label="' + lvl + ' von 3 Sternen">' + h + "</span>";
+  }
 
-  function viewMap(s) {
+  // Startseite: a) Inselkarte, b) offene Stapel-Quests, c) Regionen mit Sternen
+  function viewHome(s) {
     const legend = L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + "</span>").join("") +
       '<span><i class="lg-pin"></i>offene Quest</span><span><i class="lg-pin done"></i>erledigt</span>';
     const list = C.regions.map((r) => {
       const lvl = s.levels[r.id];
-      return '<button class="region-btn" data-region="' + r.id + '"><span class="dot" style="background:' + L.LEVELS[lvl].color + '"></span>' + esc(r.name) + '<span class="stars">' + stars(lvl) + "</span></button>";
+      return '<button class="region-btn" data-region="' + r.id + '"><span class="dot" style="background:' + L.LEVELS[lvl].color + '"></span><span class="region-name">' + esc(r.name) + "</span>" + stars(lvl) + "</button>";
     }).join("");
     const labels = C.regions.map((r) => {
       const p = MAP.labels[r.name];
       return p ? '<text class="region-label" x="' + p[0] + '" y="' + p[1] + '">' + esc(r.name) + "</text>" : "";
     }).join("");
     const vb = mapUI.vb;
+    const milestones = [["allExplored", "erkundet"], ["allConquered", "erobert"], ["allDeveloped", "erschlossen"]]
+      .map(([k, w]) => '<span class="ms' + (s[k] ? " on" : "") + '">' + (s[k] ? "✓ " : "") + "Madeira " + w + "</span>").join("");
     return '' +
+      (app.state.ended ? '<div class="panel ended-note"><strong>🏁 Urlaub beendet.</strong> <button class="btn btn-small btn-gold" data-go="stats">Zertifikat & Belohnungen</button></div>' : "") +
+      '<section class="home-sec" aria-label="Inselkarte">' +
       '<div class="map-wrap"><svg id="island" viewBox="' + [vb.x, vb.y, vb.w, vb.h].join(" ") + '" xmlns="http://www.w3.org/2000/svg">' +
         '<g id="regions">' + regionPaths(s.levels) + '</g><g id="labels">' + labels + '</g><g id="pins"></g></svg></div>' +
       '<div class="map-bar"><div class="map-ctrl"><button data-zoom="out" aria-label="Herauszoomen">−</button><button data-zoom="in" aria-label="Hineinzoomen">+</button><button data-zoom="reset" aria-label="Ganze Insel">⤢</button></div>' +
       '<p class="muted small map-hint">Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region. Zahl im Kreis = mehrere Quests nah beieinander.</p></div>' +
-      '<div class="legend">' + legend + '</div>' +
-      '<div class="panel">' +
-        '<div class="row between"><strong>' + s.explored + " / " + C.regions.length + ' Regionen erkundet</strong><span class="muted small">' + (s.allExplored ? "🎉 Madeira erkundet!" : "Ziel: alle 10") + "</span></div>" +
-        '<div class="progress" style="margin-top:8px"><div style="width:' + (s.explored / C.regions.length * 100) + '%"></div></div>' +
-        '<button class="btn btn-ghost btn-block" data-all-quests style="margin-top:12px">📋 Alle Quests ansehen</button>' +
-      "</div>" +
-      '<div class="region-list">' + list + "</div>";
+      '<div class="legend">' + legend + "</div></section>" +
+      stackZone(s) +
+      '<section class="home-sec regions-sec" aria-label="Regionen">' +
+        '<div class="sec-head"><h2>🗺️ Regionen</h2><button class="btn btn-small btn-ghost" data-all-quests>📋 Alle Quests</button></div>' +
+        '<div class="panel">' +
+          '<div class="row between"><strong>' + s.explored + " / " + C.regions.length + ' Regionen erkundet</strong><span class="muted small">' + s.questsDone + "/30 Regions-Quests</span></div>" +
+          '<div class="progress" style="margin-top:8px"><div style="width:' + (s.explored / C.regions.length * 100) + '%"></div></div>' +
+          '<div class="ms-row">' + milestones + "</div>" +
+        "</div>" +
+        '<div class="region-list">' + list + "</div></section>";
   }
 
   // Pins: feste Bildschirmgröße. Liegen Pins zu nah beieinander, werden sie zu
@@ -535,7 +557,7 @@
       const joker = app.state.joker && app.state.joker.region === r.id;
       const next = lvl === 0 ? "Erste Quest: Region erkundet (+100)" : lvl < 3 ? "Nächste Quest: " + L.LEVELS[lvl + 1].name + " (+20)" : "Höchste Stufe erreicht!";
       return '<div class="modal-head"><div><h2>' + esc(r.name) + "</h2>" + levelPill(lvl) + " " +
-        '<span class="stars" style="font-size:1rem">' + stars(lvl) + "</span>" +
+        stars(lvl) +
         (joker ? ' <span class="pill" style="background:var(--ocean)">Region-Joker</span>' : "") +
         '</div><button class="modal-close" data-close aria-label="Schließen">✕</button></div>' +
         '<p class="muted small">' + next + " · Punkte hier: " + fmt(L.regionPoints(app.state, C, r.id)) + "</p>" +
@@ -581,26 +603,27 @@
       "</div></div>";
   }
 
-  function viewStack(s) {
+  // Die 3 offenen Stapel-Quests als eigener, auffälliger Bereich auf der Startseite
+  function stackZone(s) {
     const open = app.state.open.filter(Boolean);
     const quests = open.length ? open.map((id) => stackQuestHTML(id, s)).join("") :
       '<div class="panel empty">🎉 Alle Stapel-Quests erledigt!</div>';
     const done = app.state.log.filter((e) => e.type === "stack" && !e.undone).slice().reverse();
-    const doneList = done.length ? done.map((e) => {
+    const doneList = done.map((e) => {
       const id = e.data.questId;
       return '<div class="list-item"><div class="grow"><div class="txt"><strong>' + esc(IX.stack[id].title) + "</strong></div>" +
         '<div class="meta">' + diffLabel(IX.stack[id].difficulty) + " · " + esc(e.by) + " · " + when(e.t) + "</div></div>" +
         '<span class="delta plus">+' + L.stackPoints(app.state, C, id) + "</span>" +
         '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">↩</button></div>';
-    }).join("") : '<p class="muted small" style="margin:0">Noch keine Stapel-Quest erledigt.</p>';
-    return '' +
-      '<div class="panel deck-info"><div class="deck-stack"></div><div><strong>' + s.deckLeft + " Stapel-Quests verdeckt im Stapel</strong>" +
-      '<div class="muted small">3 sind offen · ' + s.doneStack + " von " + C.stackQuests.length + " erledigt · Multiplikatoren " + s.multCount + "/" + L.MAX_MULTS +
-      (s.balance < 0 ? " · <strong style='color:var(--hibiscus)'>Shop gesperrt</strong>" : "") + "</div></div></div>" +
-      '<h2 class="section-h">Offene Stapel-Quests</h2>' +
+    }).join("");
+    return '<section class="stack-zone" aria-label="Stapel-Quests">' +
+      '<div class="zone-head"><div><h2>📚 Stapel-Quests</h2>' +
+      '<div class="zone-sub">' + open.length + " offen · " + s.deckLeft + " verdeckt im Stapel · " + s.doneStack + "/" + C.stackQuests.length + " erledigt · Multiplikatoren " + s.multCount + "/" + L.MAX_MULTS + "</div>" +
+      (s.balance < 0 ? '<div class="zone-warn">Kontostand negativ – Tausch-Joker und Multiplikator gesperrt</div>' : "") +
+      '</div><div class="deck-stack" aria-hidden="true"></div></div>' +
       quests +
-      '<button class="btn btn-ghost btn-block" data-all-quests style="margin-bottom:14px">📋 Alle Quests ansehen</button>' +
-      '<div class="section-title"><h3>Erledigt</h3></div><div class="panel">' + doneList + "</div>";
+      (done.length ? '<details class="done-box"><summary>Erledigte Stapel-Quests (' + done.length + ")</summary>" + doneList + "</details>" : "") +
+      "</section>";
   }
 
   async function doSwap(id) {
@@ -871,7 +894,7 @@
       "<h3>🎯 Ziel</h3><p>Ihr spielt als <strong>ein Team</strong>: Erkundet alle 10 Regionen Madeiras mit Regions-Quests und sammelt zusätzlich Punkte mit Stapel-Quests. Alle Punkte gehören dem Team – wir vertrauen uns, es gibt keine Beweisfotos.</p>" +
       "<h3>🗺️ Regions-Quests und Stufen</h3><p>Jede Region hat 3 Regions-Quests an festen Orten – auf der Inselkarte als Pins markiert. Pin antippen öffnet die Quest, Region antippen zeigt alle 3. Eine erledigte Regions-Quest erkundet die Region, jede weitere hebt sie eine Stufe.</p>" +
       "<table><tr><th>Stufe</th><th>Quests</th><th>Punkte</th></tr><tr><td>Erkundet</td><td>1</td><td>100</td></tr><tr><td>Erobert</td><td>2</td><td>+20</td></tr><tr><td>Erschlossen</td><td>3</td><td>+20</td></tr></table>" +
-      "<p>Alle 10 Regionen erkundet: <strong>„Madeira erkundet!“ +300 Insel-Bonus</strong>. Danach geht das Spiel weiter.</p>" +
+      "<p>Alle 10 Regionen erkundet: <strong>„Madeira erkundet!“ +300 Insel-Bonus</strong>. Danach geht das Spiel weiter. Alle 10 Regionen erobert bzw. erschlossen: Meilensteine <strong>„Madeira erobert!“</strong> und <strong>„Madeira erschlossen!“</strong> (ohne Extrapunkte).</p>" +
       "<h3>📚 Stapel-Quests</h3><p>26 Stapel-Quests, überall auf der Insel machbar (einfach 15, mittel 25, schwer 50 Punkte). Sie liegen gemischt in einem Stapel; immer 3 sind offen, der Rest bleibt verdeckt. Ist eine erledigt, wird automatisch eine neue vom Stapel gezogen. Stapel-Quests erkunden keine Region.</p>" +
       "<p>„📋 Alle Quests“ zeigt alle 56 Quests zum Ansehen.</p>" +
       "<h3>🛒 Shop</h3><ul><li><strong>Region-Joker (150):</strong> Region gilt als erkundet, ohne die 100 Punkte. Einmal pro Spiel.</li>" +
@@ -880,6 +903,7 @@
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt.</p>" +
       "<h3>🏆 Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<h3>↩ Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder im Logbuch ↩). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
+      "<h3>🧭 Bedienung</h3><p>Die Startseite zeigt die Inselkarte, die 3 offenen Stapel-Quests und die Regionen. Oben rechts: 🛒 Shop, 📜 Logbuch, 📊 Mehr (Statistik, Urlaub beenden, Reset) und ❓ Hilfe.</p>" +
       "<h3>🏁 Ende</h3><p>„Urlaub beenden“ (unter Mehr) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
       "</div>");
   }
@@ -1007,7 +1031,9 @@
   // Animationen bei Fortschritt – auch wenn ein anderes Handy abgehakt hat
   function celebrate(prevState, nextState, own) {
     const a = L.summary(prevState, C), b = L.summary(nextState, C);
-    if (!a.allExplored && b.allExplored) { bigCelebration(b); return; }
+    if (!a.allExplored && b.allExplored) { bigCelebration(b, "erkundet"); return; }
+    if (!a.allDeveloped && b.allDeveloped) { bigCelebration(b, "erschlossen"); return; }
+    if (!a.allConquered && b.allConquered) { bigCelebration(b, "erobert"); return; }
     const newly = C.regions.filter((r) => a.levels[r.id] === 0 && b.levels[r.id] >= 1);
     if (newly.length) {
       const r = newly[0];
@@ -1026,12 +1052,14 @@
     if (b.rank > a.rank) setTimeout(() => { banner("🏆 Neuer Rang: " + b.rankName, fmt(b.earned) + " Punkte verdient"); confetti(80); }, 2800);
     if (!a.stackFinished && b.stackFinished) setTimeout(() => banner("📚 Stapel geschafft!", "Alle 26 Stapel-Quests erledigt"), 1200);
   }
-  function bigCelebration(s) {
+  // Große Animation für die Meilensteine erkundet (+300), erobert und erschlossen (ohne Punkte)
+  function bigCelebration(s, kind) {
     closeAll();
     const o = document.createElement("div");
     o.className = "big-celebration";
-    o.innerHTML = '<div><div class="sub">Alle 10 Regionen erkundet</div><h1>Madeira erkundet!</h1>' + mapSVG(s.levels, { labels: false }) +
-      '<div class="bonus">+300 Insel-Bonus</div><button class="btn btn-gold">Weiter geht\'s!</button></div>';
+    const bonus = kind === "erkundet" ? "+300 Insel-Bonus" : "Meilenstein erreicht";
+    o.innerHTML = '<div><div class="sub">Alle 10 Regionen ' + kind + '</div><h1>Madeira ' + kind + '!</h1>' + mapSVG(s.levels, { labels: false }) +
+      '<div class="bonus">' + bonus + '</div><button class="btn btn-gold">Weiter geht\'s!</button></div>';
     document.body.appendChild(o);
     $("button", o).addEventListener("click", () => o.remove());
     confetti(220);
@@ -1067,7 +1095,6 @@
       return zoomAt(t.dataset.zoom === "in" ? 1.6 : 1 / 1.6, vb.x + vb.w / 2, vb.y + vb.h / 2);
     }
     if (t.hasAttribute("data-all-quests")) return openAllQuests();
-    if (t.dataset.view) return go(t.dataset.view);
     if (t.dataset.go) return go(t.dataset.go);
     if (t.dataset.region) return openRegion(t.dataset.region);
     if (t.dataset.done) return act({ type: "stack", questId: t.dataset.done }, { fxFrom: t });

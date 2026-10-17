@@ -40,22 +40,17 @@
     <header class="topbar">
       <div class="brand">
         <span class="brand-title">Madeira-Spiel</span>
-        <span class="brand-rank" id="hdr-rank"></span>
+        <span class="brand-rank"><span id="hdr-points" class="hdr-points"></span> · <span id="hdr-rank"></span></span>
       </div>
-      <div class="topbar-right">
-        <button class="chip chip-points" id="hdr-points" data-go="stats" title="Kontostand"></button>
-        <button class="icon-btn" id="help-btn" aria-label="Spielanleitung">?</button>
-      </div>
+      <nav class="hdr-nav" aria-label="Bereiche">
+        <button class="hdr-btn" data-go="shop" aria-label="Shop" title="Shop"><span class="hdr-ic" aria-hidden="true">🛒</span><span class="hdr-lbl">Shop</span></button>
+        <button class="hdr-btn" data-go="log" aria-label="Logbuch" title="Logbuch"><span class="hdr-ic" aria-hidden="true">📜</span><span class="hdr-lbl">Logbuch</span></button>
+        <button class="hdr-btn" data-go="stats" aria-label="Mehr: Statistik, Urlaub beenden, Reset" title="Statistik, Urlaub beenden, Reset"><span class="hdr-ic" aria-hidden="true">📊</span><span class="hdr-lbl">Mehr</span></button>
+        <button class="hdr-btn" id="help-btn" aria-label="Spielanleitung" title="Spielanleitung"><span class="hdr-ic" aria-hidden="true">❓</span><span class="hdr-lbl">Hilfe</span></button>
+      </nav>
     </header>
     <div id="offline" class="offline" hidden>Keine Verbindung – Änderungen können gerade nicht gespeichert werden.</div>
     <main id="view" class="view"></main>
-    <nav class="tabbar" id="tabbar">
-      <button data-view="map"><span class="tab-ic">🗺️</span><span>Karte</span></button>
-      <button data-view="stack"><span class="tab-ic">📚</span><span>Stapel</span></button>
-      <button data-view="shop"><span class="tab-ic">🛒</span><span>Shop</span></button>
-      <button data-view="log"><span class="tab-ic">📜</span><span>Logbuch</span></button>
-      <button data-view="stats"><span class="tab-ic">📊</span><span>Mehr</span></button>
-    </nav>
   </div>
 
   <div id="modal-root"></div>

@@ -120,6 +120,33 @@ C.regions.forEach(r => r.quests.forEach(q => {
 assert(L.isCompatible(L.newGame(C, 1, t), C));
 assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
 
+// Meilensteine "Madeira erobert" / "erschlossen": keine Punkte, Logbuch, Rückgängig
+{
+  let m = L.newGame(C, 3, t);
+  const ms = (st, key) => st.log.filter(e => e.type === "milestone" && e.data.milestone === key);
+  C.regions.forEach(r => r.quests.slice(0, 2).forEach(q => { m = act(m, { type: "quest", questId: q.id }); }));
+  let sm2 = L.summary(m, C);
+  assert(sm2.allConquered && !sm2.allDeveloped);
+  assert.strictEqual(sm2.earned, 10 * 120 + 300); // keine Extrapunkte
+  assert.strictEqual(ms(m, "allConquered").length, 1);
+  assert(ms(m, "allConquered")[0].data.reached);
+  assert(!L.canUndo(ms(m, "allConquered")[0]));
+  // Rückgängig -> nicht mehr erfüllt, erneut erreichen -> wieder erfüllt
+  m = act(m, { type: "undo", logId: m.log.find(e => e.type === "quest" && e.data.questId === "q-cal-2").id });
+  assert(!L.summary(m, C).allConquered);
+  assert.strictEqual(ms(m, "allConquered").length, 2);
+  assert(!ms(m, "allConquered")[1].data.reached);
+  m = act(m, { type: "quest", questId: "q-cal-2" });
+  assert(L.summary(m, C).allConquered);
+  assert.strictEqual(ms(m, "allConquered").length, 3);
+  C.regions.forEach(r => { m = act(m, { type: "quest", questId: r.quests[2].id }); });
+  sm2 = L.summary(m, C);
+  assert(sm2.allDeveloped);
+  assert.strictEqual(sm2.earned, 10 * 140 + 300); // keine Extrapunkte
+  assert.strictEqual(ms(m, "allDeveloped").length, 1);
+  assert.strictEqual(m.log.reduce((a, e) => a + e.dE, 0), sm2.earned);
+}
+
 // Belohnungen
 assert.strictEqual(L.formatReward(C.rewards[0], 350), "10 Min 30 Sek");
 assert.strictEqual(L.formatReward(C.rewards[0], 2000), "60 Min");

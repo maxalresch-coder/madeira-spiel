@@ -18,6 +18,10 @@
     { name: "Abenteurer", min: 700 },
     { name: "Inselkönig", min: 1500 }
   ];
+  const MILESTONES = [
+    { key: "allConquered", name: "Madeira erobert" },
+    { key: "allDeveloped", name: "Madeira erschlossen" }
+  ];
   const LEVELS = [
     { name: "noch nicht besucht", color: "#c9ced4" },
     { name: "Erkundet", color: "#a6e3a1" },
@@ -120,6 +124,9 @@
       regionPts += regionPoints(state, content, r.id);
     });
     const allExplored = explored === content.regions.length;
+    // Meilensteine ohne Punkte: alle Regionen mindestens Erobert bzw. Erschlossen
+    const allConquered = content.regions.every((r) => levels[r.id] >= 2);
+    const allDeveloped = content.regions.every((r) => levels[r.id] >= 3);
     let stackPts = 0;
     const doneStack = Object.keys(state.done);
     doneStack.forEach((id) => { stackPts += stackPoints(state, content, id); });
@@ -131,7 +138,7 @@
     RANKS.forEach((r, i) => { if (earned >= r.min) rank = i; });
     const factors = Object.values(state.mults).map((m) => m.factor);
     return {
-      levels, explored, allExplored, earned, spent, balance: earned - spent,
+      levels, explored, allExplored, allConquered, allDeveloped, earned, spent, balance: earned - spent,
       rank, rankName: RANKS[rank].name, nextRank: RANKS[rank + 1] || null,
       regionPts, stackPts, madeiraBonus: allExplored ? MADEIRA_BONUS : 0,
       doneStack: doneStack.length, swaps, multCount, jokerUsed: state.joker ? 1 : 0,
@@ -283,6 +290,16 @@
     entry.dS = after.spent - before.spent;
     entry.undone = false;
     state.log.push(entry);
+    // Meilensteine "Madeira erobert/erschlossen" (ohne Punkte) im Logbuch festhalten –
+    // auch wenn sie durch Rückgängigmachen wieder verloren gehen.
+    MILESTONES.forEach((m) => {
+      if (before[m.key] === after[m.key]) return;
+      state.log.push({
+        id: state.nextLogId++, t: now, by, type: "milestone", data: { milestone: m.key, reached: after[m.key] },
+        text: after[m.key] ? "Meilenstein erreicht: " + m.name + "!" : "Meilenstein „" + m.name + "“ nicht mehr erfüllt",
+        dE: 0, dS: 0, undone: false
+      });
+    });
     return state;
   }
 
@@ -360,7 +377,7 @@
   }
 
   const api = {
-    STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, GameError,
+    STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
     newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible,
     canUndo, dayCount, pointsPerDay, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
   };
