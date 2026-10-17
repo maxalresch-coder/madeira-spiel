@@ -50,7 +50,7 @@ window.GAME_CONTENT = {
       quests: [
         {
           id: "q-pds-1", title: `Windstärke 5`,
-          location: `Windpark auf der Hochebene Paul da Serra, auf dem Teil der Hochebene, der zu Ponta do Sol gehört`, pin: [32.7450, -17.0700], maps: null,
+          location: `Windpark auf der Hochebene Paul da Serra, auf dem Teil der Hochebene, der zu Ponta do Sol gehört`, pin: [32.75644, -17.05469], maps: "Miradouro da Bica da Cana",
           desc: `Madeira besteht fast nur aus Steilhängen, mit einer großen Ausnahme: der Paul da Serra, der einzigen Hochebene der Insel auf rund 1.500 Metern. Sie erstreckt sich über mehrere Gemeinden, darunter Ponta do Sol. Weil der Wind hier oben ungebremst über die flache Ebene pfeift, steht hier der größte Windpark Madeiras.`,
           task: `Eure Aufgabe: Macht ein Foto, auf dem mindestens fünf Windräder zu sehen sind. Das Foto muss innerhalb von Ponta do Sol aufgenommen werden, die Windräder selbst dürfen auch außerhalb stehen.`
         },
@@ -62,7 +62,7 @@ window.GAME_CONTENT = {
         },
         {
           id: "q-pds-3", title: `Bananenversteck`,
-          location: `Bananenplantagen an den Hängen um den Ort Ponta do Sol`, pin: [32.6797, -17.1030], maps: null,
+          location: `Bananenplantagen an den Hängen um den Ort Ponta do Sol`, pin: [32.6785, -17.088], maps: "Banana Museum of Madeira (BAM)",
           desc: `Ponta do Sol ist bekannt für seine Bananen und hat ihnen sogar ein eigenes Museum gewidmet. Überall an den sonnigen Hängen wachsen die Stauden mit ihren riesigen Blättern, und die sind perfekt, um sich darin zu verstecken.`,
           task: `Eure Aufgabe: Eine Person versteckt sich am Rand einer Bananenplantage zwischen den Blättern, eine zweite Person macht ein Foto. Die dritte Person bekommt das Foto zu sehen und versucht, die versteckte Person darauf zu finden. Gelingt ihr das nicht, ist die Quest geschafft. Findet sie die Person, versteckt ihr euch neu.`
         }
@@ -73,7 +73,7 @@ window.GAME_CONTENT = {
       quests: [
         {
           id: "q-rbr-1", title: `Werdet brava an der Ribeira Brava!`,
-          location: `Fluss Ribeira Brava`, pin: [32.6790, -17.0628], maps: null,
+          location: `Fluss Ribeira Brava`, pin: [32.72644, -17.00831], maps: "Waterwerken Levada do Norte",
           desc: `„Ribeira Brava" bedeutet „wilder Fluss". In der Regenzeit kann er so stark anschwellen, dass er auf seinen acht Kilometern alles mitreißt, was ihm im Weg steht.`,
           task: `Eure Aufgabe: Sucht euch irgendwo am Fluss eine Stelle und werdet genauso wild wie er: Tanzt, schreit, tobt 30 Sekunden lang so verrückt ihr könnt. Eine Person filmt. Dabei darf euch niemand sehen. Taucht jemand auf, fangt ihr woanders neu an.`
         },
@@ -142,7 +142,7 @@ window.GAME_CONTENT = {
       quests: [
         {
           id: "q-scr-1", title: `Halb gelandet`,
-          location: `kleiner Hafen von Santa Cruz direkt unter der Landebahn des Flughafens`, pin: [32.6995, -16.7712], maps: null,
+          location: `kleiner Hafen von Santa Cruz direkt unter der Landebahn des Flughafens`, pin: [32.68806, -16.78356], maps: "Porto Recreio Santa Cruz",
           desc: `Der Flughafen von Madeira gilt als einer der anspruchsvollsten Europas: kurze Landebahn, starke Winde, Berge auf der einen und das Meer auf der anderen Seite. Seine Landebahn ruht teilweise auf hohen Pfeilern über der Küste, und direkt darunter liegt der kleine Hafen von Santa Cruz.`,
           task: `Eure Aufgabe: Fotografiert vom Hafen aus ein landendes Flugzeug, das auf dem Foto nur halb zu sehen ist, weil ein Teil davon schon von der Landebahn verdeckt wird.`
         },
@@ -165,7 +165,7 @@ window.GAME_CONTENT = {
       quests: [
         {
           id: "q-mac-1", title: `Inselneuentdeckung`,
-          location: `Bucht und Hafen von Machico`, pin: [32.7165, -16.7655], maps: null,
+          location: `Bucht und Hafen von Machico`, pin: [32.7155, -16.76], maps: "Oceanodroma - Birds, Whales and Dolphins Watching, Porto de Recreio de, 9200-000 Machico",
           desc: `In der Bucht von Machico gingen 1419 die portugiesischen Seefahrer Zarco und Teixeira zum ersten Mal auf Madeira an Land. Heute schützen Hafenmauern die Bucht, an der zwei Strände liegen: der Sandstrand Banda d'Além und der Kiesstrand São Roque.`,
           task: `Eure Aufgabe: Werft von einer Hafenmauer ein Stück Holz ins Wasser. Wird es an Land gespült, ist die Quest geschafft. Treibt es aufs Meer hinaus, versucht ihr es mit einem neuen.`
         },
@@ -177,7 +177,7 @@ window.GAME_CONTENT = {
         },
         {
           id: "q-mac-3", title: `Steinadler`,
-          location: `Porto da Cruz, mit Blick auf den Penha d'Águia`, pin: [32.7680, -16.8275], maps: "Porto da Cruz, Madeira",
+          location: `Porto da Cruz, mit Blick auf den Penha d'Águia`, pin: [32.77538, -16.82668], maps: "Furna do Porto da Cruz",
           desc: `An der Nordostküste ragt der Penha d'Águia, der „Adlerfelsen", rund 580 Meter steil aus dem Meer. Der gewaltige Felsblock liegt zwischen Porto da Cruz und Faial und prägt die Landschaft dieser Küste wie kaum etwas anderes.`,
           task: `Eure Aufgabe: Sucht euch in Porto da Cruz einen Platz, von dem aus der Adlerfelsen zu sehen ist. Eine Person sammelt dort drei Steine und erklärt einen davon zum Adler, wegen seiner Form, Farbe oder anderer Merkmale. Die anderen beiden müssen erraten, welcher Stein der Adler ist. Liegen sie falsch, sucht die Person drei neue Steine.`
         }
@@ -194,7 +194,7 @@ window.GAME_CONTENT = {
         },
         {
           id: "q-san-2", title: `Dreieck auf Dreieck`,
-          location: `Casas de Santana (Núcleo de Casas Típicas beim Rathaus von Santana)`, pin: [32.8053, -16.8822], maps: "Núcleo de Casas Típicas de Santana, Madeira",
+          location: `Casas de Santana (Núcleo de Casas Típicas beim Rathaus von Santana)`, pin: [32.805, -16.88279], maps: "Casas Típicas de Santana",
           desc: `Die kleinen Häuser mit den strohgedeckten, dreieckigen Dächern sind das Wahrzeichen von Santana. Früher lebten darin Bauernfamilien, und das steile Dach, das fast bis zum Boden reicht, ließ den Regen des feuchten Nordens schnell ablaufen.`,
           task: `Eure Aufgabe: Baut vor einem der Dreieckshäuser ein Kartenhaus mit drei Stockwerken. Es muss mindestens 10 Sekunden stehen, ohne einzustürzen. Fällt es zusammen, baut ihr so lange neu, bis es klappt. Macht danach ein Foto von eurem Kartenhaus mit einem Dreieckshaus im Hintergrund.`
         },
@@ -218,7 +218,7 @@ window.GAME_CONTENT = {
         },
         {
           id: "q-svi-2", title: `Höllen- oder wenig Verkehr`,
-          location: `Brücke der Küstenstraße über die Ribeira do Inferno`, pin: [32.8100, -17.0630], maps: null,
+          location: `Brücke der Küstenstraße über die Ribeira do Inferno`, pin: [32.81119, -17.06569], maps: "Ribeira do Inferno",
           desc: `Die Ribeira do Inferno, der „Höllenbach", entspringt in den Bergen von São Vicente und bildet die Grenze zum Nachbarort Seixal. Er hat sich eine tiefe, enge Schlucht mit steilen Felswänden gegraben. Die Küstenstraße überwindet sie fast unsichtbar: aus einem Tunnel heraus, über eine Brücke und gleich wieder hinein in den Berg.`,
           task: `Eure Aufgabe: Sucht euch auf der Seite von São Vicente einen Platz mit Blick auf die Brücke. Schätzt gemeinsam, wie viele Autos innerhalb einer Minute über die Brücke fahren, und zählt dann nach. Liegt ihr höchstens ein Auto daneben, ist die Quest geschafft. Wenn nicht, schätzt ihr für die nächste Minute neu.`
         },
@@ -235,13 +235,13 @@ window.GAME_CONTENT = {
       quests: [
         {
           id: "q-pmz-1", title: `Klopf, klopf am Fenster`,
-          location: `Ilhéus da Ribeira da Janela (Mündung der Ribeira da Janela)`, pin: [32.8576, -17.1572], maps: "Ilhéus da Ribeira da Janela, Madeira",
+          location: `Ilhéus da Ribeira da Janela (Mündung der Ribeira da Janela)`, pin: [32.85544, -17.15294], maps: "Miradouro Ilhéus da Ribeira da Janela",
           desc: `An der Mündung des längsten Flusses der Insel ragen bizarre Felsen aus dem Meer, die Ilhéus da Ribeira da Janela. Ihr Name, „Fenster", soll von einer Öffnung in einem der Felsen stammen, durch die man wie durch ein Fenster blicken kann.`,
           task: `Eure Aufgabe: Werft mit einem Stein vom Ufer aus einen der Felsen im Wasser ab. Trefft ihr, ist die Quest geschafft.`
         },
         {
           id: "q-pmz-2", title: `Gischt ins Gesicht`,
-          location: `Naturpools (Piscinas Naturais) von Porto Moniz`, pin: [32.8676, -17.1694], maps: "Piscinas Naturais do Porto Moniz, Madeira",
+          location: `Naturpools (Piscinas Naturais) von Porto Moniz`, pin: [32.8682, -17.1705], maps: "Piscinas Naturais de Porto Moniz",
           desc: `Die Naturpools sind das Wahrzeichen von Porto Moniz: Becken im schwarzen Vulkangestein, zusammen rund 3.800 m² groß, in die der Atlantik bei Flut hineinschwappt.`,
           task: `Eure Aufgabe: Geht im Becken bis an den äußeren Rand, wo die Wellen gegen das Gestein schlagen, und wartet, bis euch eine Welle Wasser ins Gesicht spritzt. Geschafft ist die Quest, wenn es jede von euch erwischt hat.`
         },
