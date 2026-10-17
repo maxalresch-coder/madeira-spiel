@@ -405,3 +405,20 @@ h2 .ic, h3 .ic { width: 1em; height: 1em; vertical-align: -0.12em; }
 .rank-panel .rank-sub { opacity: .9; margin-top: 2px; }
 .rank-panel .ms { color: rgba(255,255,255,.8); border-color: rgba(255,255,255,.35); }
 .rank-panel .ms.on { color: #2e1d00; border-color: #8a5a00; }
+
+/* ---------- Statistik: Kennzahlen, Tortendiagramme, Joker ---------- */
+.max-line { margin: 8px 2px 0; }
+.avg-line { margin: 10px 0 0; font-size: .95rem; }
+.pie { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.pie svg { width: 128px; height: 128px; flex: 0 0 auto; }
+.pie path, .pie circle { stroke: var(--surface); stroke-width: 1.5; }
+.pie-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; flex: 1 1 150px; font-size: .95rem; }
+.pie-legend li { display: flex; align-items: center; gap: 8px; }
+.pie-legend i { width: 14px; height: 14px; border-radius: 4px; flex: 0 0 auto; }
+.pie-legend span { flex: 1; }
+.pie-legend strong { font-variant-numeric: tabular-nums; }
+.joker-list { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); font-size: .95rem; line-height: 1.6; }
+.joker-list .ind { padding-left: 1.4em; }
+.joker-list .spent { margin-top: .8em; font-weight: 600; }
+.kpi .l { font-size: .82rem; }
+.chart text { font: 600 22px var(--font); }

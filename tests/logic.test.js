@@ -196,6 +196,34 @@ assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
   assert.deepStrictEqual([L.rankProgress(2510).pct, L.rankProgress(2510).text], [100, "Maximum übertroffen (+110 Punkte)"]);
 }
 
+// Variables Maximum: 2.400 + (multiplizierter Wert − Grundwert) je Stapel-Quest mit Multiplikator
+{
+  let v = L.newGame(C, 31, t);
+  assert.strictEqual(L.maxPoints(v, C), 2400);
+  assert.strictEqual(L.summary(v, C).maxDelta, 0);
+  C.regions.forEach(r => { v = act(v, { type: "quest", questId: r.quests[0].id }); }); // Punkte für den Shop
+  v.rolls = [1.5, 0.5, 5]; // feste Würfe für den Test
+  const a = v.open[0], b = v.open[1], c = v.open[2];
+  const exp = (id, f) => Math.ceil(L.stackBase(C, id) * f - 1e-9) - L.stackBase(C, id);
+  v = act(v, { type: "mult", questId: a });
+  assert.strictEqual(L.maxPoints(v, C), 2400 + exp(a, 1.5));
+  v = act(v, { type: "mult", questId: b });
+  assert.strictEqual(L.maxPoints(v, C), 2400 + exp(a, 1.5) + exp(b, 0.5)); // ×0,5 senkt das Maximum
+  // erledigte Stapel-Quest mit Multiplikator zählt weiter mit ihrem multiplizierten Wert
+  v = act(v, { type: "stack", questId: a });
+  assert.strictEqual(L.maxPoints(v, C), 2400 + exp(a, 1.5) + exp(b, 0.5));
+  // Rückgängig des Multiplikator-Kaufs -> sofort neu berechnet
+  v = act(v, { type: "undo", logId: v.log.find(e => e.type === "mult" && e.data.questId === b).id });
+  assert.strictEqual(L.maxPoints(v, C), 2400 + exp(a, 1.5));
+  v = act(v, { type: "mult", questId: c }); // Jackpot: Slot 2 frei? Slot 1 wieder frei -> Faktor 0,5
+  assert.strictEqual(v.mults[c].factor, 0.5);
+  assert.strictEqual(L.summary(v, C).maxPoints, 2400 + exp(a, 1.5) + exp(c, 0.5));
+  // Teamrang-Balken: goldene Etappe läuft bis zum aktuellen Maximum
+  assert.strictEqual(L.rankProgress(1500, 2430).text, "noch 930 Punkte bis zum Maximum");
+  assert.strictEqual(L.rankProgress(2430, 2430).text, "Maximum erreicht!");
+  assert.strictEqual(L.rankProgress(2350, 2340).text, "Maximum erreicht!".replace("erreicht!", "übertroffen (+10 Punkte)"));
+}
+
 // Belohnungen
 assert.strictEqual(L.formatReward(C.rewards[0], 350), "10 Min 30 Sek");
 assert.strictEqual(L.formatReward(C.rewards[0], 2000), "60 Min");

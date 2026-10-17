@@ -13,7 +13,7 @@
   const MAX_SWAPS = 5; // Tausch-Joker höchstens 5-mal pro Spiel (rückgängig gemachte zählen nicht)
   const REGION_POINTS = { explored: 100, tier: 20 };
   const MADEIRA_BONUS = 300;
-  const MAX_POINTS = 2400; // ohne Multiplikator
+  const MAX_POINTS = 2400; // Basis-Maximum ohne Multiplikator (das tatsächliche Maximum: maxPoints())
   const RANKS = [
     { name: "Landstreicher", min: 0 },
     { name: "Abenteurer", min: 700 },
@@ -143,6 +143,7 @@
       rank, rankName: RANKS[rank].name, nextRank: RANKS[rank + 1] || null,
       regionPts, stackPts, madeiraBonus: allExplored ? MADEIRA_BONUS : 0,
       doneStack: doneStack.length, swaps, multCount, jokerUsed: state.joker ? 1 : 0,
+      maxPoints: maxPoints(state, content), maxDelta: maxPoints(state, content) - MAX_POINTS,
       bestMult: factors.length ? Math.max.apply(null, factors) : null,
       deckLeft: state.deck.length,
       stackFinished: state.deck.length === 0 && state.open.every((q) => !q),
@@ -358,6 +359,14 @@
     return ids.every((id) => ix.stack[id]) && Object.keys(state.quests).every((id) => ix.quests[id]);
   }
 
+  // Maximal erreichbare Punkte: Basis 2.400, aber jede Stapel-Quest mit Multiplikator
+  // (erledigt oder offen) zählt mit ihrem multiplizierten, aufgerundeten Wert.
+  function maxPoints(state, content) {
+    let delta = 0;
+    Object.keys(state.mults).forEach((id) => { delta += stackPoints(state, content, id) - stackBase(content, id); });
+    return MAX_POINTS + delta;
+  }
+
   // ---------------------------------------------------------------- Fortschritt in Etappen
   // Für die Balken in der Statistik: jede Etappe hat die Farbe der Stufe auf der Inselkarte
   // (1 = Erkundet, 2 = Erobert, 3 = Erschlossen). Ist eine Etappe geschafft, beginnt die
@@ -376,8 +385,9 @@
       done: counts.map((c) => c >= total)
     };
   }
-  function rankProgress(earned) {
-    const bounds = [RANKS[1].min, RANKS[2].min, MAX_POINTS]; // 700, 1.500, 2.400
+  function rankProgress(earned, max) {
+    max = max || MAX_POINTS;
+    const bounds = [RANKS[1].min, RANKS[2].min, Math.max(max, RANKS[2].min + 1)]; // 700, 1.500, aktuelles Maximum
     const targets = [RANKS[1].name, RANKS[2].name, "zum Maximum"];
     let stage = bounds.findIndex((b) => earned < b);
     const full = stage < 0;
@@ -387,7 +397,7 @@
     return {
       stage: stage + 1, color: LEVELS[stage + 1].color,
       pct: full ? 100 : Math.max(0, (earned - from) / (to - from) * 100),
-      text: full ? (earned > MAX_POINTS ? "Maximum übertroffen (+" + fmtN(earned - MAX_POINTS) + " Punkte)" : "Maximum erreicht!")
+      text: full ? (earned > max ? "Maximum übertroffen (+" + fmtN(earned - max) + " Punkte)" : "Maximum erreicht!")
         : "noch " + fmtN(to - earned) + " Punkte bis " + targets[stage],
       ranks: RANKS.map((r) => ({ name: r.name, reached: earned >= r.min }))
     };
@@ -415,7 +425,7 @@
 
   const api = {
     STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MAX_SWAPS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
-    newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible, regionProgress, rankProgress,
+    newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible, regionProgress, rankProgress, maxPoints,
     canUndo, dayCount, pointsPerDay, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

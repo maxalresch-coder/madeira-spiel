@@ -719,7 +719,7 @@
   }
 
   function viewStats(s) {
-    const kp = L.rankProgress(s.earned);
+    const kp = L.rankProgress(s.earned, s.maxPoints);
     const rankChecks = kp.ranks.map((r) => '<span class="ms' + (r.reached ? " on" : "") + '">' + (r.reached ? icon("check") + " " : "") + esc(r.name) + "</span>").join("");
     const days = L.dayCount(app.state, Date.now());
     const perDay = L.pointsPerDay(app.state, Date.now());
@@ -733,43 +733,75 @@
       regionsSection(s) +
       '<div class="kpis">' +
         kpi(fmt(s.earned), "Punkte verdient") + kpi(fmt(s.balance), "Kontostand") +
-        kpi(Math.round(s.earned / L.MAX_POINTS * 100) + " %", "von 2.400 möglichen") + kpi(s.bestMult ? L.fmtFactor(s.bestMult) : "–", "bester Multiplikator") +
-        kpi(days, days === 1 ? "Tag" : "Tage") + kpi(fmt(s.earned / days), "Punkte pro Tag") +
-        kpi(s.questsDone + "/30", "Regionale Quests") + kpi(s.doneStack + "/" + C.stackQuests.length, "Stapel-Quests") +
+        kpi(s.questsDone + " von 30", "Regionale Quests erledigt") + kpi(s.doneStack + " von " + C.stackQuests.length, "Stapel-Quests erledigt") +
+        kpi(Math.round(s.earned / s.maxPoints * 100) + " %", "vom Maximum") + kpi(s.bestMult ? L.fmtFactor(s.bestMult) : "–", "bester Multiplikator") +
       "</div>" +
-      '<div class="section-title"><h3>Punkte pro Tag</h3></div><div class="panel chart">' + barChart(perDay) + "</div>" +
+      '<p class="muted small max-line">' + maxText(s) + "</p>" +
+      '<div class="section-title"><h3>Punkte pro Tag</h3></div><div class="panel chart">' + barChart(perDay) +
+        '<p class="avg-line"><strong>Durchschnitt: ' + fmt(s.earned / days) + " Punkte pro Tag</strong>" +
+        '<span class="muted small"> · seit Spielbeginn, ' + days + (days === 1 ? " Tag" : " Tage") + "</span></p></div>" +
       '<div class="section-title"><h3>Woher die Punkte kommen</h3></div><div class="panel">' +
-        breakdown([["Regionen & Stufen", s.regionPts, "var(--laurel)"], ["Insel-Bonus", s.madeiraBonus, "var(--gold)"], ["Stapel-Quests", s.stackPts, "var(--medium)"]], s.earned) +
-        '<div class="legend" style="margin-top:10px">' + L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + ": " + lvlCounts[i] + "</span>").join("") + "</div>" +
-        '<p class="muted small" style="margin:8px 0 0">Joker: Tausch ' + s.swaps + " von " + L.MAX_SWAPS + " (" + fmt(s.swaps * L.PRICES.swap) + " P) · Multiplikator " + s.multCount + " von " + L.MAX_MULTS + " (" + fmt(s.multCount * L.PRICES.mult) + " P) · Region-Joker " + s.jokerUsed + " von 1 (" + fmt(s.jokerUsed * L.PRICES.joker) + " P) · insgesamt ausgegeben " + fmt(s.spent) + " P</p></div>" +
+        pieChart([["Regionen & Stufen", s.regionPts, "var(--einfach)"], ["Insel-Bonus", s.madeiraBonus, "var(--medium)"], ["Stapel-Quests", s.stackPts, "var(--hard)"]], "Punkte") +
+        '<div class="joker-list">' +
+          "<div>Joker:</div>" +
+          '<div class="ind">Tausch ' + s.swaps + " von " + L.MAX_SWAPS + "</div>" +
+          '<div class="ind">Multiplikator ' + s.multCount + " von " + L.MAX_MULTS + "</div>" +
+          '<div class="ind">Region-Joker ' + s.jokerUsed + " von 1</div>" +
+          '<div class="spent">Insgesamt ausgegeben: ' + fmt(s.spent) + " P</div>" +
+        "</div></div>" +
+      '<div class="section-title"><h3>Stufen der Regionen</h3></div><div class="panel">' +
+        pieChart(L.LEVELS.map((l, i) => [i === 0 ? "Unbesucht" : l.name, lvlCounts[i], l.color]), "Regionen") +
+      "</div>" +
       '<div class="section-title"><h3>Spiel</h3></div>' +
       '<div class="panel" style="display:grid;gap:10px">' +
         '<button class="btn btn-ghost btn-block" data-all-quests>' + icon("list-checks") + ' Alle Quests ansehen</button>' +
         '<button class="btn btn-gold btn-block" id="end-btn">' + icon("flag") + ' Urlaub beenden & Belohnungen</button>' +
-        '<button class="btn btn-ghost btn-block" id="help-btn2">? Spielanleitung</button>' +
+        '<button class="btn btn-ghost btn-block" id="help-btn2">' + icon("circle-help") + ' Spielanleitung</button>' +
         '<div class="grid2"><button class="btn btn-ghost" id="rename-btn">Name: ' + esc(app.name) + '</button><button class="btn btn-ghost" id="logout-btn">Abmelden</button></div>' +
         '<button class="btn btn-danger btn-block" id="reset-btn">Kompletter Reset</button>' +
       "</div>";
   }
-  function kpi(v, l) { return '<div class="kpi"><div class="v">' + v + '</div><div class="l">' + l + "</div></div>"; }
-  function breakdown(parts, total) {
-    const t = Math.max(total, 1);
-    return '<div style="display:flex;height:16px;border-radius:99px;overflow:hidden;background:var(--line)">' +
-      parts.map((p) => '<div style="width:' + Math.max(0, p[1]) / t * 100 + "%;background:" + p[2] + '"></div>').join("") + "</div>" +
-      '<div class="legend">' + parts.map((p) => '<span><i style="background:' + p[2] + '"></i>' + p[0] + ": " + fmt(p[1]) + "</span>").join("") + "</div>";
+  // "Maximum: 2.430 (Basis 2.400, Multiplikatoren +30)" bzw. nur "Maximum: 2.400"
+  function maxText(s) {
+    return "Maximum: " + fmt(s.maxPoints) + (s.maxDelta ? " (Basis " + fmt(L.MAX_POINTS) + ", Multiplikatoren " + signed(s.maxDelta) + ")" : "");
   }
+  // Tortendiagramm mit Legende; leere Anteile werden nicht gezeichnet, stehen aber mit 0 in der Legende
+  function pieChart(parts, unit) {
+    const total = parts.reduce((a, p) => a + Math.max(0, p[1]), 0);
+    const R = 60, cx = 64, cy = 64;
+    let slices = "";
+    if (!total) slices = '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="var(--line)"/>';
+    else {
+      const used = parts.filter((p) => p[1] > 0);
+      let a0 = -Math.PI / 2;
+      used.forEach((p) => {
+        const frac = p[1] / total;
+        if (frac >= 0.9999) { slices += '<circle cx="' + cx + '" cy="' + cy + '" r="' + R + '" fill="' + p[2] + '"/>'; return; }
+        const a1 = a0 + frac * 2 * Math.PI;
+        const x0 = cx + R * Math.cos(a0), y0 = cy + R * Math.sin(a0), x1 = cx + R * Math.cos(a1), y1 = cy + R * Math.sin(a1);
+        slices += '<path d="M' + cx + "," + cy + " L" + x0.toFixed(2) + "," + y0.toFixed(2) + " A" + R + "," + R + " 0 " + (frac > 0.5 ? 1 : 0) + " 1 " + x1.toFixed(2) + "," + y1.toFixed(2) + ' Z" fill="' + p[2] + '"/>';
+        a0 = a1;
+      });
+    }
+    const label = parts.map((p) => p[0] + ": " + fmt(p[1])).join(", ");
+    return '<div class="pie"><svg viewBox="0 0 128 128" role="img" aria-label="' + esc(unit + " – " + label) + '">' + slices + "</svg>" +
+      '<ul class="pie-legend">' + parts.map((p) => '<li><i style="background:' + p[2] + '"></i><span>' + esc(p[0]) + "</span><strong>" + fmt(p[1]) + "</strong></li>").join("") + "</ul></div>";
+  }
+  function kpi(v, l) { return '<div class="kpi"><div class="v">' + v + '</div><div class="l">' + l + "</div></div>"; }
   function barChart(days) {
-    const W = 600, H = 180, pad = 26;
+    const W = 600, H = 230, pad = 34;
     const max = Math.max(50, ...days.map((d) => d.points));
     const show = days.slice(-14);
-    const bw = Math.min(70, (W - pad * 2) / show.length);
+    const bw = Math.min(80, (W - pad * 2) / show.length);
+    // Bei vielen Tagen nur jedes n-te Datum und keine Zahlen über den Balken, damit nichts überlappt
+    const step = Math.ceil(show.length / 7), showVals = bw >= 60;
     const bars = show.map((d, i) => {
       const h = Math.max(0, d.points) / max * (H - pad * 2);
       const x = pad + i * bw + bw * 0.15, y = H - pad - h;
       const lbl = d.day.slice(8) + "." + d.day.slice(5, 7) + ".";
       return '<rect x="' + x + '" y="' + y + '" width="' + bw * 0.7 + '" height="' + h + '" rx="4" fill="var(--ocean)"/>' +
-        (d.points ? '<text x="' + (x + bw * 0.35) + '" y="' + (y - 5) + '" text-anchor="middle">' + fmt(d.points) + "</text>" : "") +
-        '<text x="' + (x + bw * 0.35) + '" y="' + (H - 8) + '" text-anchor="middle">' + lbl + "</text>";
+        (d.points && showVals ? '<text x="' + (x + bw * 0.35) + '" y="' + (y - 6) + '" text-anchor="middle">' + fmt(d.points) + "</text>" : "") +
+        ((i % step === 0 || i === show.length - 1) ? '<text x="' + (x + bw * 0.35) + '" y="' + (H - 6) + '" text-anchor="middle">' + lbl + "</text>" : "");
     }).join("");
     return '<svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Punkte pro Tag"><line x1="' + pad + '" x2="' + (W - pad) + '" y1="' + (H - pad) + '" y2="' + (H - pad) + '" stroke="var(--line)"/>' + bars + "</svg>";
   }
@@ -844,7 +876,7 @@
     const lines = C.rewards.filter((r) => alloc[r.id] > 0).map((r) =>
       '<div class="list-item"><div class="grow"><strong>Gutschein: ' + L.formatReward(r, alloc[r.id]) + " " + esc(r.voucher) + '</strong><div class="meta">' + fmt(alloc[r.id]) + " Punkte</div></div></div>").join("");
     return '<h2>' + icon("flag") + ' Urlaub beendet</h2>' +
-      '<div class="panel rank-panel"><div class="muted small">Euer Rang</div><div class="rank-big">' + esc(s.rankName) + '</div><div class="small">' + fmt(s.earned) + " von 2.400 Punkten (" + Math.round(s.earned / L.MAX_POINTS * 100) + " %)</div></div>" +
+      '<div class="panel rank-panel"><div class="muted small">Euer Rang</div><div class="rank-big">' + esc(s.rankName) + '</div><div class="small">' + fmt(s.earned) + " von " + fmt(s.maxPoints) + " Punkten (" + Math.round(s.earned / s.maxPoints * 100) + " %)</div></div>" +
       '<div class="panel"><h3>Eure Belohnungen</h3>' + (lines || '<p class="muted" style="margin:0">Keine Restpunkte verteilt.</p>') + "</div>" +
       '<div class="panel"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG()) + '">' +
       '<button class="btn btn-primary btn-block" id="pdf-btn" style="margin-top:12px">' + icon("file-down") + ' Zertifikat als PDF herunterladen</button></div>' +
@@ -859,7 +891,7 @@
     const alloc = (st.ended && st.ended.alloc) || {};
     const W = 1188, H = 840;
     const names = alloc._players || players().join(", ");
-    const pct = Math.round(s.earned / L.MAX_POINTS * 100);
+    const pct = Math.round(s.earned / s.maxPoints * 100);
     const days = L.dayCount(st, Date.now());
     const vouchers = C.rewards.filter((r) => alloc[r.id] > 0).map((r) => "Gutschein: " + L.formatReward(r, alloc[r.id]) + " " + r.voucher);
     const t = (x, y, txt, size, opts) => '<text x="' + x + '" y="' + y + '" font-size="' + size + '" ' + (opts || 'text-anchor="middle"') + ">" + esc(txt) + "</text>";
@@ -881,7 +913,7 @@
       t(W / 2, 245, names || "das Team", 36, 'text-anchor="middle" font-weight="700"') +
       t(W / 2, 285, "Madeira als Team erkundet und den Rang „" + s.rankName + "“ erreicht haben.", 22, 'text-anchor="middle"') +
       mapG +
-      t(W / 2, 568, fmt(s.earned) + " von 2.400 möglichen Punkten (" + pct + " %)", 28, 'text-anchor="middle" font-weight="700"') +
+      t(W / 2, 568, fmt(s.earned) + " von " + fmt(s.maxPoints) + " möglichen Punkten (" + pct + " %)", 28, 'text-anchor="middle" font-weight="700"') +
       t(W / 2, 600, statsLine, 18, 'text-anchor="middle" fill="#5f6f76"') +
       vouchersSvg +
       t(W / 2, H - 60, "Dieses Zertifikat gilt gleichzeitig als Gutschein.", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') +
@@ -927,6 +959,7 @@
       "<li><strong>Multiplikator (10):</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. 3 pro Spiel, einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
+      "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht in der Statistik.</p>" +
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder im Logbuch " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
       "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("book-open") + " Logbuch, " + icon("chart-column") + " Statistik (Regionen, Fortschritt, Urlaub beenden, Reset) und " + icon("circle-help") + " Hilfe.</p>" +
       "<h3>" + icon("flag") + " Ende</h3><p>„Urlaub beenden“ (unter Statistik) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
