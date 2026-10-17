@@ -40,7 +40,8 @@ MAX_PHOTO = 600 * 1024          # Fotos werden im Browser auf ~1.000 px / < 200 
 PHOTO_ID = re.compile(r"p[0-9a-f]{24}")
 PHOTO_GRACE = 120               # Sekunden: frisch hochgeladene Fotos nicht sofort wieder löschen
 ERRLOG_KEEP = 500               # so viele Einträge behält das Fehlerprotokoll höchstens
-ERRLOG_FIELDS = ("stage", "name", "message", "fileName", "fileType", "fileSize", "attempts", "player", "detail")
+ERRLOG_FIELDS = ("stage", "name", "message", "fileName", "fileType", "fileSize", "attempts", "player", "detail",
+                 "pick", "readDelayMs", "sync")
 _lock = threading.Lock()
 
 
@@ -113,13 +114,15 @@ def _photo_dir(conf):
 
 
 def _gc_photos(conf, state):
-    """Löscht Fotos, auf die der Spielstand nicht (mehr) verweist. Nach einem Reset (kein „tools“)
-    sofort, sonst erst nach einer kurzen Schonfrist (Upload kommt kurz vor dem Speichern)."""
+    """Löscht Fotos, auf die der Spielstand nicht (mehr) verweist – immer erst nach einer kurzen Schonfrist:
+    Ein Foto wird hochgeladen, kurz bevor es in den Spielstand eingetragen wird. Speichert in diesem Moment ein
+    anderes Handy (auch direkt nach einem Reset, wenn es noch gar keine Hilfsmittel-Zustände gibt), darf das frische
+    Foto nicht verschwinden."""
     folder = _photo_dir(conf)
     if not os.path.isdir(folder):
         return
     used = set(PHOTO_ID.findall(json.dumps(state)))
-    grace = PHOTO_GRACE if isinstance(state, dict) and state.get("tools") else 0
+    grace = PHOTO_GRACE
     now = time.time()
     for name in os.listdir(folder):
         pid = name[:-4]

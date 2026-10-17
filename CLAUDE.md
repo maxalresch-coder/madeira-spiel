@@ -36,12 +36,15 @@ Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Fotos der Hilf
   localStorage `errQueue` gemerkt und später nachgeschickt) und in **`data/client-errors.log`** gespeichert (auf PythonAnywhere:
   `~/madeira-spiel/data/client-errors.log`; eine JSON-Zeile je Fehler, höchstens 500): `time`, `ua` (Gerät/Browser), `stage`
   (Auswahl / Lesen / Verkleinern / Hochladen / Server / Eintragen / Aufnahme / Kamera), `name`, `message`, `fileName`, `fileType`, `fileSize`,
-  `attempts` (alle Fehlversuche davor), `player`, `detail` (RAM, Bildschirm, Zeit).
+  `attempts` (alle Fehlversuche davor), `player`, `detail` (RAM, Bildschirm, Zeit); bei Galerie-Fotos zusätzlich `pick`
+  (die wievielte Auswahl in dieser Sitzung), `readDelayMs` (ms zwischen change-Event und Lesebeginn) und `sync` (ob während
+  „Galerie offen“ bzw. „beim Lesen“ eine Synchronisierung lief – sollte immer „nein“ sein, sie ist dann pausiert).
 - „Kamera: Kamera-Erlaubnis abgelehnt“ / „Kamera: Kamera nicht verfügbar“ (getUserMedia fehlt, kein Gerät, Wechsel
   fehlgeschlagen), „Aufnahme: …“ = Foto aus dem Videobild ging schief.
 - Bisher gefundene Ursachen (Android 10, Chrome, 4 GB): `NotReadableError … permission problems …` = Android entzieht die
   Leseerlaubnis kurz nach der Auswahl (→ Lesen startet synchron im change-Event); „Seite neu geladen“ während der
-  Kamera-App (→ Kamera in der Seite).
+  Kamera-App (→ Kamera in der Seite); zweite Galerie-Auswahl über dasselbe, wiederverwendete Datei-Feld scheiterte mit
+  `NotReadableError` (→ frisches Datei-Feld je Auswahl).
 - „Auswahl: Seite neu geladen“ = die Seite wurde neu geladen, während Kamera/Galerie offen war (Android hat den Browser wegen
   Speichermangel beendet; erkannt über localStorage `photoPick`).
 - In der App: Einstellungen → **Fehlerprotokoll** (Unterseite `errors`): letzte 30 Einträge (`GET api/client-errors`),
@@ -138,8 +141,12 @@ Vertrauensbasis, keine Beweisfotos.
   - **Fotos (wiederverwendbare Foto-Grundlage):** `photoPicker(qid, mehrere)` zeigt „Foto aufnehmen“ (**Kamera in der Seite**,
     s. u.; nur als Rückfall die Kamera-App über `capture="environment"`) und „Aus Galerie wählen“ (`multiple`: mehrere Bilder auf einmal); offline stattdessen ein Hinweis. `processPhotos` verarbeitet
     die Bilder **nacheinander** (nie mehrere gleichzeitig im Speicher) mit Fortschrittsanzeige „Foto X von Y“, in der Reihenfolge,
-    in der das Handy sie liefert. Die Datei-Felder (`#photo-camera`, `#photo-gallery`, Klasse `.photo-file`: unsichtbar, aber
-    nicht `display:none`) liegen **dauerhaft** direkt im `<body>` außerhalb aller neu gezeichneten Bereiche und werden nie ersetzt (`photoInput`; sonst kann Android den Zugriff auf gewählte Dateien entziehen), Knöpfe rufen `choosePhotos` auf.
+    in der das Handy sie liefert. Für **jede** Auswahl erzeugt `choosePhotos` ein **frisches** Datei-Feld (`newPhotoInput`, Klasse
+    `.photo-file`, `data-photo-input`: unsichtbar, aber nicht `display:none`) direkt am `<body>` außerhalb aller neu gezeichneten
+    Bereiche – nie ein Feld wiederverwenden (Android lieferte bei der zweiten Auswahl über dasselbe Feld ungültige
+    Datei-Referenzen). Es wird erst entfernt, wenn alle gewählten Dateien gelesen und verarbeitet sind (`processPhotos(…).finally`),
+    bei „cancel“ sofort; nie benutzte Reste räumt die nächste Auswahl weg. Vom Öffnen der Galerie bis alle Dateien gelesen
+    sind (`toolUI.picking`, `toolUI.reading`) sind **Synchronisierung** (`poll` setzt aus) und Neuzeichnen (`photoBusy`) pausiert.
     **Ablauf einer Galerie-Auswahl (`onPhotosChosen` → `processPhotos`):** Android entzieht die Leseerlaubnis kurz nach der
     Auswahl (`NotReadableError … permission problems …`). Darum startet `onPhotosChosen` (nicht async) das Lesen **jeder**
     Datei **synchron im change-Event** (`startRead`), vor jedem await, Neuzeichnen, Synchronisieren und Zurücksetzen des Feldes:
@@ -147,10 +154,11 @@ Vertrauensbasis, keine Beweisfotos.
     Dateianfang (Zugriff prüfen) und später direkt aus der Datei verkleinert dekodieren (nie die ganze große Datei kopieren –
     Speicher). Kein Wiederholen mit derselben Datei-Referenz (zwecklos). Danach streng nacheinander, immer nur ein Foto:
     `addPhotoJob` = verkleinern (`shrinkPhoto`) → `uploadPhoto` (bis zu 3 Versuche bei Netz-/Serverfehler) → eintragen
-    (`toolDo(…, quiet)`). Jedes Foto merkt sich seinen Platz (`slot`); „Erneut versuchen“ nach einem **Lesefehler** öffnet
+    (`toolDo(…, quiet)`). Jedes Foto merkt sich seinen Platz (`slot`); „Bild neu auswählen“ nach einem **Lesefehler** öffnet
     die Galerie (einzeln) für genau diesen Platz (`choosePhotos(…, {lid, at})`, Aktion `addPhoto` mit `at`), bei anderen
-    Fehlern wird die Kopie im Speicher erneut verarbeitet. 0 Byte → Hinweis „nur in der Cloud?“. Das Datei-Feld wird erst vor
-    der **nächsten** Auswahl geleert (`choosePhotos`), damit dasselbe Bild erneut gewählt werden kann.
+    Fehlern wird die Kopie im Speicher erneut verarbeitet. 0 Byte → Hinweis „nur in der Cloud?“. Dasselbe Bild kann erneut gewählt
+    werden (jedes Mal ein neues Feld). Lesefehler-Meldung: „Bild konnte nicht gelesen werden. Bitte noch einmal auswählen oder
+    die Kamera nutzen.“ mit Knopf „Bild neu auswählen“ (öffnet direkt eine neue Galerie-Auswahl für diesen Platz).
     **Kamera in der Seite** (`openCamera`, weil Android den Browser beendete, während die Kamera-App offen war):
     `getUserMedia({video: {facingMode: "environment"}})`, Live-Vorschau im Hilfsmittel (`<video playsinline muted autoplay>`,
     nötig fürs iPhone; Frontkamera-Vorschau gespiegelt, Foto nicht), großer Auslöser, Knopf Kamera wechseln (alte Tracks
@@ -183,8 +191,8 @@ Vertrauensbasis, keine Beweisfotos.
     der Kamera aus dem Speicher wirft. Das offene Hilfsmittel wird gemerkt (`openTool` in localStorage, 1 h) und nach dem
     Neuladen automatisch wieder geöffnet (`restoreOpenTool`). Anzeigen mit `photoImg(id)` (`GET api/photo/<id>?t=<token>`, weil `<img>`
     keinen Header schickt). Gespeichert in `data/photos/` (nicht in git). **Nur temporär:** Nach jedem Speichern des Spielstands
-    löscht der Server alle Fotos, auf die der Spielstand nicht mehr verweist (nach 2 min Schonfrist für frische Uploads;
-    nach Reset sofort). Ein Hilfsmittel beendet eine Runde also, indem es die Foto-IDs aus seinem Zustand entfernt
+    löscht der Server alle Fotos, auf die der Spielstand nicht mehr verweist – **immer** erst nach 2 min Schonfrist (auch
+    nach einem Reset: sonst löschte das Speichern eines anderen Handys ein frisch hochgeladenes, noch nicht eingetragenes Foto). Ein Hilfsmittel beendet eine Runde also, indem es die Foto-IDs aus seinem Zustand entfernt
     (Geschafft → `photos: []`, Neue Runde/Reset → Zustand leer). Foto-IDs nie verschleiern (`hide`), sonst findet der Server sie nicht.
   Aktuelle Hilfsmittel:
   - Countdown: Light Show 10 s, Dreieck auf Dreieck 10 s, Werdet brava … 30 s, Treibgutkreuz 30 s (Start/Abbrechen/Neustart, Ende: Anzeige + Vibration).

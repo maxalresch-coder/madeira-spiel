@@ -73,7 +73,9 @@
   // Server nicht erreichbar oder Fehlerseite (z. B. 502) zählt als offline.
   async function poll() {
     if (!app.token || app.polling) return;
+    if (toolUI.picking || toolUI.reading) return; // Galerie offen / Dateien werden gelesen: Synchronisierung pausiert
     app.polling = true;
+    app.syncReq = (app.syncReq || 0) + 1;
     try {
       const wasOffline = !app.online;
       // Nach einer Funkstille den kompletten Spielstand neu laden
@@ -99,6 +101,7 @@
   }
 
   function receive(version, state, own) {
+    app.syncRecv = (app.syncRecv || 0) + 1;
     const prev = app.state;
     app.version = version;
     app.state = state;
@@ -1112,8 +1115,8 @@
     $$('[data-photo-zone="' + qid + '"]').forEach((z) => { z.innerHTML = photoZoneInner(qid, z.hasAttribute("data-multiple")); });
     mountCamera();
   }
-  const photoBusy = (qid) => (qid ? !!toolUI.uploading[qid] || !!(toolUI.picking && toolUI.picking.qid === qid)
-    : Object.keys(toolUI.uploading).length > 0 || !!toolUI.picking);
+  const photoBusy = (qid) => (qid ? !!toolUI.uploading[qid] || !!(toolUI.picking && toolUI.picking.qid === qid) || !!toolUI.reading
+    : Object.keys(toolUI.uploading).length > 0 || !!toolUI.picking || !!toolUI.reading);
   function photoDone(qid) {
     if (qid) updatePhotoZone(qid); // Fortschritt sofort weg
     if (photoBusy() || toolUI.dragging) return;
@@ -1132,39 +1135,48 @@
       '<details class="small"><summary>Details</summary>Fehler: ' + esc(j.err.name) + (j.err.message ? " – " + esc(j.err.message) : "") +
         "<br>Datei: " + esc(j.name || "ohne Namen") + " · " + esc(j.type || "unbekannter Dateityp") + " · " + fmtSize(j.size || 0) +
         (j.notes && j.notes.length ? "<br>Versuche: " + esc(j.notes.join("; ")) : "") + "</details>" +
-      '<div class="pf-btns"><button class="btn btn-small btn-primary" data-tool-ui="photo-retry" data-lid="' + j.lid + '">' + icon("rotate-ccw") + " Erneut versuchen</button>" +
+      '<div class="pf-btns"><button class="btn btn-small btn-primary" data-tool-ui="photo-retry" data-lid="' + j.lid + '">' +
+        (j.err.stage === "read" ? icon("image") + " Bild neu auswählen" : icon("rotate-ccw") + " Erneut versuchen") + "</button>" +
       '<button class="btn btn-small btn-ghost" data-tool-ui="photo-drop" data-lid="' + j.lid + '">Entfernen</button></div></div></div>').join("") + "</div>";
   }
-  // EIN dauerhaftes Datei-Feld je Art (Kamera-App, Galerie), direkt im <body> – außerhalb aller Bereiche, die neu gezeichnet
-  // werden; es wird nie ersetzt oder entfernt. Unsichtbar, aber nicht „display:none“ (sonst öffnet Safari die Auswahl teils
-  // nicht). Die Knöpfe lösen es nur aus.
-  function photoInput(kind) {
-    let el = document.getElementById("photo-" + kind);
-    if (!el) {
-      el = document.createElement("input");
-      el.type = "file"; el.accept = "image/*"; el.id = "photo-" + kind; el.className = "photo-file"; el.tabIndex = -1;
-      el.setAttribute("aria-hidden", "true");
-      if (kind === "camera") el.setAttribute("capture", "environment");
-      document.body.appendChild(el);
-      el.addEventListener("change", () => onPhotosChosen(el));
-      el.addEventListener("cancel", endPicking); // Auswahl abgebrochen
-    }
+  // Für JEDE Auswahl ein frisches Datei-Feld, direkt am <body> (außerhalb aller Bereiche, die neu gezeichnet werden).
+  // Grund (Fehlerprotokoll, Android 10): Beim zweiten Auswählen über dasselbe, wiederverwendete Feld waren die Datei-
+  // Referenzen ungültig („NotReadableError … permission problems …“). Das Feld wird erst entfernt, wenn alle gewählten
+  // Dateien gelesen und verarbeitet sind (oder die Auswahl abgebrochen wurde). Unsichtbar, aber nicht „display:none“
+  // (sonst öffnet Safari die Auswahl teils nicht). Die Knöpfe lösen es nur aus.
+  function newPhotoInput(kind) {
+    const el = document.createElement("input");
+    el.type = "file"; el.accept = "image/*"; el.className = "photo-file"; el.tabIndex = -1;
+    el.dataset.photoInput = kind;
+    el.setAttribute("aria-hidden", "true");
+    if (kind === "camera") el.setAttribute("capture", "environment");
+    document.body.appendChild(el);
+    el.addEventListener("change", (ev) => onPhotosChosen(el, ev), { once: true });
+    el.addEventListener("cancel", () => { el.remove(); endPicking(); }); // Auswahl abgebrochen
     return el;
   }
-  // replace: { lid, at } – „Erneut versuchen“ nach einem Lesefehler wählt das Bild für genau diesen Platz neu aus
+  // replace: { lid, at } – „Bild neu auswählen“ nach einem Lesefehler wählt das Bild für genau diesen Platz neu aus
   function choosePhotos(qid, kind, multiple, replace) {
     if (!app.online) { toast(OFFLINE_MSG, true); return; }
-    if (toolUI.uploading[qid]) { toast("Bitte warten, bis die Fotos hochgeladen sind.", true); return; }
-    const el = photoInput(kind);
+    if (toolUI.uploading[qid] || toolUI.reading) { toast("Bitte warten, bis die Fotos hochgeladen sind.", true); return; }
+    // Übrig gebliebene, nie benutzte Felder (Auswahl ohne „cancel“-Ereignis abgebrochen) wegräumen
+    $$("input[data-photo-input]:not([data-used])").forEach((old) => old.remove());
+    const el = newPhotoInput(kind);
     el.multiple = kind === "gallery" && !!multiple && !replace;
-    el.value = ""; // erst hier zurücksetzen: dieselbe Datei kann erneut gewählt werden
     toolUI.photoTarget = qid;
     toolUI.photoReplace = replace || null;
-    toolUI.picking = { qid, kind };
+    // Synchronisierung und Neuzeichnen pausieren, bis alle Dateien gelesen sind (poll, photoBusy)
+    toolUI.picking = { qid, kind, sync: syncMark() };
     // Merken, dass Kamera-App/Galerie offen ist: Lädt die Seite währenddessen neu (Android hat den Browser wegen
     // Speichermangel beendet), wird das beim Start erkannt und ins Fehlerprotokoll geschrieben
     store.set("photoPick", JSON.stringify({ qid, kind, t: Date.now() }));
     el.click();
+  }
+  // Zähler der Synchronisierung (für das Fehlerprotokoll: lief zwischendurch eine?)
+  const syncMark = () => ({ req: app.syncReq || 0, recv: app.syncRecv || 0 });
+  function syncSince(m) {
+    const req = (app.syncReq || 0) - m.req, recv = (app.syncRecv || 0) - m.recv;
+    return req || recv ? "ja (" + req + " Abfrage" + (req === 1 ? "" : "n") + ", " + recv + " neue" + (recv === 1 ? "r" : "") + " Stand/Stände)" : "nein";
   }
   function endPicking() {
     if (!toolUI.picking) return;
@@ -1203,7 +1215,7 @@
   // Neuzeichnen, jeder Synchronisierung und jedem Zurücksetzen des Feldes (startRead). Bis 15 MB wird die Datei sofort
   // vollständig in den Speicher gelesen; größere werden später direkt aus der Datei verkleinert dekodiert.
   const MEM_READ = 15 * 1024 * 1024;
-  const READ_HINT = "Android hat den Zugriff auf die Datei entzogen. „Erneut versuchen“ öffnet die Galerie – bitte dieses Bild dort noch einmal wählen.";
+  const READ_HINT = "Bild konnte nicht gelesen werden. Bitte noch einmal auswählen oder die Kamera nutzen.";
   function startRead(f) {
     let p;
     try {
@@ -1217,18 +1229,32 @@
     } catch (e) { p = Promise.reject(e); }
     return p.then((data) => ({ data }), (e) => ({ e }));
   }
-  function onPhotosChosen(el) {
-    const qid = toolUI.photoTarget, replace = toolUI.photoReplace;
+  function onPhotosChosen(el, ev) {
+    const qid = toolUI.photoTarget, replace = toolUI.photoReplace, picking = toolUI.picking;
+    el.dataset.used = "1";
     let files = [];
     try { files = Array.from(el.files || []); } catch (e) {
       reportPhotoError({ err: { stage: "select", name: e.name || "Fehler", message: e.message || "Dateien nicht lesbar" } });
     }
-    // SOFORT lesen – noch vor allem anderen
-    const jobs = files.map((f) => ({ lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, err: null, notes: [], read: startRead(f) }));
+    // SOFORT lesen – noch vor allem anderen (kein await, kein Neuzeichnen, keine Synchronisierung davor)
+    const evT = ev && ev.timeStamp ? ev.timeStamp : performance.now(), atChange = syncMark();
+    const pick = toolUI.pickNo = (toolUI.pickNo || 0) + 1; // die wievielte Auswahl in dieser Sitzung
+    const jobs = files.map((f) => {
+      const delay = Math.max(0, Math.round(performance.now() - evT));
+      const job = { lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, err: null, notes: [], pick, readDelayMs: delay };
+      job.read = startRead(f).then((r) => {
+        job.sync = "Galerie offen: " + (picking && picking.sync ? syncSince(picking.sync) : "?") + "; beim Lesen: " + syncSince(atChange);
+        return r;
+      });
+      return job;
+    });
     toolUI.picking = null; toolUI.photoReplace = null;
     store.set("photoPick", null);
-    if (!qid || !jobs.length) { photoDone(); return; }
-    if (toolUI.uploading[qid]) { toast("Bitte warten, bis die Fotos hochgeladen sind.", true); return; }
+    if (!qid || !jobs.length) { el.remove(); photoDone(); return; }
+    // Synchronisierung/Neuzeichnen bleiben pausiert, bis alle Dateien gelesen sind
+    toolUI.reading = (toolUI.reading || 0) + 1;
+    Promise.all(jobs.map((j) => j.read)).then(() => { toolUI.reading--; if (!toolUI.reading) photoDone(); });
+    if (toolUI.uploading[qid]) { el.remove(); toast("Bitte warten, bis die Fotos hochgeladen sind.", true); return; }
     if (replace) { // „Erneut versuchen“: altes Fehl-Foto ersetzen, an seinem Platz einfügen
       toolUI.photoFailed[qid] = (toolUI.photoFailed[qid] || []).filter((j) => j.lid !== replace.lid);
       jobs[0].at = replace.at;
@@ -1236,7 +1262,7 @@
       const ts = toolState(qid), base = ts && ts.draft ? ts.draft.length : 0;
       jobs.forEach((j, i) => { j.slot = base + i; }); // gewünschter Platz, falls das Foto später neu gewählt werden muss
     }
-    processPhotos(qid, jobs);
+    processPhotos(qid, jobs).finally(() => el.remove()); // Feld erst entfernen, wenn alles gelesen und verarbeitet ist
   }
   async function processPhotos(qid, jobs) {
     const up = toolUI.uploading[qid] = { done: 0, total: jobs.length };
@@ -1255,7 +1281,7 @@
     }
     delete toolUI.uploading[qid];
     photoDone(qid);
-    if (bad) toast((bad === 1 ? "Ein Foto" : bad + " Fotos") + " nicht hochgeladen – siehe Liste: „Erneut versuchen“ oder „Entfernen“.", true);
+    if (bad) toast((bad === 1 ? "Ein Foto" : bad + " Fotos") + " nicht hochgeladen – siehe Liste über den Fotos.", true);
   }
   // Ein Foto: (gelesen) → verkleinern → hochladen → eintragen. job.small = schon fertig verkleinert (Kamera in der Seite).
   async function addPhotoJob(qid, job) {
@@ -1433,6 +1459,7 @@
     const e = job.err;
     const entry = { stage: STAGE_LOG[e.stage] || e.stage, name: e.name || "", message: e.message || "", fileName: job.name || "",
       fileType: job.type || "", fileSize: job.size || 0, attempts: (job.notes || []).join("; "), player: app.name || "",
+      pick: job.pick || "", readDelayMs: job.readDelayMs != null ? job.readDelayMs : "", sync: job.sync || "",
       detail: [navigator.deviceMemory ? "RAM ~" + navigator.deviceMemory + " GB" : "", screen.width + "×" + screen.height, new Date().toISOString()].filter(Boolean).join(" · ") };
     let q = [];
     try { q = JSON.parse(store.get("errQueue") || "[]"); } catch (x) { q = []; }
@@ -2298,7 +2325,8 @@
   function errLine(e, short) {
     return [short ? "" : (e.time || "") + " · " + (e.stage || "?") + ": " + (e.name || "") + (e.message ? " – " + e.message : ""),
       e.fileName || e.fileSize ? "Datei: " + (e.fileName || "?") + " · " + (e.fileType || "?") + " · " + fmtSize(e.fileSize || 0) : "",
-      e.attempts ? "Versuche: " + e.attempts : "", e.player ? "Spieler: " + e.player : "", e.detail || "", e.ua ? "Gerät: " + e.ua : ""].filter(Boolean).join(short ? " · " : "\n  ");
+      e.attempts ? "Versuche: " + e.attempts : "",
+      e.pick ? "Auswahl Nr. " + e.pick + " in dieser Sitzung · Lesebeginn " + e.readDelayMs + " ms nach dem change-Event · Synchronisierung: " + (e.sync || "?") : "", e.player ? "Spieler: " + e.player : "", e.detail || "", e.ua ? "Gerät: " + e.ua : ""].filter(Boolean).join(short ? " · " : "\n  ");
   }
   async function loadErrorLog() {
     app.errorLog = null;
