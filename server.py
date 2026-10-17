@@ -42,7 +42,8 @@ PHOTO_ID = re.compile(r"p[0-9a-f]{24}")
 PHOTO_GRACE = 120               # Sekunden: frisch hochgeladene Fotos nicht sofort wieder löschen
 ERRLOG_KEEP = 500               # so viele Einträge behält das Fehlerprotokoll höchstens
 ERRLOG_FIELDS = ("stage", "name", "message", "fileName", "fileType", "fileSize", "attempts", "player", "detail",
-                 "pick", "readDelayMs", "sync", "readWays", "lastModified")
+                 "pick", "readDelayMs", "sync", "readWays", "lastModified",
+                 "source", "autoTries", "okTry")
 _lock = threading.Lock()
 
 
@@ -121,6 +122,8 @@ def _load_team(conf):
         with open(_team_path(conf), encoding="utf-8") as f:
             names = json.load(f)
         if isinstance(names, list) and len(names) == 3 and all(isinstance(n, str) for n in names):
+            if not any(n.strip() for n in names):  # alles leer: wie nie gespeichert
+                raise ValueError
             return {"names": names, "saved": True}
     except (FileNotFoundError, ValueError):
         pass
@@ -132,17 +135,47 @@ def _save_team(conf, names):
     if not isinstance(names, list) or len(names) != 3:
         return "Bitte genau 3 Namen."
     clean = [" ".join(str(n or "").split())[:24] for n in names]
-    if any(not n for n in clean):
-        return "Bitte alle 3 Namen eintragen."
-    if len(set(n.lower() for n in clean)) != 3:
-        return "Bitte 3 verschiedene Namen."
+    filled = [n.lower() for n in clean if n]
+    if len(set(filled)) != len(filled):
+        return "Bitte keine doppelten Namen."
     with _lock:
-        os.makedirs(conf["data_dir"], exist_ok=True)
-        tmp = _team_path(conf) + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(clean, f, ensure_ascii=False)
-        os.replace(tmp, _team_path(conf))
+        _write_team(conf, clean)
     return None
+
+
+def _write_team(conf, names):
+    os.makedirs(conf["data_dir"], exist_ok=True)
+    tmp = _team_path(conf) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(names, f, ensure_ascii=False)
+    os.replace(tmp, _team_path(conf))
+
+
+UNNAMED = re.compile(r"(mit)?spieler\s*\d?", re.I)
+
+
+def _team_autofill(conf, name):
+    """Meldet sich jemand mit einem neuen Namen an und ist in der Mitspieler-Liste ein Platz frei (leer oder
+    unbenannt, z. B. „Spieler 2“), wird der Name dort eingetragen – nie doppelt. Ohne gespeicherte Liste ergibt sie sich
+    ohnehin aus den Anmelde-Namen (siehe _load_team)."""
+    name = " ".join(str(name or "").split())[:24]
+    if not name:
+        return
+    with _lock:
+        try:
+            with open(_team_path(conf), encoding="utf-8") as f:
+                team = json.load(f)
+        except (FileNotFoundError, ValueError):
+            return
+        if not (isinstance(team, list) and len(team) == 3):
+            return
+        if name.lower() in [str(n).lower() for n in team]:
+            return
+        for i, n in enumerate(team):
+            if not str(n).strip() or UNNAMED.fullmatch(str(n).strip()):
+                team[i] = name
+                _write_team(conf, team)
+                return
 
 
 def _photo_dir(conf):
@@ -277,7 +310,9 @@ def _api(path, environ, start_response, conf):
     if path == "login" and method == "POST":
         body = _read_body(environ) or {}
         if conf["password"] and hmac.compare_digest(str(body.get("password", "")), conf["password"]):
-            return _json(start_response, "200 OK", {"token": _token(conf), "players": _add_player(conf, body.get("name"))})
+            players = _add_player(conf, body.get("name"))
+            _team_autofill(conf, body.get("name"))
+            return _json(start_response, "200 OK", {"token": _token(conf), "players": players})
         time.sleep(1)  # bremst Rateversuche
         return _json(start_response, "401 Unauthorized", {"error": "Falsches Passwort"})
 
@@ -340,7 +375,9 @@ def _api(path, environ, start_response, conf):
     # Name melden (beim App-Start und nach „Name ändern“) – auch für schon Angemeldete
     if path == "player" and method == "POST":
         body = _read_body(environ) or {}
-        return _json(start_response, "200 OK", {"players": _add_player(conf, body.get("name"))})
+        players = _add_player(conf, body.get("name"))
+        _team_autofill(conf, body.get("name"))
+        return _json(start_response, "200 OK", {"players": players})
 
     if path == "state" and method == "GET":
         doc = _load(conf)

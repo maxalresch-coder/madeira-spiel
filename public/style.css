@@ -585,7 +585,7 @@ button.term { cursor: pointer; }
 .sort-grip .ic { width: 22px; height: 22px; }
 .sort-place { font-weight: 800; color: var(--ocean); min-width: 1.4em; }
 @media (prefers-color-scheme: dark) { .sort-place { color: #6fd0ea; } }
-.sort-name { flex: 1 1 auto; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.sort-name { flex: 1 1 auto; font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sort-btn { flex: 0 0 auto; width: 44px; height: 44px; border: 0; border-radius: 10px; background: var(--sea); color: var(--ink); cursor: pointer; display: grid; place-items: center; }
 .sort-btn:disabled { opacity: .3; cursor: default; }
 .rank-result li { padding: 8px 12px; flex-wrap: wrap; }
@@ -782,3 +782,4 @@ span.pt-btn { cursor: default; }
 .handoff strong { font-family: var(--display); font-size: 1.5rem; }
 .handoff p { margin: 0; }
 .team-input { width: 100%; }
+.photo-zone .photo-files { align-self: center; min-height: 44px; }

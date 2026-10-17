@@ -36,8 +36,10 @@ Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Mitspieler: `d
   localStorage `errQueue` gemerkt und später nachgeschickt) und in **`data/client-errors.log`** gespeichert (auf PythonAnywhere:
   `~/madeira-spiel/data/client-errors.log`; eine JSON-Zeile je Fehler, höchstens 500): `time`, `ua` (Gerät/Browser), `stage`
   (Auswahl / Lesen / Verkleinern / Hochladen / Server / Eintragen / Aufnahme / Kamera), `name`, `message`, `fileName`, `fileType`, `fileSize`,
-  `attempts` (alle Fehlversuche davor), `player`, `detail` (RAM, Bildschirm, Zeit); bei Galerie-Fotos zusätzlich `readWays`
-  (versuchte Lesewege arrayBuffer / createImageBitmap / Objekt-URL + img mit Ergebnis), `lastModified` (der Datei), `pick`
+  `attempts` (alle Fehlversuche davor), `player`, `detail` (RAM, Bildschirm, Zeit); bei Galerie-Fotos zusätzlich `source`
+  (Knopf: Galerie / Dateien / Kamera-App), `autoTries` (automatische Wiederholungen), `okTry` (welcher Versuch/Weg geklappt hat),
+  `readWays` (jeder Versuch mit allen Lesewegen arrayBuffer / createImageBitmap / Objekt-URL + img und Ergebnis),
+  `lastModified` (der Datei), `pick`
   (die wievielte Auswahl in dieser Sitzung), `readDelayMs` (ms zwischen change-Event und Lesebeginn) und `sync` (ob während
   „Galerie offen“ bzw. „beim Lesen“ eine Synchronisierung lief – sollte immer „nein“ sein, sie ist dann pausiert).
 - „Kamera: Kamera-Erlaubnis abgelehnt“ / „Kamera: Kamera nicht verfügbar“ (getUserMedia fehlt, kein Gerät, Wechsel
@@ -45,8 +47,9 @@ Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Mitspieler: `d
 - Bisher gefundene Ursachen (Android 10, Chrome, 4 GB): `NotReadableError … permission problems …` = Android entzieht die
   Leseerlaubnis kurz nach der Auswahl (→ Lesen startet synchron im change-Event); „Seite neu geladen“ während der
   Kamera-App (→ Kamera in der Seite); zweite Galerie-Auswahl über dasselbe, wiederverwendete Datei-Feld scheiterte mit
-  `NotReadableError` (→ frisches Datei-Feld je Auswahl); immer dieselben Dateien scheitern (z. B. 1000160161.jpg), andere
-  gehen – Android gibt bestimmte Bilder nicht heraus (→ andere Lesewege, sonst „Dieses Bild gibt dein Handy nicht frei“).
+  `NotReadableError` (→ frisches Datei-Feld je Auswahl); der Lesefehler ist **zufällig** (dasselbe Bild klappt mal, mal nicht,
+  auch bei Lesebeginn 0 ms ohne Synchronisierung) – vermutlich vergibt die Android-Foto-Auswahl die Leseerlaubnis fehlerhaft
+  (→ automatische Wiederholungen, einmal automatisch neu öffnen, „Aus Dateien wählen“). „Gelesen nach Wiederholung“ = Info.
 - „Auswahl: Seite neu geladen“ = die Seite wurde neu geladen, während Kamera/Galerie offen war (Android hat den Browser wegen
   Speichermangel beendet; erkannt über localStorage `photoPick`).
 - In der App: Einstellungen → **Fehlerprotokoll** (Unterseite `errors`): letzte 30 Einträge (`GET api/client-errors`),
@@ -108,14 +111,18 @@ Vertrauensbasis, keine Beweisfotos.
     Handy) und weiterhin mit mehreren Handys. Neue Hilfsmittel darauf prüfen.
   - **Mitspieler** (Einstellungen → „Mitspieler“, Unterseite `team`): 3 frei bearbeitbare Namen, für alle Handys gleich
     (`data/team.json` auf dem Server, `POST api/team`, `team` kommt mit jeder Spielstand-Antwort → `app.team`; bleibt nach
-    Reset). Noch nie gespeichert → vorausgefüllt mit den ersten bekannten Anmelde-Namen (`data/players.json`).
+    Reset). Leere Plätze erlaubt, keine doppelten Namen. Noch nie gespeichert → vorausgefüllt mit den ersten bekannten Anmelde-Namen (`data/players.json`).
     **Alle Hilfsmittel nehmen ihre Namen aus `teamNames()`** (Tic-Tac-Toe, Türen …), nicht aus den Anmeldungen; fehlen
     Namen, Hinweis + Knopf „Mitspieler eintragen“. Getipptes in den Feldern übersteht die Synchronisierung (`app.teamDraft`,
     Feld im Fokus wird nicht ersetzt).
   - **„Handy weitergeben“:** Nach dem Bestätigen von Geheimem (alle `T.isSecret`-Hilfsmittel, Aktion `fix` → Phase 2)
     zeigt **nur das bestätigende Handy** einen Zwischenbildschirm „Handy weitergeben“ mit „Weiter“ (`toolUI.handoff`,
     `handoffScreen`); andere Handys gehen direkt zum Raten. Ist die Phase inzwischen weiter, entfällt er automatisch.
-  - Wortwahl: Knöpfe/Meldungen sagen **„Bestätigen“** (nie „Bestätigen“), z. B. „Bestätigen und vergleichen“.
+  - Wortwahl: Knöpfe/Meldungen sagen **„Bestätigen“** (nie „Festschreiben“), z. B. „Bestätigen und vergleichen“.
+  - **Mehrere Handys bleiben der Normalfall:** Jeder meldet sich auf seinem Handy mit eigenem Namen an und spielt gleichzeitig
+    mit; „Handy weitergeben“ ist nur eine zusätzliche Möglichkeit. Neuer Anmelde-Name, der noch nicht in der Mitspieler-Liste
+    steht → wird automatisch auf einen freien Platz gesetzt (leer oder unbenannt wie „Spieler 2“; `_team_autofill` beim
+    Login und bei `POST api/player`), nie doppelt (Groß/klein egal); ist kein Platz frei, bleibt die Liste.
   - **Rollen hängen nie an einem Handy (Grundregel):** Wir spielen als Team und reichen Handys herum. Jeder Schritt eines
     Hilfsmittels (geheim eingeben, bestätigen, raten, auflösen, neue Runde) geht auf **jedem** eingeloggten Handy, auch auf
     dem, auf dem eingegeben wurde. Keine Auswahl „Wer gibt ein?“, keine Prüfung nach Spieler oder Gerät. Der Ablauf richtet
@@ -143,8 +150,8 @@ Vertrauensbasis, keine Beweisfotos.
     gelöscht. `select()` nur auf das gerade aktive Feld anwenden (holt sonst den Fokus zurück). Gilt für eingebende Person
     und Ratende gleichermaßen.
   - Sortieren (`sortList`/`bindSort`): Ziehen am Griff (Pointer-Events, `touch-action: none`) – gezogene Box hebt sich ab
-    (Schatten, etwas größer) und folgt dem Finger, die anderen rutschen animiert, Platznummern wandern mit – plus Pfeile
-    hoch/runter; während des Ziehens kein Neuzeichnen. `sync` = gemeinsame Sortierung über den Server (Aktion `arrange`).
+    (Schatten, etwas größer) und folgt dem Finger, die anderen rutschen animiert, Platznummern wandern mit. **Keine
+    Hoch-/Runter-Pfeiltasten** (überall entfernt; der Platz gehört den Namen – einzeilig, `.sort-name` ohne Umbruch); während des Ziehens kein Neuzeichnen. `sync` = gemeinsame Sortierung über den Server (Aktion `arrange`).
   - **Zufall:** Ordnet ein Hilfsmittel etwas zufällig an oder mischt, muss jede mögliche Anordnung gleich wahrscheinlich sein,
     auch die richtige Lösung; nichts ausschließen oder bevorzugen. Dafür `T.shuffle` (Fisher-Yates) mit `T.randomInt`
     (unverzerrt durch Verwerfen) und `rand32()` aus `crypto.getRandomValues`. Der Zufall wird beim Auslösen im Browser
@@ -163,13 +170,12 @@ Vertrauensbasis, keine Beweisfotos.
     Datei **synchron im change-Event** (`startRead`), vor jedem await, Neuzeichnen, Synchronisieren und Zurücksetzen des Feldes:
     Dateien bis 15 MB (`MEM_READ`) sofort vollständig in den Speicher (`arrayBuffer` → eigener Blob), größere nur
     Dateianfang (Zugriff prüfen) und später direkt aus der Datei verkleinert dekodieren (nie die ganze große Datei kopieren –
-    Speicher). Kein Wiederholen mit derselben Datei-Referenz (zwecklos). Danach streng nacheinander, immer nur ein Foto:
+    Speicher). Danach streng nacheinander, immer nur ein Foto:
     `addPhotoJob` = verkleinern (`shrinkPhoto`) → `uploadPhoto` (bis zu 3 Versuche bei Netz-/Serverfehler) → eintragen
-    (`toolDo(…, quiet)`). Jedes Foto merkt sich seinen Platz (`slot`); „Bild neu auswählen“ nach einem **Lesefehler** öffnet
+    (`toolDo(…, quiet)`). Jedes Foto merkt sich seinen Platz (`slot`); „Noch einmal wählen“ nach einem **Lesefehler** öffnet
     die Galerie (einzeln) für genau diesen Platz (`choosePhotos(…, {lid, at})`, Aktion `addPhoto` mit `at`), bei anderen
     Fehlern wird die Kopie im Speicher erneut verarbeitet. 0 Byte → Hinweis „nur in der Cloud?“. Dasselbe Bild kann erneut gewählt
-    werden (jedes Mal ein neues Feld). Lesefehler-Meldung: „Bild konnte nicht gelesen werden. Bitte noch einmal auswählen oder
-    die Kamera nutzen.“ mit Knopf „Bild neu auswählen“ (öffnet direkt eine neue Galerie-Auswahl für diesen Platz).
+    werden (jedes Mal ein neues Feld). Lesefehler: siehe „Lesen mit Wiederholungen“ unten.
     **Kamera in der Seite** (`openCamera`, weil Android den Browser beendete, während die Kamera-App offen war):
     `getUserMedia({video: {facingMode: "environment"}})`, Live-Vorschau im Hilfsmittel (`<video playsinline muted autoplay>`,
     nötig fürs iPhone; Frontkamera-Vorschau gespiegelt, Foto nicht), großer Auslöser, Knopf Kamera wechseln (alte Tracks
@@ -191,11 +197,18 @@ Vertrauensbasis, keine Beweisfotos.
     dreht das Canvas nach EXIF (1–8); (2) `createImageBitmap(file, {resizeWidth})`; (3) Bild-Element mit Objekt-URL
     (`img.decode()`, z. B. iPhone/HEIC). Scheitert alles: Dateianfang erneut lesen → nicht lesbar = Stufe „Lesen“, sonst
     kleiner erneut (3 Runden) → „Verkleinern“. Ergebnis jeder Verkleinerung prüfen (nicht leer, `isJpeg`), sonst kleiner/mit
-    weniger Qualität erneut. **Andere Lesewege** (`startRead`): scheitert `file.arrayBuffer()`, werden nacheinander `createImageBitmap(file)`
-    (`readViaBitmap`) und Objekt-URL + `<img>` (`readViaImg`) probiert – beide zeichnen gleich verkleinert (≤ 1.000 px,
-    `drawSmall`) ins Canvas (dann `job.small`); erst wenn alle scheitern, gilt das Bild als nicht lesbar (Meldung „Dieses Bild
-    gibt dein Handy nicht frei. Bitte ein anderes wählen oder die Kamera nutzen.“ + Knopf „Bild neu auswählen“); die anderen
-    Bilder der Auswahl werden trotzdem übernommen. Protokoll: `readWays` (jeder Weg mit Ergebnis), `lastModified`.
+    weniger Qualität erneut. **Lesen mit Wiederholungen** (`startRead`): Der `NotReadableError` ist **zufällig** (dasselbe Bild klappt mal, mal nicht –
+    die Android-Foto-Auswahl vergibt die Leseerlaubnis manchmal fehlerhaft). 1. Versuch synchron im change-Event, dann nach
+    150, 500 und 1.500 ms erneut (`READ_RETRIES`), jedes Mal alle Lesewege: `arrayBuffer` (`readWhole`), `createImageBitmap(file)`
+    (`readViaBitmap`), Objekt-URL + `<img>` (`readViaImg`; beide zeichnen gleich verkleinert, `drawSmall`, dann `job.small`).
+    Gerettete Bilder kommen als Info „Gelesen nach Wiederholung“ ins Protokoll. Scheitert alles: Auswahl **einmal
+    automatisch** neu öffnen (`autoReopen`, für das erste betroffene Bild an seinem Platz; ist die Berührung nicht mehr
+    „frisch“ – `navigator.userActivation` –, Fenster „Noch einmal wählen“ mit Knopf, weil Browser Auswahlen nur nach Antippen
+    öffnen); danach Meldung „Bild konnte gerade nicht gelesen werden. Bitte noch einmal versuchen, über Dateien wählen oder
+    die Kamera nutzen.“ mit „Noch einmal wählen“ / „Aus Dateien“ / „Entfernen“. Die anderen Bilder der Auswahl werden
+    übernommen. **„Aus Dateien wählen“** (kleiner Knopf unter Kamera/Galerie, `kind` „files“): Datei-Feld **ohne** `accept`,
+    damit Android die App „Dateien“ statt der Foto-Auswahl zeigt; nur Bilder werden übernommen (`isImageFile`), andere mit
+    kurzer Meldung abgelehnt. Protokoll: `source` (Galerie/Dateien/Kamera-App), `autoTries`, `okTry`, `readWays`, `lastModified`.
     Fehlgeschlagene Fotos bleiben (nur lokal, `toolUI.photoFailed`) mit „Erneut versuchen“ und
     „Entfernen“ sichtbar; Meldung nennt die Stufe (`PHOTO_STAGES`: Auswahl / Lesen auf dem Handy / Verkleinern / Hochladen
     zum Server / Server hat abgelehnt / Eintragen / Aufnahme), „Details“ zeigen Fehlername, Dateityp, Größe und alle Fehlversuche;
@@ -229,7 +242,7 @@ Vertrauensbasis, keine Beweisfotos.
     und schreiben fest → jede Position grün/rot („richtig wäre: …“); alle richtig = „Geschafft!“, sonst „Daneben“ + „Neue Runde – mit anderen Früchten“.
   - „Buchstaben-Fotos“ (Baumstaben, `kind: "photoWord"`): Phase 1 zeigt oben gut sichtbar „Foto aufnehmen“ (Kamera) und
     „Aus Galerie wählen“ (mehrere); ≥ 5 Fotos als sortierbare Liste (Ziehen am Griff mit Animation wie Früchteschweiger,
-    Aktion `arrange` mit den Schlüsseln der Einträge, plus Pfeile ▲▼, Löschen, **Duplizieren**), je Foto ein Feld für genau
+    Aktion `arrange` mit den Schlüsseln der Einträge, Löschen, **Duplizieren**; keine Pfeile), je Foto ein Feld für genau
     einen Buchstaben (A–Z, Ä, Ö, Ü, ß;
     `T.letter`); Entwurf `draft` (Einträge `{key, photo}`, `T.draftEntries`) + verschleierte `draftLetters`, synchron, übersteht
     Neuladen. **Dasselbe Bild darf mehrfach vorkommen** (z. B. doppeltes L): keine Prüfung auf doppelte Bilder; „Duplizieren“
@@ -252,7 +265,7 @@ Vertrauensbasis, keine Beweisfotos.
       markieren → die anderen tippen ein Feld → „Richtig“ (grün, gefunden → neu verstecken) oder „Falsch“ (rot, Versteck
       grün umrandet; „Nicht gefunden – Quest geschafft!“) + „Trotzdem richtig“ (Aktion `accept`). Zeile: „gefunden“/„Geschafft“.
     - „Türen zuordnen“ (Gespür für die richtige Tür, photoNames): 3 Fotos, jedem geheim einen anderen Namen (Chips der
-      3 Mitspieler, `teamNames`); Raten: Fotos links fest, Namen rechts per Ziehen/Pfeilen gemeinsam sortieren
+      3 Mitspieler, `teamNames`); Raten: Fotos links fest, Namen rechts per Ziehen gemeinsam sortieren
       (`sortList` sync, Aktion `arrange`, `guessOrder` gemischt) → „Bestätigen“ → je Foto grün/rot („richtig: …“).
     - „Adler-Stein raten“ (Steinadler, photoPick): 3 Fotos, einen geheim als Adler antippen; Raten: Stein antippen →
       „Bestätigen“ → grün/rot, der Adler wird grün umrandet gezeigt.

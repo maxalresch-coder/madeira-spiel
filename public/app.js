@@ -909,16 +909,14 @@
   const hiddenDots = '<span class="tool-hidden" aria-label="verdeckt">' + icon("lock") + " verdeckt</span>";
   const lookAway = '<p class="tool-wait">' + icon("eye-off") + " Wer eingibt, tippt hier – die anderen schauen weg. Das geht auf jedem Handy.</p>";
 
-  // Sortierbare Liste: Ziehen am Griff oder Pfeile hoch/runter. Ohne sync bleibt die Reihenfolge bis zum
+  // Sortierbare Liste: Ziehen am Griff (ohne Pfeiltasten – der Platz gehört den Namen). Ohne sync bleibt die Reihenfolge bis zum
   // Bestätigen nur auf diesem Handy (toolUI.order[key]); mit sync wird sie geteilt (Aktion „arrange“).
   function sortList(key, items, sync) {
     let order = sync ? items.slice() : toolUI.order[key];
     if (!order || order.length !== items.length || items.some((x) => order.indexOf(x) < 0)) order = toolUI.order[key] = items.slice();
-    const mv = (i, d, off) => '<button class="sort-btn" data-tool-ui="mv" data-key="' + esc(key) + '" data-i="' + i + '" data-d="' + d + '"' + (sync ? " data-sync" : "") +
-      ' aria-label="nach ' + (d < 0 ? "oben" : "unten") + '"' + (off ? " disabled" : "") + ">" + icon(d < 0 ? "chevron-up" : "chevron-down") + "</button>";
     return '<ol class="sort-list" data-sort="' + esc(key) + '"' + (sync ? " data-sync" : "") + ">" + order.map((v, i) =>
       '<li class="sort-item" data-val="' + esc(v) + '"><span class="sort-grip" data-grip aria-hidden="true">' + icon("grip-vertical") + "</span>" +
-      '<span class="sort-place">' + (i + 1) + '.</span><span class="sort-name">' + esc(v) + "</span>" + mv(i, -1, i === 0) + mv(i, 1, i === order.length - 1) + "</li>").join("") +
+      '<span class="sort-place">' + (i + 1) + '.</span><span class="sort-name">' + esc(v) + "</span></li>").join("") +
       "</ol>";
   }
   // Ziehen: die gezogene Box hebt sich ab und folgt dem Finger, die anderen rutschen animiert zur Seite
@@ -1008,7 +1006,7 @@
     let h = phaseBar(ph) + '<p class="small">Früchte: <strong>' + ts.fruits.map(esc).join(" · ") + "</strong></p>";
     if (ph === 1) {
       const key = qid + ":set:" + round;
-      return h + lookAway + '<p class="tool-label">Geheime Rangfolge – oben die beste. Am Griff ziehen oder mit den Pfeilen verschieben.</p>' +
+      return h + lookAway + '<p class="tool-label">Geheime Rangfolge – oben die beste. Zum Sortieren am Griff ziehen.</p>' +
         sortList(key, ts.fruits) + tBtn("fix", icon("lock") + " Bestätigen", "btn-primary btn-block", ' data-key="' + esc(key) + '"') +
         tBtn("editFruits", "Früchte ändern", "btn-ghost btn-block");
     }
@@ -1131,12 +1129,11 @@
       return phaseBar(1) + lookAway +
         '<p class="tool-label">Für jeden Buchstaben einen Baum oder Ast fotografieren, dessen Form ihn darstellt – in der richtigen Reihenfolge, mindestens ' + cfg.minLetters + ". Zu jedem Foto genau einen Buchstaben eintragen.</p>" +
         photoPicker(qid, true) +
-        (draft.length ? '<p class="muted small">Reihenfolge ändern: am Griff ziehen oder mit den Pfeilen.</p>' +
+        (draft.length ? '<p class="muted small">Reihenfolge ändern: am Griff ziehen.</p>' +
           '<ol class="sort-list photo-sort" data-sort="' + qid + ':photos" data-sync>' + draft.map((d, i) =>
             '<li class="sort-item photo-sort-item" data-val="' + esc(d.key) + '"><span class="sort-grip" data-grip aria-hidden="true">' + icon("grip-vertical") + "</span>" +
             '<span class="ps-photo">' + photoImg(d.photo, "ps-thumb") + '<span class="sort-place">' + (i + 1) + "</span></span>" +
             letterInput('data-letter="' + i + '"', letters[i], i) +
-            '<span class="ps-move">' + pbtn("movePhoto", "chevron-up", i, -1, "nach vorne", i === 0) + pbtn("movePhoto", "chevron-down", i, 1, "nach hinten", i === draft.length - 1) + "</span>" +
             '<span class="ps-move">' + pbtn("duplicate", "copy", i, 0, "Duplizieren (Kopie darunter, z. B. für doppelte Buchstaben)", draft.length >= 20) +
             pbtn("removePhoto", "trash-2", i, 0, "Foto löschen") + "</span></li>").join("") + "</ol>" : "") +
         tBtn("fix", icon("lock") + " Bestätigen" + (draft.length ? " (" + draft.length + " Buchstaben)" : ""), "btn-primary btn-block", ready ? "" : " disabled") +
@@ -1188,6 +1185,8 @@
   function photoZoneInner(qid, multiple) {
     const failed = photoFailedHTML(qid), cam = toolUI.cam;
     const gallery = '<button class="btn btn-ghost" data-tool-ui="photo-gallery"' + (multiple ? " data-multiple" : "") + ">" + icon("image") + " Aus Galerie wählen</button>";
+    // Zweiter Weg ohne Bildfilter: Android zeigt dann die App „Dateien“ statt der Foto-Auswahl
+    const filesBtn = '<button class="btn btn-small btn-ghost photo-files" data-tool-ui="photo-files"' + (multiple ? " data-multiple" : "") + ">" + icon("folder-open") + " Aus Dateien wählen</button>";
     // Kamera in der Seite: Platz für die Live-Vorschau (das Kamera-Element selbst bleibt beim Neuzeichnen erhalten, mountCamera)
     if (cam && cam.qid === qid) return '<div data-cam-slot="' + qid + '"></div>' + failed;
     if (!app.online) return '<div class="tool-warn">' + icon("wifi-off") + " Offline – Fotos aufnehmen geht erst wieder mit Netz.</div>" + failed;
@@ -1199,11 +1198,11 @@
     const fb = toolUI.camFallback;
     if (fb) { // Kamera in der Seite geht nicht (abgelehnt/nicht vorhanden): Rückfall auf die Kamera-App
       return '<div class="tool-warn">' + icon("camera-off") + " " + esc(fb.text) + "</div>" +
-        '<div class="grid2 photo-pick"><button class="btn btn-primary" data-tool-ui="photo-camera">' + icon("camera") + " Foto aufnehmen</button>" + gallery + "</div>" +
+        '<div class="grid2 photo-pick"><button class="btn btn-primary" data-tool-ui="photo-camera">' + icon("camera") + " Foto aufnehmen</button>" + gallery + "</div>" + filesBtn +
         '<p class="muted small">Falls die Seite abstürzt, nutze „Aus Galerie wählen“.</p>' +
         '<button class="btn btn-small btn-ghost" data-tool-ui="cam-open">' + icon("rotate-ccw") + " Kamera in der Seite erneut versuchen</button>" + failed;
     }
-    return '<div class="grid2 photo-pick"><button class="btn btn-primary" data-tool-ui="cam-open">' + icon("camera") + " Foto aufnehmen</button>" + gallery + "</div>" + failed;
+    return '<div class="grid2 photo-pick"><button class="btn btn-primary" data-tool-ui="cam-open">' + icon("camera") + " Foto aufnehmen</button>" + gallery + "</div>" + filesBtn + failed;
   }
   // Während Fotos aus der Galerie ausgewählt und verarbeitet werden, wird nur diese Foto-Zone (Fortschritt) aktualisiert;
   // das Neuzeichnen des übrigen Hilfsmittels (z. B. durch die Synchronisierung) wird aufgeschoben und danach nachgeholt.
@@ -1232,7 +1231,8 @@
         "<br>Datei: " + esc(j.name || "ohne Namen") + " · " + esc(j.type || "unbekannter Dateityp") + " · " + fmtSize(j.size || 0) +
         (j.notes && j.notes.length ? "<br>Versuche: " + esc(j.notes.join("; ")) : "") + "</details>" +
       '<div class="pf-btns"><button class="btn btn-small btn-primary" data-tool-ui="photo-retry" data-lid="' + j.lid + '">' +
-        (j.err.stage === "read" ? icon("image") + " Bild neu auswählen" : icon("rotate-ccw") + " Erneut versuchen") + "</button>" +
+        (j.err.stage === "read" ? icon("image") + " Noch einmal wählen" : icon("rotate-ccw") + " Erneut versuchen") + "</button>" +
+      (j.err.stage === "read" ? '<button class="btn btn-small btn-ghost" data-tool-ui="photo-retry" data-kind="files" data-lid="' + j.lid + '">' + icon("folder-open") + " Aus Dateien</button>" : "") +
       '<button class="btn btn-small btn-ghost" data-tool-ui="photo-drop" data-lid="' + j.lid + '">Entfernen</button></div></div></div>').join("") + "</div>";
   }
   // Für JEDE Auswahl ein frisches Datei-Feld, direkt am <body> (außerhalb aller Bereiche, die neu gezeichnet werden).
@@ -1242,7 +1242,9 @@
   // (sonst öffnet Safari die Auswahl teils nicht). Die Knöpfe lösen es nur aus.
   function newPhotoInput(kind) {
     const el = document.createElement("input");
-    el.type = "file"; el.accept = "image/*"; el.className = "photo-file"; el.tabIndex = -1;
+    el.type = "file"; el.className = "photo-file"; el.tabIndex = -1;
+    // „Aus Dateien wählen“: ohne Bildfilter, damit Android die App „Dateien“ statt der Foto-Auswahl zeigt
+    if (kind !== "files") el.accept = "image/*";
     el.dataset.photoInput = kind;
     el.setAttribute("aria-hidden", "true");
     if (kind === "camera") el.setAttribute("capture", "environment");
@@ -1258,7 +1260,7 @@
     // Übrig gebliebene, nie benutzte Felder (Auswahl ohne „cancel“-Ereignis abgebrochen) wegräumen
     $$("input[data-photo-input]:not([data-used])").forEach((old) => old.remove());
     const el = newPhotoInput(kind);
-    el.multiple = kind === "gallery" && !!multiple && !replace;
+    el.multiple = (kind === "gallery" || kind === "files") && !!multiple && !replace;
     toolUI.photoTarget = qid;
     toolUI.photoReplace = replace || null;
     // Synchronisierung und Neuzeichnen pausieren, bis alle Dateien gelesen sind (poll, photoBusy)
@@ -1311,31 +1313,39 @@
   // Neuzeichnen, jeder Synchronisierung und jedem Zurücksetzen des Feldes (startRead). Bis 15 MB wird die Datei sofort
   // vollständig in den Speicher gelesen; größere werden später direkt aus der Datei verkleinert dekodiert.
   const MEM_READ = 15 * 1024 * 1024;
-  const READ_HINT = "Dieses Bild gibt dein Handy nicht frei. Bitte ein anderes wählen oder die Kamera nutzen.";
-  // Manche Bilder (z. B. aus App-Ordnern oder der Cloud) gibt Android nicht per arrayBuffer heraus. Dann werden
-  // nacheinander weitere Lesewege probiert: createImageBitmap(file), dann Objekt-URL + <img> – beide zeichnen das Bild
-  // gleich verkleinert (≤ 1.000 px) in ein Canvas. Erst wenn alle scheitern, gilt das Bild als nicht lesbar.
-  // ways = welche Wege versucht wurden und mit welchem Ergebnis (fürs Fehlerprotokoll).
+  const READ_HINT = "Bild konnte gerade nicht gelesen werden. Bitte noch einmal versuchen, über Dateien wählen oder die Kamera nutzen.";
+  // Lesen mit Wiederholungen: Die Android-Foto-Auswahl vergibt die Leseerlaubnis manchmal fehlerhaft – zufällig, dasselbe
+  // Bild klappt mal und mal nicht (Fehlerprotokoll). Darum: 1. Versuch synchron im change-Event, scheitert er, nach 150,
+  // 500 und 1.500 ms erneut – jedes Mal alle Lesewege: arrayBuffer (bis 15 MB ganz in den Speicher, größer nur Dateianfang),
+  // createImageBitmap(file), Objekt-URL + <img> (beide zeichnen gleich verkleinert ins Canvas). ways = jeder Weg mit
+  // Ergebnis, tries = Anzahl Versuche, okTry = welcher Versuch/Weg geklappt hat (fürs Fehlerprotokoll).
+  const READ_RETRIES = [150, 500, 1500];
+  function readWhole(f) {
+    if (f.size > MEM_READ) return f.slice(0, 256 * 1024).arrayBuffer().then(() => f); // groß: später direkt aus der Datei
+    return f.arrayBuffer().then((buf) => {
+      if (!buf.byteLength) throw Object.assign(new Error("0 Byte gelesen"), { name: "EmptyRead" });
+      return new Blob([buf], { type: f.type || "image/jpeg" });
+    });
+  }
   function startRead(f) {
     const ways = [];
-    let p;
-    try {
-      if (!f.size) p = Promise.reject(Object.assign(new Error("Die Datei ist leer (0 Byte)"), { name: "EmptyFile" }));
-      else if (f.size <= MEM_READ) {
-        p = f.arrayBuffer().then((buf) => {
-          if (!buf.byteLength) throw Object.assign(new Error("0 Byte gelesen"), { name: "EmptyRead" });
-          return new Blob([buf], { type: f.type || "image/jpeg" });
-        });
-      } else p = f.slice(0, 256 * 1024).arrayBuffer().then(() => f); // groß: Zugriff sofort sichern, später direkt aus der Datei
-    } catch (e) { p = Promise.reject(e); }
-    return p.then((data) => { ways.push("arrayBuffer: ok"); return { data, ways }; }, async (e) => {
-      ways.push("arrayBuffer: " + errText(e));
-      if (e && e.name === "EmptyFile") return { e, ways };
-      for (const [way, fn] of [["createImageBitmap", readViaBitmap], ["Objekt-URL + img", readViaImg]]) {
-        try { const small = await fn(f); ways.push(way + ": ok"); return { data: small, small: true, ways }; } catch (e2) { ways.push(way + ": " + errText(e2)); }
+    if (!f.size) return Promise.resolve({ e: Object.assign(new Error("Die Datei ist leer (0 Byte)"), { name: "EmptyFile" }), ways: ["leer (0 Byte)"], tries: 1 });
+    let first, lastErr = null;
+    try { first = readWhole(f); } catch (e) { first = Promise.reject(e); } // sofort, noch im change-Event
+    const round = async (n, p) => {
+      try { const data = await (p || readWhole(f)); ways.push(n + ". arrayBuffer: ok"); return { data, okTry: n + ". Versuch, arrayBuffer" }; } catch (e) {
+        ways.push(n + ". arrayBuffer: " + errText(e)); lastErr = lastErr || e;
       }
-      return { e, ways };
-    });
+      for (const [way, fn] of [["createImageBitmap", readViaBitmap], ["Objekt-URL + img", readViaImg]]) {
+        try { const small = await fn(f); ways.push(n + ". " + way + ": ok"); return { data: small, small: true, okTry: n + ". Versuch, " + way }; } catch (e2) { ways.push(n + ". " + way + ": " + errText(e2)); }
+      }
+      return null;
+    };
+    return (async () => {
+      let r = await round(1, first), n = 1;
+      while (!r && n <= READ_RETRIES.length) { await pause(READ_RETRIES[n - 1]); n++; r = await round(n); }
+      return r ? Object.assign(r, { ways, tries: n }) : { e: lastErr, ways, tries: n };
+    })();
   }
   // Bild-Quelle verkleinert (lange Seite ≤ 1.000 px) als JPEG ins Canvas zeichnen; Ergebnis prüfen
   async function drawSmall(src, w, h) {
@@ -1363,19 +1373,27 @@
       return await drawSmall(img, img.naturalWidth, img.naturalHeight);
     } finally { img.removeAttribute("src"); URL.revokeObjectURL(url); }
   }
+  const SOURCES = { gallery: "Galerie", files: "Dateien", camera: "Kamera-App" };
+  const isImageFile = (f) => /^image\//.test(f.type || "") || /\.(jpe?g|png|heic|heif|webp|gif|bmp|avif)$/i.test(f.name || "");
   function onPhotosChosen(el, ev) {
-    const qid = toolUI.photoTarget, replace = toolUI.photoReplace, picking = toolUI.picking;
+    const qid = toolUI.photoTarget, replace = toolUI.photoReplace, picking = toolUI.picking, kind = el.dataset.photoInput;
     el.dataset.used = "1";
     let files = [];
     try { files = Array.from(el.files || []); } catch (e) {
       reportPhotoError({ err: { stage: "select", name: e.name || "Fehler", message: e.message || "Dateien nicht lesbar" } });
+    }
+    if (kind === "files") { // nur Bilder übernehmen
+      const other = files.filter((f) => !isImageFile(f));
+      if (other.length) toast("Nur Bilder – " + other.map((f) => "„" + f.name + "“").join(", ") + (other.length === 1 ? " ist kein Bild." : " sind keine Bilder."), true);
+      files = files.filter(isImageFile);
     }
     // SOFORT lesen – noch vor allem anderen (kein await, kein Neuzeichnen, keine Synchronisierung davor)
     const evT = ev && ev.timeStamp ? ev.timeStamp : performance.now(), atChange = syncMark();
     const pick = toolUI.pickNo = (toolUI.pickNo || 0) + 1; // die wievielte Auswahl in dieser Sitzung
     const jobs = files.map((f) => {
       const delay = Math.max(0, Math.round(performance.now() - evT));
-      const job = { lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, lastModified: f.lastModified, err: null, notes: [], pick, readDelayMs: delay };
+      const job = { lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, lastModified: f.lastModified, err: null, notes: [], pick, readDelayMs: delay,
+        kind, source: SOURCES[kind] || kind, fromRetry: !!replace };
       job.read = startRead(f).then((r) => {
         job.sync = "Galerie offen: " + (picking && picking.sync ? syncSince(picking.sync) : "?") + "; beim Lesen: " + syncSince(atChange);
         return r;
@@ -1415,15 +1433,35 @@
     }
     delete toolUI.uploading[qid];
     photoDone(qid);
-    if (bad) toast((bad === 1 ? "Ein Foto" : bad + " Fotos") + " nicht hochgeladen – siehe Liste über den Fotos.", true);
+    // Lesefehler: die Auswahl einmal automatisch neu öffnen (für das erste betroffene Bild, an seinem Platz)
+    const again = jobs.find((j) => j.err && j.err.stage === "read" && !j.fromRetry && (j.kind === "gallery" || j.kind === "files"));
+    if (again) autoReopen(qid, again);
+    else if (bad) toast((bad === 1 ? "Ein Foto" : bad + " Fotos") + " nicht hochgeladen – siehe Liste über den Fotos.", true);
+  }
+  // Ohne frisches Antippen öffnen Browser keine Auswahl. Ist die Berührung noch „frisch“ (Chrome: userActivation), sofort
+  // öffnen; sonst ein Fenster mit einem großen Knopf, der die Auswahl direkt öffnet.
+  function autoReopen(qid, job) {
+    job.fromRetry = true;
+    const kind = job.kind === "files" ? "files" : "gallery";
+    const go = () => { if (toolUI.photoFailed[qid] && toolUI.photoFailed[qid].indexOf(job) >= 0) choosePhotos(qid, kind, false, { lid: job.lid, at: job.at }); };
+    if (navigator.userActivation && navigator.userActivation.isActive) { setTimeout(go, 30); return; }
+    const m = openModal(() => '<h2>' + icon("image") + " Noch einmal wählen</h2>" + '<p class="muted">Bild konnte gerade nicht gelesen werden. Bitte noch einmal auswählen.</p>' +
+      '<div class="modal-actions"><button class="btn btn-ghost" id="ro-no">Später</button><button class="btn btn-primary" id="ro-yes">' +
+      icon(kind === "files" ? "folder-open" : "image") + (kind === "files" ? " Dateien öffnen" : " Galerie öffnen") + "</button></div>",
+    (el) => {
+      $("#ro-no", el).addEventListener("click", () => closeModal());
+      $("#ro-yes", el).addEventListener("click", () => { closeModal(); go(); }); // direkt im Antippen → Auswahl öffnet sich
+    }, { static: true, stack: true });
+    return m;
   }
   // Ein Foto: (gelesen) → verkleinern → hochladen → eintragen. job.small = schon fertig verkleinert (Kamera in der Seite).
   async function addPhotoJob(qid, job) {
     if (!job.data && job.read) {
       const r = await job.read;
       job.read = null;
-      job.readWays = r.ways;
+      job.readWays = r.ways; job.autoTries = Math.max(0, (r.tries || 1) - 1); job.okTry = r.okTry || "";
       if (r.small) job.small = true;
+      if (!r.e && r.tries > 1) reportPhotoError(Object.assign({}, job, { err: { stage: "read", name: "Gelesen nach Wiederholung", message: r.okTry } })); // zur Info
       if (r.e) throw new PhotoError("read", r.e.name || "Lesefehler", r.e.message || "",
         r.e.name === "EmptyFile" ? "Liegt das Bild nur in der Cloud? Bitte erst auf dem Handy öffnen (herunterladen) und neu auswählen." : READ_HINT);
       job.data = r.data;
@@ -1443,13 +1481,13 @@
     (toolUI.photoFailed[qid] = toolUI.photoFailed[qid] || []).push(job);
     reportPhotoError(job);
   }
-  function retryPhoto(qid, lid) { // bewusst nicht async: die Galerie muss direkt aus dem Antippen heraus öffnen
+  function retryPhoto(qid, lid, kind) { // bewusst nicht async: die Galerie muss direkt aus dem Antippen heraus öffnen
     const list = toolUI.photoFailed[qid] || [], i = list.findIndex((j) => j.lid === lid);
     if (i < 0 || toolUI.uploading[qid]) return;
     if (!app.online) { toast(OFFLINE_MSG, true); return; }
     const job = list[i];
     if (!job.data && job.err.stage === "capture") { list.splice(i, 1); updatePhotoZone(qid); toast("Bitte einfach nochmal auslösen."); return; }
-    if (!job.data) return choosePhotos(qid, "gallery", false, { lid, at: job.at }); // Lesefehler: Bild neu wählen
+    if (!job.data) return choosePhotos(qid, kind === "files" ? "files" : "gallery", false, { lid, at: job.at }); // Lesefehler: Bild neu wählen
     list.splice(i, 1);
     job.err = null; job.notes = [];
     return processPhotos(qid, [job]);
@@ -1597,6 +1635,7 @@
       fileType: job.type || "", fileSize: job.size || 0, attempts: (job.notes || []).join("; "), player: app.name || "",
       pick: job.pick || "", readDelayMs: job.readDelayMs != null ? job.readDelayMs : "", sync: job.sync || "",
       readWays: (job.readWays || []).join("; "), lastModified: job.lastModified ? new Date(job.lastModified).toISOString() : "",
+      source: job.source || "", autoTries: job.autoTries != null ? job.autoTries : "", okTry: job.okTry || "",
       detail: [navigator.deviceMemory ? "RAM ~" + navigator.deviceMemory + " GB" : "", screen.width + "×" + screen.height, new Date().toISOString()].filter(Boolean).join(" · ") };
     let q = [];
     try { q = JSON.parse(store.get("errQueue") || "[]"); } catch (x) { q = []; }
@@ -1977,7 +2016,8 @@
     if (ui === "peek-off") { toolUI.peek[qid] = 0; return rerenderTools(qid); }
     if (ui === "cam-open") return openCamera(qid);
     if (ui === "photo-camera") return choosePhotos(qid, "camera");
-    if (ui === "photo-retry") return retryPhoto(qid, b.dataset.lid);
+    if (ui === "photo-retry") return retryPhoto(qid, b.dataset.lid, b.dataset.kind);
+    if (ui === "photo-files") return choosePhotos(qid, "files", b.hasAttribute("data-multiple"));
     if (ui === "photo-drop") { toolUI.photoFailed[qid] = (toolUI.photoFailed[qid] || []).filter((j) => j.lid !== b.dataset.lid); return rerenderTools(qid); }
     if (ui === "photo-gallery") return choosePhotos(qid, "gallery", b.hasAttribute("data-multiple"));
     if (ui === "mv") {
@@ -2459,7 +2499,8 @@
     const names = (app.team && app.team.names) || ["", "", ""], draft = app.teamDraft || {};
     return pageHead("users", "Mitspieler") +
       '<div class="panel set-panel">' +
-        '<p class="muted small" style="margin:0">Diese 3 Namen nutzen alle Hilfsmittel – auch wenn ihr nur ein Handy habt. Gilt für alle Handys.</p>' +
+        '<p class="muted small" style="margin:0">Diese 3 Namen nutzen alle Hilfsmittel – auch wenn ihr nur ein Handy habt. Gilt für alle Handys. ' +
+          "Leere Plätze füllen sich von selbst, sobald sich jemand mit einem neuen Namen anmeldet.</p>" +
         [0, 1, 2].map((i) => '<label class="tool-label" for="team-' + i + '">Mitspieler ' + (i + 1) + "</label>" +
           '<input class="tool-input team-input" id="team-' + i + '" data-team="' + i + '" maxlength="24" autocomplete="off" value="' + esc(draft[i] != null ? draft[i] : names[i] || "") + '">').join("") +
         '<button class="btn btn-primary btn-block" id="team-save">' + icon("check") + " Speichern</button>" +
@@ -2511,6 +2552,7 @@
     return [short ? "" : (e.time || "") + " · " + (e.stage || "?") + ": " + (e.name || "") + (e.message ? " – " + e.message : ""),
       e.fileName || e.fileSize ? "Datei: " + (e.fileName || "?") + " · " + (e.fileType || "?") + " · " + fmtSize(e.fileSize || 0) : "",
       e.attempts ? "Versuche: " + e.attempts : "",
+      e.source ? "Knopf: " + e.source + (e.autoTries !== "" && e.autoTries != null ? " · automatische Wiederholungen: " + e.autoTries : "") + (e.okTry ? " · geklappt: " + e.okTry : "") : "",
       e.readWays ? "Lesewege: " + e.readWays : "", e.lastModified ? "Datei geändert: " + e.lastModified : "",
       e.pick ? "Auswahl Nr. " + e.pick + " in dieser Sitzung · Lesebeginn " + e.readDelayMs + " ms nach dem change-Event · Synchronisierung: " + (e.sync || "?") : "", e.player ? "Spieler: " + e.player : "", e.detail || "", e.ua ? "Gerät: " + e.ua : ""].filter(Boolean).join(short ? " · " : "\n  ");
   }
