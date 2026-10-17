@@ -58,7 +58,7 @@ Vertrauensbasis, keine Beweisfotos.
   Tausch, Multiplikator, Käufe, Ende, Reset, Wiederherstellen) sind ausgegraut und zeigen beim Antippen einen Hinweis. Ansehen
   geht weiter. Polling läuft weiter; ist der Server zurück, verschwindet der Streifen und der komplette Stand wird neu geladen.
   Schlägt das Speichern fehl → Fehlermeldung „… Die Aktion wurde NICHT ausgeführt.“, lokaler Stand bleibt unverändert.
-- **Spielstand sichern/wiederherstellen** (Statistik, Abschnitt „Spielstand sichern“): lädt `operacao-madeira-JJJJ-MM-TT.json`
+- **Spielstand sichern/wiederherstellen** (Einstellungen, Abschnitt „Spielstand sichern“): lädt `operacao-madeira-JJJJ-MM-TT.json`
   herunter (`{app, savedAt, savedBy, version, state}`); Wiederherstellen prüft die Datei (`isCompatible`), fragt deutlich nach
   (überschreibt für alle Handys) und speichert sie als neuen Stand (nur online).
 - **Hilfsmittel (Tools)** für einzelne regionale Quests (`public/tools.js` = Liste `TOOLS` mit `label`/`icon` + reine Logik,
@@ -116,7 +116,9 @@ Vertrauensbasis, keine Beweisfotos.
   `pin:[lat,lon]`, `maps` = Google-Maps-Suchname oder null = Koordinaten, optional `mapsUrl` fester Link, optional `link` = Text in der Aufgabe als Link, `height` = Höhe für „Höhe schätzen“),
   `public/tools.js` (Hilfsmittel), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `tests/logic.test.js`.
 - Kopfzeile: links Schriftzug „Operação Madeira“ (Bebas Neue + goldener Kompass, einzeilig, Größe passt sich an),
-  rechts Icons Shop / Logbuch / Statistik / Hilfe (beschriftet, aria-label). Darunter Abzeichen: Rang-Figur · Rang · Kontostand.
+  rechts genau 4 Icons Shop / Logbuch / Statistik / Einstellungen (Zahnrad; beschriftet, aria-label; kein Hilfe-„?“ mehr).
+  Darunter Abzeichen: Rang-Figur · Rang · Kontostand. Bei 360 px: Knöpfe 44 px, „Einstellungen“-Beschriftung etwas kleiner,
+  Schriftzug passt sich an (fitLogo) – nach Änderungen an der Kopfzeile bei 360/390 px nachmessen.
   Eigenes Logo: `public/images/logo.svg` oder `logo.png` ersetzt den Schriftzug.
 - Startseite (keine untere Leiste): Block „Regionale Quests“ (Überschrift auf Karten-Hintergrund) mit Inselkarte, Zoom (+/−/⤢),
   Legende nur 4 Stufen; darunter der kräftig blaue Block „Stapel-Quests“ (3 offene, Tausch/Multiplikator,
@@ -125,12 +127,17 @@ Vertrauensbasis, keine Beweisfotos.
   nahe Pins → Gruppe mit Anzahl (Antippen = Auswahl). Pin → einzelne Quest; Region → alle 3 Quests.
 - Quest-Fenster: Bild oben (`public/images/quests/<ID>.jpg`, erst beim Öffnen geladen, fehlend = nichts), Titel,
   Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett.
-- Unterseiten Shop/Logbuch/Statistik mit „← Zu den Quests“ (führt immer direkt zur Startseite, auch Handy-Zurück).
+- Unterseiten Shop/Logbuch/Statistik/Einstellungen/Spielanleitung (Views `shop`, `log`, `stats`, `settings`, `help`) mit
+  „← Zu den Quests“ (führt immer direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
+- **Einstellungen** (Reihenfolge): Spielanleitung (eigene Seite) · Spieler (angemeldeter Name, „Name ändern“, „Abmelden“) ·
+  Spielstand sichern/wiederherstellen · Urlaub beenden & Belohnungen (gold umrandet; nach Ende: „Belohnungen & Zertifikat
+  ansehen“ → Statistik) · Kompletter Reset ganz unten mit Abstand, rot. Alle Sicherheitsabfragen bleiben.
 - Statistik: Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);
   Regionen-Block (Meilenstein-Abzeichen, Liste mit Sternen: voll gold/Umriss); Kacheln Punkte verdient | Kontostand,
   Regionale Quests | Stapel-Quests, % vom Maximum | bester Multiplikator; Maximum-Zeile; Punkte pro Tag + Durchschnitt;
   Tortendiagramme „Woher die Punkte kommen“ (Farben einfach/mittel/schwer, Legende % fett + Punkte klein, rechtsbündig)
-  und „Stufen der Regionen“ (Anzahlen); „Joker genutzt:“ eingerückt, „Insgesamt ausgegeben“; Spiel-Knöpfe.
+  und „Stufen der Regionen“ (Anzahlen); „Joker genutzt:“ eingerückt, „Insgesamt ausgegeben“. Statistik ist **nur zum Anschauen**
+  (keine Spiel-Knöpfe, kein „Alle Quests“; nach Urlaubsende zeigt sie Belohnungen + Zertifikat). „Alle Quests anzeigen“ nur auf der Startseite.
 - Icons: nur Lucide-Linien-Icons, keine Emojis. Rang-Figuren: dieselbe Person (Landstreicher: Hut, Bündel, Flicken;
   Abenteurer: Wanderhut, Rucksack, Kompass; Inselkönig: Krone, Umhang), Strich 2 px, goldener Akzent.
 - Schriften: Fraunces (Überschriften), Inter (Text), Bebas Neue (Logo). Farben: Ozean #0b5f78/#073b4c, Sand-Hintergrund.

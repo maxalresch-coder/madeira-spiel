@@ -601,3 +601,18 @@ button.term { cursor: pointer; }
 .crit.static { cursor: default; }
 .crit-id { flex: 0 0 auto; min-width: 2.6em; font-weight: 800; color: var(--ocean); }
 @media (prefers-color-scheme: dark) { .crit-id { color: #6fd0ea; } .crit.on { box-shadow: inset 4px 0 0 #6fd0ea; } }
+
+/* ---------- Einstellungen und Spielanleitung als Seiten ---------- */
+.set-panel { display: grid; gap: 10px; }
+.set-line { display: flex; align-items: center; gap: 8px; margin: 0; }
+.set-end { border: 2px solid var(--gold); }
+.set-danger { margin-top: 44px; padding-top: 18px; border-top: 2px dashed var(--line); display: grid; gap: 8px; }
+.set-danger p { margin: 0; }
+.help-sub { margin: -6px 0 12px; }
+.hdr-set { width: auto !important; min-width: 46px; padding-left: 3px; padding-right: 3px; }
+.hdr-set .hdr-lbl { font-size: .56rem; letter-spacing: -.01em; }
+@media (max-width: 380px) {
+  .hdr-nav { gap: 2px; }
+  .hdr-btn { width: 44px; }
+  .hdr-set { padding-left: 2px; padding-right: 2px; }
+}
