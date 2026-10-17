@@ -93,6 +93,17 @@ Vertrauensbasis, keine Beweisfotos.
     Hilfsmittel startet dann in Phase 1 statt mit kaputtem Altzustand (z. B. Baumstaben-Wort ohne Fotos aus der Vorversion). Geheimes liegt leicht verschleiert im Spielstand (`hide`/`unhide`, Vertrauensbasis, kein
     echter Schutz). Wortvergleich (`norm`): Groß-/Kleinschreibung, Leerzeichen am Rand und Akzente egal; ä=ae, ö=oe, ü=ue, ß=ss.
   - Entwürfe vor dem Festschreiben (Sortierung, Auswahl) bleiben nur auf dem jeweiligen Handy; festgeschrieben wird synchron.
+  - **Eingabefelder (Regel für alle Hilfsmittel):** Beim Tippen darf sich die Tastatur nie schließen und der Cursor nie aus
+    dem Feld springen. Darum wird ein Feld, in dem gerade getippt wird, **nie ersetzt** (`typingIn`: `rerenderTools` und das
+    Neuzeichnen des Hilfsmittel-Fensters werden aufgeschoben und nach Verlassen der Felder nachgeholt – mit ~350 ms
+    Verzögerung, damit ein angetippter Knopf nicht unter dem Finger ersetzt wird). Gespeichert wird verzögert (500 ms nach
+    der letzten Eingabe, `queueLetter`/`flushLetters`, `toolDo(…, quiet)` ohne Neuzeichnen), beim Verlassen der Felder oder
+    spätestens beim Festschreiben/Verschieben (`flushLetters` vor jeder Aktion). Felder für **einzelne Buchstaben**
+    (`.letter-input`, ohne `maxlength`): nach einem Buchstaben springt der Cursor ins nächste Feld (Tastatur bleibt offen);
+    Tippen in ein volles Feld ersetzt den Buchstaben; Löschtaste im leeren Feld springt ins vorherige Feld und löscht dort
+    (keydown „Backspace“ + `beforeinput` „deleteContentBackward“ für Android) – gehalten wird so Feld für Feld rückwärts
+    gelöscht. `select()` nur auf das gerade aktive Feld anwenden (holt sonst den Fokus zurück). Gilt für eingebende Person
+    und Ratende gleichermaßen.
   - Sortieren (`sortList`/`bindSort`): Ziehen am Griff (Pointer-Events, `touch-action: none`) – gezogene Box hebt sich ab
     (Schatten, etwas größer) und folgt dem Finger, die anderen rutschen animiert, Platznummern wandern mit – plus Pfeile
     hoch/runter; während des Ziehens kein Neuzeichnen. `sync` = gemeinsame Sortierung über den Server (Aktion `arrange`).
@@ -103,12 +114,17 @@ Vertrauensbasis, keine Beweisfotos.
   - **Fotos (wiederverwendbare Foto-Grundlage):** `photoPicker(qid, mehrere)` zeigt „Foto aufnehmen“ (`capture="environment"`)
     und „Aus Galerie wählen“ (`multiple`: mehrere Bilder auf einmal); offline stattdessen ein Hinweis. `handlePhotos` verarbeitet
     die Bilder **nacheinander** (nie mehrere gleichzeitig im Speicher) mit Fortschrittsanzeige „Foto X von Y“, in der Reihenfolge,
-    in der das Handy sie liefert. **Speichersparend verkleinern** (`shrinkPhoto`, wichtig gegen „Zu wenig Speicher“ auf iPhones):
+    in der das Handy sie liefert. Die Datei-Felder (`#photo-camera`, `#photo-gallery`) liegen **dauerhaft** außerhalb der
+    Hilfsmittel (`photoInput`), Knöpfe rufen `choosePhotos` auf; Neuzeichnen entfernt sie nie, und `value = ""` wird erst
+    gesetzt, wenn alle gewählten Dateien gelesen sind (sonst geben iPhones die Dateien teils frei → „kein lesbares Bild“;
+    zurücksetzen, damit dieselbe Datei erneut gewählt werden kann). Dekodieren: (1) `createImageBitmap` in Zielgröße (auch
+    ohne bekannte Größe, z. B. HEIC: 1.000 px Breite), (2) Rückfall Bild-Element mit `img.decode()`; erst wenn beides scheitert
+    eine Fehlermeldung **mit Dateityp und Größe** (`photoErrorText`). 0-Byte/nicht lesbare Datei → „liegt nur in der Cloud …“.
+    Jedes Bild bekommt eigene, kurzlebige Canvas/Bitmap/Objekt-URL (nie wiederverwendet). **Speichersparend verkleinern** (`shrinkPhoto`, wichtig gegen „Zu wenig Speicher“ auf iPhones):
     Abmessungen + EXIF-Ausrichtung aus dem Dateianfang lesen (`readImageInfo`, ohne zu dekodieren), dann
     `createImageBitmap(file, {resizeWidth})` – dekodiert direkt in Zielgröße (nur die Breite vorgeben, damit nichts verzerrt);
-    hat der Browser nicht selbst gedreht (Seitenverhältnis), dreht das Canvas nach EXIF; Rückfall ohne createImageBitmap: `<img>`.
-    **Nie ein Canvas in voller Kameraauflösung**, ein einziges kleines Canvas wird wiederverwendet und danach auf 0×0 gesetzt;
-    Bitmaps (`close()`) und Objekt-URLs sofort freigeben. Ergebnis: lange Seite ≤ 1.000 px, JPEG < 200 KB. Jedes Foto wird
+    hat der Browser nicht selbst gedreht (Seitenverhältnis), dreht das Canvas nach EXIF. **Nie ein Canvas in voller
+    Kameraauflösung**; Canvas danach auf 0×0 setzen, Bitmaps (`close()`) und Objekt-URLs sofort freigeben. Ergebnis: lange Seite ≤ 1.000 px, JPEG < 200 KB. Jedes Foto wird
     **sofort** per `POST api/photo` (roh, image/jpeg, Bearer-Token) hochgeladen → Antwort `{id}` (`p` + 24 Hex),
     dann `toolDo(qid, {type: "addPhoto", photo: id})` – so liegt es auf dem Server, falls das Handy den Browser beim Öffnen
     der Kamera aus dem Speicher wirft. Das offene Hilfsmittel wird gemerkt (`openTool` in localStorage, 1 h) und nach dem
@@ -138,8 +154,9 @@ Vertrauensbasis, keine Beweisfotos.
     „Aus Galerie wählen“ (mehrere); ≥ 5 Fotos als sortierbare Liste (Ziehen am Griff mit Animation wie Früchteschweiger,
     Aktion `arrange` mit Foto-IDs, plus Pfeile ▲▼, Löschen), je Foto ein Feld für genau einen Buchstaben (A–Z, Ä, Ö, Ü, ß;
     `T.letter`); Entwurf `draft` + verschleierte `draftLetters`, synchron, übersteht Neuladen. „Festschreiben“ (ab 5 Fotos
-    mit Buchstaben) setzt das geheime Wort zusammen (keine Wörter früherer Runden). Phase 2: Fotos in Reihenfolge ohne
-    Buchstaben, darunter je ein Feld → „Festschreiben und vergleichen“ (**nur ein Versuch**) → Buchstabe für Buchstabe
+    mit Buchstaben) setzt das geheime Wort zusammen (keine Wörter früherer Runden). Phase 2 und 3 wie bei der Eingabe
+    **untereinander** (`photoRows`: ein Foto pro Zeile, von oben nach unten in Wortreihenfolge, Buchstabenfeld bzw.
+    Buchstabe daneben; kein Raster). Phase 2: Fotos ohne Buchstaben, daneben je ein Feld → „Festschreiben und vergleichen“ (**nur ein Versuch**) → Buchstabe für Buchstabe
     grün/rot, „X von Y Buchstaben richtig“ (Groß/klein egal). Alle richtig = „Geschafft!“ mit Wort (Fotos werden gelöscht);
     sonst „Daneben“ (`failed`, Phase 3): Wort wird aufgedeckt, **kein** erneutes Festschreiben – nur „Neue Runde“ (neues Wort,
     neue Fotos) oder „Trotzdem richtig“ (knappe Fälle; entscheidet, wer das Wort ausgedacht hat).

@@ -694,3 +694,16 @@ button.term { cursor: pointer; }
 .photo-progress > div { flex: 1 1 auto; }
 .photo-progress .progress { margin-top: 6px; height: 8px; }
 img.gone { visibility: hidden; }
+
+/* ---------- Buchstaben-Fotos: Raten/Ergebnis untereinander (ein Foto pro Zeile, Buchstabe daneben) ---------- */
+.photo-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.pr-item { display: flex; align-items: center; gap: 10px; padding: 6px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--surface); }
+.pr-item.ok { border-color: var(--laurel); background: rgba(47, 158, 68, .12); }
+.pr-item.miss { border-color: var(--hibiscus); background: rgba(224, 71, 91, .08); }
+.pr-no { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--sea); font-weight: 800; font-size: .85rem; }
+.pr-photo { flex: 0 0 auto; width: 150px; height: 112px; object-fit: cover; border-radius: 10px; background: var(--line); }
+.pr-side { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1 1 auto; min-width: 0; }
+.pr-side .letter-input { width: 56px; }
+.pr-letter { font-family: var(--display); font-weight: 800; font-size: 1.6rem; min-width: 1em; }
+.pr-right { font-size: .85rem; color: var(--hibiscus); }
+@media (max-width: 380px) { .pr-photo { width: 128px; height: 96px; } }
