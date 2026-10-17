@@ -1,5 +1,5 @@
 // ============================================================================
-//  Operação Madeira - Das Spiel – Werkzeuge (Tools) für einzelne regionale Quests
+//  Operação Madeira - Das Spiel – Hilfsmittel (Tools) für einzelne regionale Quests
 //  Reine Logik ohne Oberfläche: Konfiguration, Zustandsänderungen, Auswertung.
 //  Der Zustand liegt im Spielstand unter state.tools[questId] und wird wie der
 //  Spielstand über den Server geteilt. Tools geben keine Punkte und haken nie ab.
@@ -8,26 +8,36 @@
   "use strict";
 
   const ARRIVALS_URL = "https://www.madeiraairport.pt/en/fnc/arrivals";
+  const UNESCO_URL = "https://whc.unesco.org/en/criteria/";
 
-  // Welche Quest welches Werkzeug bekommt
+  // Welche Quest welches Hilfsmittel bekommt. label + icon = antippbare Zeile im Quest-Fenster.
+  // penalty = Strafzeit in Minuten; sie startet automatisch, sobald ein Versuch daneben ist.
   const TOOLS = {
-    "q-cal-2": { kind: "countdown", seconds: 10 },   // Light Show
-    "q-san-2": { kind: "countdown", seconds: 10 },   // Dreieck auf Dreieck
-    "q-rbr-1": { kind: "countdown", seconds: 30 },   // Werdet brava an der Ribeira Brava!
-    "q-svi-3": { kind: "countdown", seconds: 30 },   // Treibgutkreuz
-    "q-rbr-2": { kind: "cablecar", tolerance: 15 },  // Seilbahn-Sekunden-Sakrileg
-    "q-svi-2": { kind: "traffic", seconds: 60, tolerance: 1 }, // Höllen- oder wenig Verkehr
-    "q-cdl-3": { kind: "height", tolerancePct: 10, penalty: 5 }, // Angsthase oder Augenmaß?
-    "q-scr-2": { kind: "compass", target: 208, tolerance: 20, penalty: 5 }, // Grüße nach Rio
-    "q-san-3": { kind: "penalty", penalty: 10 },     // Mit Lorbeeren und UNESCO gekrönt
-    "q-rbr-3": { kind: "tictactoe" },                // Tic-Tac-São-Bento
-    "q-scr-1": { kind: "link", url: ARRIVALS_URL, label: "Aktuelle Ankünfte am Flughafen Madeira" } // Halb gelandet
+    "q-cal-2": { kind: "countdown", seconds: 10, label: "Countdown: 10 Sekunden", icon: "timer" },   // Light Show
+    "q-san-2": { kind: "countdown", seconds: 10, label: "Countdown: 10 Sekunden", icon: "timer" },   // Dreieck auf Dreieck
+    "q-rbr-1": { kind: "countdown", seconds: 30, label: "Countdown: 30 Sekunden", icon: "timer" },   // Werdet brava an der Ribeira Brava!
+    "q-svi-3": { kind: "countdown", seconds: 30, label: "Countdown: 30 Sekunden", icon: "timer" },   // Treibgutkreuz
+    "q-rbr-2": { kind: "cablecar", tolerance: 15, label: "Fahrzeit schätzen und stoppen", icon: "timer" }, // Seilbahn-Sekunden-Sakrileg
+    "q-svi-2": { kind: "traffic", seconds: 60, tolerance: 1, label: "Autos zählen", icon: "car" },     // Höllen- oder wenig Verkehr
+    // Die echte Höhe steht in content.js bei der Quest (height) und wird erst bei „Geschafft!“ gezeigt.
+    "q-cdl-3": { kind: "height", tolerancePct: 10, penalty: 5, label: "Höhe schätzen", icon: "mountain" }, // Angsthase oder Augenmaß?
+    "q-scr-2": { kind: "compass", target: 208, tolerance: 50, penalty: 5, label: "Kompass: Wo liegt Rio?", icon: "navigation" }, // Grüße nach Rio
+    "q-rbr-3": { kind: "tictactoe", label: "Tic-Tac-Toe-Spielfeld", icon: "grid-3x3" },               // Tic-Tac-São-Bento
+    "q-scr-1": { kind: "link", url: ARRIVALS_URL, label: "Aktuelle Ankünfte am Flughafen Madeira", icon: "plane-landing" }, // Halb gelandet
+    "q-san-3": { kind: "link", url: UNESCO_URL, label: "Die zehn UNESCO-Kriterien", icon: "landmark" } // Mit Lorbeeren und UNESCO gekrönt
   };
 
   class ToolError extends Error {}
   const fail = (msg) => { throw new ToolError(msg); };
 
-  function config(questId) { return TOOLS[questId] || null; }
+  // Konfiguration einer Quest; mit content kommen Werte aus content.js dazu (z. B. die echte Höhe)
+  function config(questId, content) {
+    const base = TOOLS[questId];
+    if (!base || !content) return base || null;
+    let quest = null;
+    content.regions.forEach((r) => r.quests.forEach((q) => { if (q.id === questId) quest = q; }));
+    return quest && quest.height != null ? Object.assign({}, base, { answer: quest.height }) : base;
+  }
   function hasState(cfg) { return cfg && cfg.kind !== "link"; }
 
   // ---------------------------------------------------------------- Auswertung
@@ -70,18 +80,11 @@
         const diff = Math.abs((ts.count || 0) - ts.guess);
         return { ok: diff <= cfg.tolerance, count: ts.count || 0, diff };
       }
-      case "height": {
-        if (ts.guess == null || ts.answer == null) return null;
-        const diff = Math.abs(ts.guess - ts.answer);
-        return { ok: diff <= ts.answer * cfg.tolerancePct / 100 + 1e-9, diff, pct: ts.answer ? diff / ts.answer * 100 : 0 };
-      }
-      case "compass": {
-        const ms = ts.measures || [];
-        if (!ms.length) return null;
-        const any = ms.some((m) => angleDiff(m.deg, cfg.target) <= cfg.tolerance);
-        if (any) return { ok: true };
-        return ms.length >= 2 ? { ok: false } : null;
-      }
+      case "height":
+        // Ein Fehlversuch landet gleich in lastMiss (mit Strafzeit) – hier steht nur ein Treffer
+        return ts.guess != null ? { ok: true } : null;
+      case "compass":
+        return (ts.measures || []).some((m) => compassHit(cfg, m.deg)) ? { ok: true } : null;
       case "tictactoe": {
         const st = tttStatus(ts.moves);
         return st.winner ? { ok: true, winner: st.winner } : null;
@@ -91,6 +94,7 @@
     }
   }
   function compassHit(cfg, deg) { return angleDiff(deg, cfg.target) <= cfg.tolerance; }
+  function heightHit(cfg, guess) { return Math.abs(guess - cfg.answer) <= cfg.answer * cfg.tolerancePct / 100 + 1e-9; }
 
   // ---------------------------------------------------------------- Zustandsänderungen
   const num = (v, what) => {
@@ -102,15 +106,17 @@
 
   // Liefert den neuen Zustand eines Tools; wirft ToolError, wenn es gerade nicht geht.
   function update(cfg, oldTs, op, now, by) {
-    if (!hasState(cfg)) fail("Dieses Werkzeug speichert nichts.");
+    if (!hasState(cfg)) fail("Dieses Hilfsmittel speichert nichts.");
     const ts = JSON.parse(JSON.stringify(oldTs || {}));
     const locked = penaltyLeft(ts, now) > 0;
     if (locked) fail("Die Strafzeit läuft noch – danach geht es weiter.");
 
+    // Strafzeit: startet automatisch bei einem Fehlversuch (oder per Knopf „Daneben“, wenn
+    // Spieler selbst urteilen). Danach beginnt eine neue Runde, die alte verfällt.
+    const startPenalty = (miss) => Object.assign(ts, round0, { penaltyUntil: now + cfg.penalty * 60000, penaltyBy: by, lastMiss: miss || null });
     if (op.type === "penalty") {
       if (!cfg.penalty) fail("Hier gibt es keine Strafzeit.");
-      // Neue Runde nach der Wartezeit: alte Schätzung/Messung verfällt
-      return Object.assign(ts, round0, { penaltyUntil: now + cfg.penalty * 60000, penaltyBy: by });
+      return startPenalty(null);
     }
     if (op.type === "newRound") {
       if (cfg.kind === "tictactoe") {
@@ -140,15 +146,15 @@
         if (op.type === "fix") {
           if (ts.guess != null) fail("Die Schätzung ist schon festgeschrieben.");
           const v = num(op.value, "die Schätzung");
-          return Object.assign(ts, { guess: cfg.kind === "height" ? v : Math.round(v), guessBy: by });
+          if (cfg.kind === "height") {
+            if (cfg.answer == null) fail("Die Höhe fehlt in content.js.");
+            // sofort auswerten: Treffer bleibt stehen, daneben → Strafzeit
+            if (!heightHit(cfg, v)) return startPenalty({ guess: v, by });
+            return Object.assign(ts, { guess: v, guessBy: by, lastMiss: null });
+          }
+          return Object.assign(ts, { guess: Math.round(v), guessBy: by });
         }
         if (ts.guess == null) fail("Erst die Schätzung festschreiben.");
-        if (cfg.kind === "height" && op.type === "answer") {
-          if (ts.answer != null) fail("Schon aufgelöst.");
-          const v = num(op.value, "den Wert von der Infotafel");
-          if (v <= 0) fail("Bitte den Wert von der Infotafel eingeben.");
-          return Object.assign(ts, { answer: v });
-        }
         if (cfg.kind !== "height" && op.type === "start") {
           if (ts.startedAt != null) fail("Läuft schon.");
           return Object.assign(ts, { startedAt: now, stoppedAt: null, count: 0 });
@@ -173,7 +179,9 @@
           const deg = ((Math.round(Number(op.deg)) % 360) + 360) % 360;
           if (!isFinite(deg)) fail("Ungültige Richtung.");
           ms.push({ by, deg, manual: !!op.manual, t: now });
-          return Object.assign(ts, { measures: ms });
+          // Eine Runde = die Messungen der beiden zeigenden Personen; beide daneben → Strafzeit
+          if (ms.length >= 2 && !ms.some((m) => compassHit(cfg, m.deg))) return startPenalty({ measures: ms });
+          return Object.assign(ts, { measures: ms, lastMiss: null });
         }
         break;
 
@@ -204,7 +212,7 @@
     fail("Das geht hier nicht.");
   }
 
-  const api = { TOOLS, ARRIVALS_URL, ToolError, config, hasState, update, result, penaltyLeft, angleDiff, compassHit, tttStatus };
+  const api = { TOOLS, ARRIVALS_URL, UNESCO_URL, ToolError, config, hasState, update, result, penaltyLeft, angleDiff, compassHit, tttStatus };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.QuestTools = api;
 })(typeof window !== "undefined" ? window : globalThis);

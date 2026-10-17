@@ -12,6 +12,8 @@
 //    desc     Beschreibung
 //    task     Aufgabe ("Eure Aufgabe: …")
 //    link     optional: {text, href} – dieser Text in der Aufgabe wird ein Link
+//    height   nur „Angsthase oder Augenmaß?“: echte Höhe in Metern für das Hilfsmittel „Höhe schätzen“
+//             (Hilfsmittel und ihre Links stehen in public/tools.js)
 //
 //  Stapel-Quests: überall machbar, liegen im gemischten Stapel.
 //    difficulty "einfach" (15 P) | "mittel" (25 P) | "schwer" (50 P)
@@ -111,7 +113,8 @@ window.GAME_CONTENT = {
           id: "q-cdl-3", title: `Angsthase oder Augenmaß?`,
           location: `Aussichtspunkt Cabo Girão (Skywalk)`, pin: [32.6557, -17.0046], maps: "Cabo Girão Skywalk, Madeira",
           desc: `Cabo Girão gehört zu den höchsten Meeresklippen Europas. Auf dem Aussichtspunkt befindet sich ein Glasboden direkt über dem Abgrund, mit freiem Blick bis hinunter aufs Meer.`,
-          task: `Eure Aufgabe: Schätzt, wie hoch ihr hier oben seid. Liegt die gemeinsame Schätzung höchstens 10% daneben, ist die Quest geschafft. Wenn nicht, wartet ihr 5 Minuten und schätzt neu. Aber Vorsicht: Die Antwort wird groß ausgeschildert. Eine Person übernimmt deshalb die Rolle des Spoiler-Schutzes und lotst die beiden anderen über den Aussichtspunkt.`
+          task: `Eure Aufgabe: Schätzt, wie hoch ihr hier oben seid. Liegt die gemeinsame Schätzung höchstens 10% daneben, ist die Quest geschafft. Wenn nicht, wartet ihr 5 Minuten und schätzt neu. Aber Vorsicht: Die Antwort wird groß ausgeschildert. Eine Person übernimmt deshalb die Rolle des Spoiler-Schutzes und lotst die beiden anderen über den Aussichtspunkt.`,
+          height: 589 // echte Höhe in Metern für das Hilfsmittel „Höhe schätzen“ (wird erst bei „Geschafft!“ gezeigt)
         }
       ]
     },
@@ -151,7 +154,7 @@ window.GAME_CONTENT = {
           id: "q-scr-2", title: `Grüße nach Rio`,
           location: `Cristo Rei, Ponta do Garajau (Caniço)`, pin: [32.6408, -16.8505], maps: "Cristo Rei do Garajau, Madeira",
           desc: `Auf der Landspitze von Garajau steht eine Christusstatue mit ausgebreiteten Armen und blickt über den Atlantik. Ihre berühmte große Schwester steht rund 6.800 Kilometer entfernt, auf der anderen Seite des Ozeans in Rio de Janeiro.`,
-          task: `Eure Aufgabe: Zwei Personen zeigen ohne Hilfsmittel in die Richtung, in der Rio liegt. Die dritte Person prüft mit einer Kompass-App: Rio liegt bei 208°. Weicht deren Schätzung um höchstens 20° ab, ist die Quest geschafft. Wenn nicht, wartet ihr 5 Minuten und versucht es erneut.`
+          task: `Eure Aufgabe: Zwei Personen zeigen ohne Hilfsmittel in die Richtung, in der Rio liegt. Die dritte Person prüft mit einer Kompass-App: Rio liegt bei 208°. Weicht deren Schätzung um höchstens 50° ab, ist die Quest geschafft. Wenn nicht, wartet ihr 5 Minuten und versucht es erneut.`
         },
         {
           id: "q-scr-3", title: `Torfabrik neben alter Korbfabrik`,
@@ -203,8 +206,7 @@ window.GAME_CONTENT = {
           id: "q-san-3", title: `Mit Lorbeeren und UNESCO gekrönt`,
           location: `Parque Florestal das Queimadas`, pin: [32.7835, -16.9050], maps: "Parque Florestal das Queimadas, Santana, Madeira",
           desc: `Im Waldpark Queimadas wächst Laurissilva, ein uralter Lorbeerwald, der seit 1999 als UNESCO-Welterbe geschützt ist. Solche Wälder bedeckten einst große Teile Südeuropas, heute gibt es sie fast nur noch auf den Atlantikinseln.`,
-          task: `Eure Aufgabe: Um Welterbe zu werden, muss ein Ort mindestens eines von zehn Kriterien erfüllen: whc.unesco.org/en/criteria. Der Lorbeerwald erfüllt zwei davon. Eine Person schlägt die Lösung auf der UNESCO-Seite zum Lorbeerwald nach, die anderen beiden müssen im Wald beide Kriterien richtig benennen. Liegen sie falsch, müssen sie 10 Minuten warten, bevor sie erneut raten dürfen.`,
-          link: { text: "whc.unesco.org/en/criteria", href: "https://whc.unesco.org/en/criteria/" }
+          task: `Eure Aufgabe: Um Welterbe zu werden, muss ein Ort mindestens eines von zehn Kriterien erfüllen. Der Lorbeerwald erfüllt zwei davon. Eine Person schlägt die Lösung auf der UNESCO-Seite zum Lorbeerwald nach, die anderen beiden müssen im Wald beide Kriterien richtig benennen. Liegen sie falsch, müssen sie 10 Minuten warten, bevor sie erneut raten dürfen.`
         }
       ]
     },

@@ -22,7 +22,7 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
 3. Nur wenn nötig: auf der Seite „Neues Spiel starten“ bzw. Reset. Ein Reset ist nötig, wenn sich Quest-/Stapel-IDs
    oder die Spielstand-Struktur ändern (dann `SCHEMA` in logic.js erhöhen → App zeigt automatisch „Neue Spielinhalte“).
 Konfiguration in der WSGI-Datei (`pythonanywhere_wsgi.py`): `MADEIRA_PASSWORD`, `MADEIRA_LINK_KEY` (geheimer Link-Teil).
-Spielstand: `data/state.json` (nicht in git). Details: ANLEITUNG.md.
+Spielstand: `data/state.json`, Spielernamen: `data/players.json` (beide nicht in git). Details: ANLEITUNG.md.
 
 ## Zweck
 Private Handy-Webseite für 3 Freunde im Madeira-Urlaub: als **ein Team** alle 10 Regionen erkunden,
@@ -61,25 +61,42 @@ Vertrauensbasis, keine Beweisfotos.
 - **Spielstand sichern/wiederherstellen** (Statistik, Abschnitt „Spielstand sichern“): lädt `operacao-madeira-JJJJ-MM-TT.json`
   herunter (`{app, savedAt, savedBy, version, state}`); Wiederherstellen prüft die Datei (`isCompatible`), fragt deutlich nach
   (überschreibt für alle Handys) und speichert sie als neuen Stand (nur online).
-- **Werkzeuge (Tools)** für einzelne regionale Quests (`public/tools.js` = Konfiguration `TOOLS` + reine Logik, getestet;
-  Oberfläche in app.js): optional, aufklappbar „Werkzeug: …“ unter der Aufgabe (auch in der Regionsansicht), **haken nie ab,
-  keine Punkte**, „Geschafft!“/„Daneben“ nur als Anzeige. Zustand in `state.tools[questId]` (gleicher Server-Speicher wie der
-  Spielstand, Warteschlange + Konflikt-Wiederholung, offline gesperrt); Reset löscht die Tools (newGame hat kein `tools`).
-  Zeiten in **Serverzeit** (`now` in den API-Antworten → `app.clockOffset`), daher synchron auf allen Handys, auch nach Neuladen.
+- **Hilfsmittel (Tools)** für einzelne regionale Quests (`public/tools.js` = Liste `TOOLS` mit `label`/`icon` + reine Logik,
+  getestet; Oberfläche in app.js). Zustand in `state.tools[questId]` (gleicher Server-Speicher wie der Spielstand,
+  Warteschlange + Konflikt-Wiederholung, offline gesperrt); Reset löscht sie (newGame hat kein `tools`). Zeiten in
+  **Serverzeit** (`now` in den API-Antworten → `app.clockOffset`), daher synchron auf allen Handys, auch nach Neuladen.
+  **Regeln für alle (auch künftige) Hilfsmittel:**
+  - Freiwillig; haken **nie** ab, geben **keine Punkte**; „Geschafft!“/„Daneben“ nur als Anzeige.
+  - Das Wort „Werkzeug“ kommt in der App nicht vor (Begriff: „Hilfsmittel“).
+  - Anzeige im Quest-Fenster unter der Aufgabe als **antippbare Zeile** wie ein Link: passendes Lucide-Icon + beschreibende
+    Bezeichnung (z. B. „Countdown: 10 Sekunden“, „Höhe schätzen“), rechts ggf. Zustand (Strafzeit-Countdown, läuft, Geschafft)
+    und Pfeil. Tippen öffnet das Hilfsmittel in einem eigenen Fenster. Links (`kind: "link"`) öffnen einen neuen Tab.
+  - **Strafzeit startet automatisch:** Erkennt das Hilfsmittel selbst einen Fehlversuch, startet sie sofort (ohne Rückfrage).
+    Müssen Spieler selbst urteilen, gibt es einen Knopf „Daneben“ (Aktion `penalty`), der sie sofort startet. Nie zwei
+    Bestätigungen hintereinander, kein Knopf „Strafzeit starten“. Gesperrt ist nur das Hilfsmittel dieser Quest (Countdown
+    sichtbar, auch in der Zeile); alles andere bleibt nutzbar; synchron und übersteht Neuladen.
+  - **Spielerauswahl** zeigt alle Namen, mit denen sich je jemand angemeldet hat (Server speichert sie in `data/players.json`
+    beim Login und beim App-Start/Namenswechsel über `POST api/player`; `players` kommt mit jeder Spielstand-Antwort).
+    Kein Eingabefeld für weitere Namen.
+  Aktuelle Hilfsmittel:
   - Countdown: Light Show 10 s, Dreieck auf Dreieck 10 s, Werdet brava … 30 s, Treibgutkreuz 30 s (Start/Abbrechen/Neustart, Ende: Anzeige + Vibration).
-  - Strafsperre (Werkzeug gesperrt, Countdown, danach frei): Angsthase oder Augenmaß? 5 min, Grüße nach Rio 5 min, Lorbeeren/UNESCO 10 min.
-  - Schätz-Prüfung (Schätzung festschreiben, bis zur Auflösung unveränderbar): Seilbahn (Stoppuhr, ≤ 15 s daneben), Höllen-Verkehr
-    (1-Minuten-Countdown, „+1 Auto“/−1, ≤ 1 daneben, sonst neue Runde), Angsthase (Spoiler-Schutz gibt Infotafel-Wert ein, ≤ 10 %, sonst Strafsperre).
-  - Kompass Grüße nach Rio: DeviceOrientation (iPhone: Erlaubnis per Knopf), Wert erst beim Tippen „Hier ist Rio!“, Ziel 208° ± 20°,
-    2 Messungen, eine Treffer reicht; ohne Kompass Hinweis auf Kompass-App + Wert eintragen.
-  - Tic-Tac-Toe Tic-Tac-São-Bento: 2 Spielende wählen (Namen aus dem Logbuch oder eintippen), Sieg/Unentschieden, Zug zurück, neue Runde.
-  - Halb gelandet: Link „Aktuelle Ankünfte am Flughafen Madeira“ → https://www.madeiraairport.pt/en/fnc/arrivals (offizielle Seite, ANA).
+  - „Fahrzeit schätzen und stoppen“ (Seilbahn): Schätzung festschreiben, Stoppuhr, ≤ 15 s daneben, sonst neue Runde.
+  - „Autos zählen“ (Höllen-Verkehr): Schätzung festschreiben, 1-Minuten-Countdown, „+1 Auto“/−1, ≤ 1 daneben, sonst neue Runde.
+  - „Höhe schätzen“ (Angsthase oder Augenmaß?): echte Höhe **589 m** in content.js (`height`), vorher nie angezeigt; gemeinsame
+    Schätzung festschreiben → sofort „Geschafft!“ (mit echter Höhe) bei ≤ 10 %, sonst „Daneben“ + automatisch 5 min Strafzeit.
+  - „Kompass: Wo liegt Rio?“ (Grüße nach Rio): DeviceOrientation (iPhone: Erlaubnis per Knopf), Wert erst beim Tippen
+    „Hier ist Rio!“, Ziel 208° ± **50°**; eine Runde = 2 Messungen, eine Treffer reicht, beide daneben → automatisch 5 min
+    Strafzeit; ohne Kompass Hinweis auf Kompass-App + Wert eintragen.
+  - „Tic-Tac-Toe-Spielfeld“ (Tic-Tac-São-Bento): 2 Spielende wählen, Sieg/Unentschieden, Zug zurück, neue Runde.
+  - Links: „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
+    „Die zehn UNESCO-Kriterien“ (Mit Lorbeeren und UNESCO gekrönt) → https://whc.unesco.org/en/criteria/.
+    Lorbeeren: Strafzeit (10 min) kommt später über ein Auswahl-Hilfsmittel.
 - Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann Zertifikat (PDF).
 
 ## Aufbau und Gestaltung
 - Dateien: `server.py` (stdlib-WSGI), `public/logic.js` (Regeln), `public/app.js` (UI), `public/content.js` (Quests, Pins
-  `pin:[lat,lon]`, `maps` = Google-Maps-Suchname oder null = Koordinaten, optional `mapsUrl` fester Link, `link` für UNESCO),
-  `public/tools.js` (Quest-Werkzeuge), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `tests/logic.test.js`.
+  `pin:[lat,lon]`, `maps` = Google-Maps-Suchname oder null = Koordinaten, optional `mapsUrl` fester Link, optional `link` = Text in der Aufgabe als Link, `height` = Höhe für „Höhe schätzen“),
+  `public/tools.js` (Hilfsmittel), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `tests/logic.test.js`.
 - Kopfzeile: links Schriftzug „Operação Madeira“ (Bebas Neue + goldener Kompass, einzeilig, Größe passt sich an),
   rechts Icons Shop / Logbuch / Statistik / Hilfe (beschriftet, aria-label). Darunter Abzeichen: Rang-Figur · Rang · Kontostand.
   Eigenes Logo: `public/images/logo.svg` oder `logo.png` ersetzt den Schriftzug.

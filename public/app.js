@@ -26,6 +26,7 @@
     state: null,
     online: true,
     polling: false,
+    players: [], // alle Namen, mit denen sich je jemand angemeldet hat (vom Server)
     clockOffset: 0, // Serverzeit − Handyzeit (für synchrone Timer)
     busy: false,
     modals: [] // offene Fenster (oberstes zuletzt)
@@ -54,6 +55,7 @@
     try { data = await res.json(); } catch (e) { /* leer */ }
     const t1 = Date.now();
     if (data && typeof data.now === "number" && t1 - t0 < 3000) app.clockOffset = data.now - (t0 + t1) / 2;
+    if (data && Array.isArray(data.players)) app.players = data.players;
     if (res.status === 401 && path !== "login") { logout(); throw new Error("Bitte neu anmelden."); }
     return { status: res.status, data };
   }
@@ -154,7 +156,7 @@
     }
   }
 
-  const OFFLINE_MSG = "Offline – Abhaken, Rückgängig, Käufe und Werkzeuge gehen erst wieder mit Netz.";
+  const OFFLINE_MSG = "Offline – Abhaken, Rückgängig, Käufe und Hilfsmittel gehen erst wieder mit Netz.";
   // Knöpfe, die etwas speichern würden (offline gesperrt)
   const SAVING_BUTTONS = "[data-tool-act], [data-done], [data-swap], [data-mult], [data-undo], [data-quest], #buy-joker, #end-btn, #reset-btn, #reopen-btn, #restore-btn, #upgrade-btn, #finish";
 
@@ -234,7 +236,7 @@
     $("#login-error").textContent = "";
     if (!name) return;
     try {
-      const r = await api("login", { method: "POST", body: { password } });
+      const r = await api("login", { method: "POST", body: { password, name } });
       if (r.status !== 200) { $("#login-error").textContent = "Falsches Passwort."; return; }
       app.token = r.data.token; app.name = name;
       store.set("token", app.token); store.set("name", name);
@@ -252,6 +254,11 @@
     if (document.fonts && document.fonts.load) document.fonts.load('27px "Bebas Neue"', "Operação Madeira").then(fitLogo, () => {});
     render();
     poll();
+    registerName();
+  }
+  // Namen beim Server melden – er merkt sich alle Spieler (z. B. für die Auswahl beim Tic-Tac-Toe)
+  function registerName() {
+    if (app.token && app.name) api("player", { method: "POST", body: { name: app.name } }).catch(() => { /* beim nächsten Start */ });
   }
 
   // ------------------------------------------------------------------ Rendering
@@ -615,26 +622,23 @@
     bindTools(el);
   }
 
-  // ------------------------------------------------------------------ Werkzeuge (Tools)
-  // Optionale Hilfen für einzelne regionale Quests (Regeln in tools.js). Der Zustand liegt im
-  // Spielstand unter state.tools und wird wie alles andere über den Server geteilt. Änderungen
-  // laufen über eine Warteschlange, damit schnelles Antippen (z. B. „+1 Auto“) nichts verliert.
-  // Werkzeuge haken nie ab und geben keine Punkte.
-  const toolUI = { queue: [], flushing: false, open: new Set(), closed: new Set(), signaled: new Set(), ttt: { sel: [], extra: [] } };
+  // ------------------------------------------------------------------ Hilfsmittel (Tools)
+  // Optionale Hilfen für einzelne regionale Quests (Liste + Regeln in tools.js). Im Quest-Fenster
+  // steht je Hilfsmittel eine antippbare Zeile (Icon + Bezeichnung, wie ein Link); Tippen öffnet es
+  // in einem eigenen Fenster. Der Zustand liegt in state.tools und wird über den Server geteilt.
+  // Änderungen laufen über eine Warteschlange, damit schnelles Antippen (z. B. „+1 Auto“) nichts
+  // verliert. Hilfsmittel haken nie ab und geben keine Punkte.
+  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] } };
   const compass = { on: false, failed: "", samples: [], last: 0 };
-  const TOOL_NAMES = {
-    countdown: "Countdown", cablecar: "Schätzung & Stoppuhr", traffic: "Schätzung & Autos zählen",
-    height: "Höhen-Schätzung", compass: "Kompass", penalty: "Strafzeit", tictactoe: "Tic-Tac-Toe"
-  };
-  const TOOL_ICONS = { countdown: "timer", cablecar: "timer", traffic: "car", height: "mountain", compass: "navigation", penalty: "lock", tictactoe: "grid-3x3" };
+  const tcfg = (qid) => T.config(qid, C);
   function serverNow() { return Date.now() + app.clockOffset; }
   const secs = (ms) => Math.max(0, Math.ceil(ms / 1000));
   const mmss = (ms) => { const s = secs(ms); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
   const upfmt = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 
-  // Stand eines Werkzeugs inklusive noch nicht gesendeter Eingaben
+  // Stand eines Hilfsmittels inklusive noch nicht gesendeter Eingaben
   function toolState(qid) {
-    const cfg = T.config(qid);
+    const cfg = tcfg(qid);
     let ts = (app.state.tools && app.state.tools[qid]) || null;
     toolUI.queue.forEach((x) => {
       if (x.qid !== qid) return;
@@ -643,50 +647,71 @@
     return ts || {};
   }
 
+  // Zeile im Quest-Fenster: Link (neuer Tab) oder Knopf, der das Hilfsmittel öffnet
   function toolHTML(qid) {
-    const cfg = T.config(qid);
+    const cfg = tcfg(qid);
     if (!cfg) return "";
     if (cfg.kind === "link") {
-      return '<div class="tool tool-link"><a class="btn btn-ghost btn-block" href="' + esc(cfg.url) + '" target="_blank" rel="noopener noreferrer">' +
-        icon("plane-landing") + " " + esc(cfg.label) + " " + icon("external-link") + "</a></div>";
+      return '<a class="tool-line" href="' + esc(cfg.url) + '" target="_blank" rel="noopener noreferrer">' + icon(cfg.icon) +
+        '<span class="tl-label">' + esc(cfg.label) + "</span>" + icon("external-link", "tl-end") + "</a>";
     }
-    // Läuft gerade etwas (Uhr, Strafzeit, Partie), ist das Werkzeug von selbst aufgeklappt
-    const open = toolUI.open.has(qid) || (toolActive(qid) && !toolUI.closed.has(qid));
-    return '<details class="tool" data-tool="' + qid + '"' + (open ? " open" : "") + "><summary>" + icon("wrench") +
-      " Werkzeug: " + TOOL_NAMES[cfg.kind] + ' <span class="muted small">(freiwillig)</span></summary><div class="tool-body">' + toolBody(qid) + "</div></details>";
+    return '<button class="tool-line" data-open-tool="' + qid + '">' + toolLineInner(qid) + "</button>";
+  }
+  function toolLineInner(qid) {
+    const cfg = tcfg(qid), st = toolStatus(qid);
+    return icon(cfg.icon) + '<span class="tl-label">' + esc(cfg.label) + "</span>" +
+      (st ? '<span class="tl-status ' + st.cls + '"' + (st.until ? ' data-until="' + st.until + '"' : "") + ">" + st.html + "</span>" : "") + icon("chevron-right", "tl-end");
+  }
+  // Kurzer Zustand rechts in der Zeile: Strafzeit, läuft, geschafft
+  function toolStatus(qid) {
+    const cfg = tcfg(qid), ts = toolState(qid), now = serverNow();
+    if (T.penaltyLeft(ts, now)) return { cls: "lock", until: ts.penaltyUntil, html: icon("lock") + ' <span data-tick="down" data-end="' + ts.penaltyUntil + '">' + mmss(ts.penaltyUntil - now) + "</span>" };
+    if ((cfg.kind === "countdown" || cfg.kind === "traffic") && ts.startedAt != null && now < ts.startedAt + cfg.seconds * 1000) {
+      const end = ts.startedAt + cfg.seconds * 1000;
+      return { cls: "run", until: end, html: '<span data-tick="down" data-fmt="s" data-end="' + end + '">' + secs(end - now) + "</span> s" };
+    }
+    if (cfg.kind === "cablecar" && ts.startedAt != null && ts.stoppedAt == null) return { cls: "run", html: '<span data-tick="up" data-start="' + ts.startedAt + '">' + upfmt(now - ts.startedAt) + "</span>" };
+    const res = T.result(cfg, ts, now);
+    if (res && res.ok) return { cls: "ok", html: icon("check") + " Geschafft" };
+    if (cfg.kind === "tictactoe" && ts.players) return { cls: "run", html: "läuft" };
+    return null;
   }
 
-  function toolActive(qid) {
-    const cfg = T.config(qid), ts = toolState(qid), now = serverNow();
-    if (T.penaltyLeft(ts, now)) return true;
-    if (cfg.kind === "countdown" || cfg.kind === "traffic") return ts.startedAt != null && now < ts.startedAt + cfg.seconds * 1000 + 5000;
-    if (cfg.kind === "cablecar") return ts.startedAt != null && ts.stoppedAt == null;
-    if (cfg.kind === "tictactoe") return !!ts.players;
-    return ts.guess != null || (ts.measures || []).length > 0;
+  function openTool(qid) {
+    const cfg = tcfg(qid);
+    const m = openModal(() => '<div class="modal-head"><h2 class="tool-title">' + icon(cfg.icon) + " " + esc(cfg.label) + "</h2>" +
+      '<button class="modal-close" data-close aria-label="Schließen">' + icon("x") + "</button></div>" +
+      '<p class="muted small tool-sub-title">' + esc(IX.quests[qid].title) + " · freiwillig – abhaken macht ihr selbst</p>" +
+      '<div class="tool" data-tool="' + qid + '"><div class="tool-body">' + toolBody(qid) + "</div></div>", bindTools, { stack: true });
+    m.el.addEventListener("click", (ev) => { if (ev.target === m.el && app.modals[app.modals.length - 1] === m) closeModal(); });
   }
+
   const tBtn = (op, label, cls, extra) => '<button class="btn ' + cls + '" data-tool-act="' + op + '"' + (extra || "") + ">" + label + "</button>";
   const tInput = (qid, key, ph, mode) => '<input class="tool-input" type="text" inputmode="' + (mode || "numeric") + '" autocomplete="off" data-keep="' + qid + ":" + key + '" placeholder="' + esc(ph) + '">';
   const byTxt = (n) => (n ? ' <span class="muted small">von ' + esc(n) + "</span>" : "");
   function tResult(ok, text, title) {
     return '<div class="tool-result ' + (ok ? "ok" : "miss") + '">' + icon(ok ? "circle-check" : "circle-x") + "<div><strong>" + (title || (ok ? "Geschafft!" : "Daneben")) + "</strong>" +
-      '<div class="small">' + text + "</div>" + (ok && !title ? '<div class="small tool-hint">Abhaken macht ihr selbst – oben auf den Kreis tippen.</div>' : "") + "</div></div>";
+      '<div class="small">' + text + "</div>" + (ok && !title ? '<div class="small tool-hint">Abhaken macht ihr selbst – im Quest-Fenster auf den Kreis tippen.</div>' : "") + "</div></div>";
   }
   function tFixed(label, value, by) {
     return '<div class="tool-fixed">' + icon("lock") + " " + label + ": <strong>" + value + "</strong>" + byTxt(by) + "</div>";
   }
-  function tPenalty(cfg, highlight) {
-    return '<button class="btn btn-block ' + (highlight ? "btn-danger" : "btn-ghost") + '" data-tool-act="penalty">' + icon("timer") +
-      " Daneben – Strafzeit starten (" + cfg.penalty + " Minuten)</button>";
-  }
   const nf = (n) => String(n).replace(".", ",");
+  // Was beim letzten Fehlversuch passiert ist (die echte Höhe wird dabei nie verraten)
+  function missText(cfg, miss) {
+    if (cfg.kind === "height") return "Eure Schätzung " + nf(miss.guess) + " m lag mehr als " + cfg.tolerancePct + " % daneben.";
+    if (cfg.kind === "compass") return "Beide Messungen lagen mehr als " + cfg.tolerance + "° daneben: " + miss.measures.map((m) => m.deg + "°").join(" und ") + " (Rio: " + cfg.target + "°).";
+    return "Der Versuch war daneben.";
+  }
 
   function toolBody(qid) {
-    const cfg = T.config(qid), ts = toolState(qid), now = serverNow();
+    const cfg = tcfg(qid), ts = toolState(qid), now = serverNow();
     const left = T.penaltyLeft(ts, now);
     if (left) {
-      return '<div class="tool-lock" data-until="' + ts.penaltyUntil + '">' + icon("lock") + "<div><strong>Strafzeit läuft</strong>" +
+      return (ts.lastMiss ? tResult(false, missText(cfg, ts.lastMiss)) : "") +
+        '<div class="tool-lock" data-until="' + ts.penaltyUntil + '">' + icon("lock") + "<div><strong>Strafzeit – neuer Versuch in</strong>" +
         '<div class="tool-big" data-tick="down" data-end="' + ts.penaltyUntil + '">' + mmss(left) + "</div>" +
-        '<div class="small">Bis dahin keine neue Schätzung oder Messung. Danach ist das Werkzeug automatisch wieder frei.</div></div></div>';
+        '<div class="small">Nur dieses Hilfsmittel wartet – alles andere könnt ihr weiter nutzen. Danach ist es automatisch wieder frei.</div></div></div>';
     }
     const res = T.result(cfg, ts, now);
     switch (cfg.kind) {
@@ -743,17 +768,14 @@
 
       case "height": {
         if (ts.guess == null) {
-          return '<label class="tool-label">Die beiden Ratenden: eure gemeinsame Schätzung, wie hoch ihr seid</label>' +
+          return (ts.lastMiss ? '<p class="muted small">Letzter Versuch: ' + nf(ts.lastMiss.guess) + " m – daneben.</p>" : "") +
+            '<label class="tool-label">Die beiden Ratenden: eure gemeinsame Schätzung, wie hoch ihr hier oben seid</label>' +
             '<div class="tool-row">' + tInput(qid, "guess", "z. B. 500", "decimal") + '<span class="tool-unit">m</span>' + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary") + "</div>" +
-            tPenalty(cfg, false);
+            '<p class="muted small">Die App sagt sofort, ob ihr höchstens ' + cfg.tolerancePct + " % daneben liegt. Wenn nicht, startet automatisch die Strafzeit (" + cfg.penalty + " Minuten).</p>";
         }
-        let h = tFixed("Schätzung", nf(ts.guess) + " m", ts.guessBy);
-        if (!res) {
-          return h + '<label class="tool-label">Spoiler-Schutz: Wert von der Infotafel eingeben</label>' +
-            '<div class="tool-row">' + tInput(qid, "answer", "Meter", "decimal") + '<span class="tool-unit">m</span>' + tBtn("answer", icon("lock-open") + " Auflösen", "btn-primary") + "</div>";
-        }
-        return h + tResult(res.ok, "Infotafel: <strong>" + nf(ts.answer) + " m</strong> · " + nf(Math.round(res.pct * 10) / 10) + " % daneben (erlaubt: höchstens " + cfg.tolerancePct + " %)") +
-          (res.ok ? tBtn("newRound", icon("rotate-ccw") + " Zurücksetzen", "btn-ghost btn-block") : tPenalty(cfg, true));
+        return tFixed("Schätzung", nf(ts.guess) + " m", ts.guessBy) +
+          tResult(true, "Echte Höhe: <strong>" + nf(cfg.answer) + " m</strong> – eure Schätzung lag höchstens " + cfg.tolerancePct + " % daneben.") +
+          tBtn("newRound", icon("rotate-ccw") + " Zurücksetzen", "btn-ghost btn-block");
       }
 
       case "compass": {
@@ -766,11 +788,10 @@
             ": <strong>" + m.deg + "°</strong> · " + d + "° daneben" + (m.manual ? " (eingetragen)" : "") + "</span></div>";
         }).join("");
         if (res) {
-          return h + tResult(res.ok, res.ok ? "Rio liegt bei " + cfg.target + "° – mindestens eine Messung lag höchstens " + cfg.tolerance + "° daneben." : "Beide Messungen lagen mehr als " + cfg.tolerance + "° daneben (Rio: " + cfg.target + "°).") +
-            (res.ok ? tBtn("newRound", icon("rotate-ccw") + " Zurücksetzen", "btn-ghost btn-block") : tPenalty(cfg, true));
+          return h + tResult(true, "Rio liegt bei " + cfg.target + "° – mindestens eine Messung lag höchstens " + cfg.tolerance + "° daneben.") +
+            tBtn("newRound", icon("rotate-ccw") + " Zurücksetzen", "btn-ghost btn-block");
         }
-        const missed = ms.some((m) => !T.compassHit(cfg, m.deg));
-        if (missed) h += tResult(false, "Die " + (ms.length === 1 ? "erste" : "") + " Messung lag mehr als " + cfg.tolerance + "° daneben. Laut Aufgabe reicht es, wenn eine der beiden Personen trifft – jetzt ist die zweite dran.");
+        if (ms.length) h += tResult(false, "Die erste Messung lag mehr als " + cfg.tolerance + "° daneben. Es reicht, wenn eine der beiden trifft – jetzt ist die zweite Person dran. Liegt auch sie daneben, startet automatisch die Strafzeit (" + cfg.penalty + " Minuten).");
         h += '<p class="tool-label">' + (ms.length ? "Person 2" : "Person 1") + ": Handy flach halten, die Oberkante in die vermutete Richtung von Rio – dann tippen.</p>";
         const manual = '<div class="tool-row">' + tInput(qid, "deg", "Grad, z. B. 200") + '<span class="tool-unit">°</span>' + tBtn("measure", "Eintragen", "btn-primary", " data-manual") + "</div>";
         if (compass.failed) {
@@ -784,11 +805,8 @@
           h += '<p class="small tool-ok-line">' + icon("check") + " Kompass bereit</p>" + tBtn("measure", icon("navigation") + " Hier ist Rio!", "btn-primary btn-block tool-tap");
         }
         if (!compass.failed) h += '<details class="tool-sub"><summary class="small">Ohne Handy-Kompass: Wert aus einer Kompass-App eintragen</summary>' + manual + "</details>";
-        return h + (missed ? tPenalty(cfg, false) : "");
+        return h;
       }
-
-      case "penalty":
-        return '<p class="small">Liegen die beiden falsch, startet hier die Wartezeit von ' + cfg.penalty + " Minuten – sie läuft auf allen Handys.</p>" + tPenalty(cfg, true);
 
       case "tictactoe": {
         if (!ts.players) {
@@ -799,7 +817,6 @@
           }).join("");
           return '<p class="tool-label">Wer spielt? Zwei Personen antippen – die erste spielt X, die zweite O. Die dritte Person ist Schiedsrichter.</p>' +
             '<div class="chips">' + chips + "</div>" +
-            '<div class="tool-row">' + tInput(qid, "name", "Name", "text") + '<button class="btn btn-ghost" data-tool-ui="ttt-add">' + icon("plus") + " Name</button></div>" +
             tBtn("players", icon("play") + " Spiel starten", "btn-primary btn-block", sel.length < 2 ? " disabled" : "");
         }
         const st = T.tttStatus(ts.moves);
@@ -819,17 +836,19 @@
     return "";
   }
 
+  // Alle Spieler, die sich je angemeldet haben (merkt sich der Server), dazu Namen aus dem Logbuch
   function knownNames() {
     const m = new Map();
     const add = (n) => { n = String(n || "").trim(); if (n && !m.has(n.toLowerCase())) m.set(n.toLowerCase(), n); };
+    (app.players || []).forEach(add);
     add(app.name);
     (app.state.log || []).forEach((e) => add(e.by));
-    toolUI.ttt.extra.forEach(add);
-    return Array.from(m.values()).slice(0, 10);
+    return Array.from(m.values());
   }
 
-  // Werkzeug-Bereich neu zeichnen, ohne halb getippte Eingaben zu verlieren
+  // Hilfsmittel und ihre Zeilen neu zeichnen, ohne halb getippte Eingaben zu verlieren
   function rerenderTools(qid) {
+    $$("[data-open-tool" + (qid ? '="' + qid + '"' : "") + "]").forEach((b) => { b.innerHTML = toolLineInner(b.dataset.openTool); });
     $$(".tool[data-tool" + (qid ? '="' + qid + '"' : "") + "]").forEach((t) => {
       const body = $(".tool-body", t);
       if (!body) return;
@@ -842,20 +861,15 @@
   }
 
   function bindTools(el) {
-    $$(".tool[data-tool]", el).forEach((t) => {
-      t.addEventListener("toggle", () => {
-        const q = t.dataset.tool;
-        if (t.open) { toolUI.open.add(q); toolUI.closed.delete(q); } else { toolUI.open.delete(q); toolUI.closed.add(q); }
-      });
-      t.addEventListener("click", onToolClick);
-    });
+    $$("[data-open-tool]", el).forEach((b) => b.addEventListener("click", () => openTool(b.dataset.openTool)));
+    $$(".tool[data-tool]", el).forEach((t) => t.addEventListener("click", onToolClick));
   }
 
-  async function onToolClick(ev) {
+  function onToolClick(ev) {
     const b = ev.target.closest("[data-tool-act], [data-tool-ui]");
     const t = ev.target.closest(".tool");
     if (!b || !t || b.disabled) return;
-    const qid = t.dataset.tool, cfg = T.config(qid);
+    const qid = t.dataset.tool;
     const input = (key) => $('[data-keep="' + qid + ":" + key + '"]', t);
     const ui = b.dataset.toolUi;
     if (ui === "compass-on") return enableCompass();
@@ -864,19 +878,11 @@
       if (i >= 0) sel.splice(i, 1); else if (sel.length < 2) sel.push(n); else toast("Es spielen nur zwei – erst jemanden abwählen.", true);
       return rerenderTools(qid);
     }
-    if (ui === "ttt-add") {
-      const inp = input("name"), n = inp && inp.value.trim().slice(0, 24);
-      if (!n) { toast("Bitte erst einen Namen eintippen.", true); return; }
-      toolUI.ttt.extra.push(n);
-      if (toolUI.ttt.sel.length < 2 && toolUI.ttt.sel.indexOf(n) < 0) toolUI.ttt.sel.push(n);
-      inp.value = "";
-      return rerenderTools(qid);
-    }
     const act = b.dataset.toolAct;
     const op = { type: act };
     let clear = null;
-    if (act === "fix" || act === "answer" || (act === "measure" && b.hasAttribute("data-manual"))) {
-      const key = act === "fix" ? "guess" : act === "answer" ? "answer" : "deg";
+    if (act === "fix" || (act === "measure" && b.hasAttribute("data-manual"))) {
+      const key = act === "fix" ? "guess" : "deg";
       const inp = input(key);
       const v = inp ? inp.value.trim() : "";
       if (!v) { toast("Bitte erst eine Zahl eingeben.", true); return; }
@@ -890,10 +896,8 @@
     } else if (act === "inc") op.d = Number(b.dataset.d);
     else if (act === "move") op.cell = Number(b.dataset.cell);
     else if (act === "players") { op.x = toolUI.ttt.sel[0]; op.o = toolUI.ttt.sel[1]; }
-    else if (act === "penalty") {
-      const ok = await confirmBox("Strafzeit starten?", cfg.penalty + " Minuten Wartezeit für diese Quest – auf allen Handys. Eine laufende Schätzung oder Messung verfällt; danach wird neu geraten.", "Strafzeit starten", true);
-      if (!ok) return;
-    } else if (act === "newGame") toolUI.ttt.sel = [];
+    else if (act === "newGame") toolUI.ttt.sel = [];
+    // act === "penalty" („Daneben“, wenn Spieler selbst urteilen) startet die Strafzeit sofort – ohne Rückfrage
     const typed = clear ? clear.value : "";
     if (clear) clear.value = ""; // vor dem Neuzeichnen leeren, sonst bleibt die Zahl stehen
     if (!toolDo(qid, op) && clear) clear.value = typed;
@@ -903,7 +907,7 @@
   function toolDo(qid, op) {
     if (!app.online) { toast(OFFLINE_MSG, true); return false; }
     const now = serverNow();
-    try { T.update(T.config(qid), toolState(qid), op, now, app.name); } catch (e) {
+    try { T.update(tcfg(qid), toolState(qid), op, now, app.name); } catch (e) {
       if (e instanceof T.ToolError) { toast(e.message, true); return false; }
       throw e;
     }
@@ -913,7 +917,7 @@
     return true;
   }
 
-  // Wartende Werkzeug-Eingaben an den Server senden (bei Konflikt auf dem neuen Stand wiederholen)
+  // Wartende Eingaben der Hilfsmittel an den Server senden (bei Konflikt auf dem neuen Stand wiederholen)
   async function flushTools() {
     if (toolUI.flushing || !toolUI.queue.length) return;
     if (app.busy) { setTimeout(flushTools, 200); return; }
@@ -925,7 +929,7 @@
         const next = JSON.parse(JSON.stringify(app.state));
         next.tools = next.tools || {};
         batch.forEach((x) => {
-          try { next.tools[x.qid] = T.update(T.config(x.qid), next.tools[x.qid], x.op, x.now, x.by); } catch (e) {
+          try { next.tools[x.qid] = T.update(tcfg(x.qid), next.tools[x.qid], x.op, x.now, x.by); } catch (e) {
             if (!(e instanceof T.ToolError)) throw e; // sonst: ein anderes Handy war schneller
           }
         });
@@ -945,7 +949,7 @@
         break;
       }
       toolUI.queue.splice(0, batch.length);
-      toast("Werkzeug: Speichern fehlgeschlagen (" + failed + "). Die Eingabe wurde NICHT übernommen.", true);
+      toast("Speichern fehlgeschlagen (" + failed + "). Die Eingabe wurde NICHT übernommen.", true);
       render();
     } finally {
       toolUI.flushing = false;
@@ -990,7 +994,7 @@
     return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
   }
 
-  // Taktgeber: Countdowns/Stoppuhren weiterzählen; ist eine Zeit abgelaufen, Werkzeug neu zeichnen + Signal
+  // Taktgeber: Countdowns/Stoppuhren weiterzählen; ist eine Zeit abgelaufen, Hilfsmittel neu zeichnen + Signal
   setInterval(() => {
     const ticks = $$("[data-tick]"), dues = $$("[data-until]");
     if (!ticks.length && !dues.length) return;
@@ -999,9 +1003,13 @@
       e.textContent = e.dataset.tick === "down" ? (e.dataset.fmt === "s" ? secs(+e.dataset.end - now) : mmss(+e.dataset.end - now)) : upfmt(now - +e.dataset.start);
     });
     const due = new Set();
-    dues.forEach((e) => { if (+e.dataset.until <= now) { const t = e.closest(".tool"); if (t) due.add(t.dataset.tool); } });
+    dues.forEach((e) => {
+      if (+e.dataset.until > now) return;
+      const t = e.closest("[data-tool], [data-open-tool]");
+      if (t) due.add(t.dataset.tool || t.dataset.openTool);
+    });
     due.forEach((qid) => {
-      const ts = toolState(qid), cfg = T.config(qid);
+      const ts = toolState(qid), cfg = tcfg(qid);
       const key = qid + ":" + (cfg.kind === "countdown" || cfg.kind === "traffic" ? ts.startedAt : ts.penaltyUntil);
       if (!toolUI.signaled.has(key)) {
         toolUI.signaled.add(key);
@@ -1467,7 +1475,7 @@
       "<li><strong>Tausch-Joker (10) · 5 im Spiel:</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen. Rückgängig gemachte Tausche zählen nicht.</li>" +
       "<li><strong>Multiplikator (10) · 3 im Spiel:</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. Einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt. Shop und Statistik zeigen immer, wie viele Joker schon <em>genutzt</em> wurden, z. B. „Tausch-Joker · 2 von 5 genutzt“.</p>" +
-      "<h3>" + icon("wrench") + " Werkzeuge</h3><p>Manche regionalen Quests haben unter der Aufgabe ein freiwilliges <strong>Werkzeug</strong>: Countdown, Stoppuhr mit Schätzung, Autos zählen, Kompass, Tic-Tac-Toe oder Strafzeit. Alle Handys sehen denselben Stand. Werkzeuge geben keine Punkte und haken nichts ab – abhaken macht ihr selbst.</p>" +
+      "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass oder Tic-Tac-Toe-Spielfeld. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht in der Statistik.</p>" +
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder im Logbuch " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
@@ -1489,7 +1497,7 @@
     const refresh = () => {
       const scroll = el.scrollTop;
       const focused = document.activeElement && document.activeElement.dataset ? Object.assign({}, document.activeElement.dataset) : null;
-      // Eingaben in Werkzeugen (z. B. halb getippte Schätzung) überleben das Neuzeichnen
+      // Eingaben in Hilfsmitteln (z. B. halb getippte Schätzung) überleben das Neuzeichnen
       const kept = {};
       $$("[data-keep]", el).forEach((i) => { kept[i.dataset.keep] = i.value; });
       el.innerHTML = renderFn();
@@ -1687,7 +1695,7 @@
       case "restore-btn": return $("#restore-file").click();
       case "logout-btn": return logout();
       case "rename-btn": return promptBox("Name ändern", "Unter diesem Namen erscheinen deine Aktionen im Logbuch.", app.name).then((n) => {
-        if (n) { app.name = n.slice(0, 24); store.set("name", app.name); render(); }
+        if (n) { app.name = n.slice(0, 24); store.set("name", app.name); registerName(); render(); }
       });
       case "pdf-btn": return downloadPDF().catch(() => toast("PDF konnte nicht erstellt werden.", true));
       case "reopen-btn": return confirmBox("Urlaub fortsetzen?", "Die Verteilung der Belohnungen wird aufgehoben und ihr könnt weiterspielen.", "Fortsetzen").then((ok) => ok && act({ type: "reopen" }));

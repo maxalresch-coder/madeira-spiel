@@ -237,7 +237,7 @@ assert.strictEqual(L.summary(g, C).earned, 0);
 const T = require("../public/tools.js");
 const IXT = L.index(C);
 Object.keys(T.TOOLS).forEach((id) => assert(IXT.quests[id], "Tool für unbekannte Quest " + id));
-const tu = (id, ts, op, now) => T.update(T.config(id), ts, op, now, "Tester");
+const tu = (id, ts, op, now) => T.update(T.config(id, C), ts, op, now, "Tester");
 const tf = (id, ts, op, now) => assert.throws(() => tu(id, ts, op, now), T.ToolError);
 // Countdown
 let ts = tu("q-cal-2", null, { type: "start" }, 1000);
@@ -270,30 +270,41 @@ assert.deepStrictEqual(T.result(T.config("q-svi-2"), ts, 60000), { ok: true, cou
 tf("q-svi-2", ts, { type: "inc", d: 1 }, 62000);
 ts.count = 7;
 assert.strictEqual(T.result(T.config("q-svi-2"), ts, 60000).ok, false);
-// Höhe: höchstens 10 % daneben, Strafsperre 5 Minuten
-ts = tu("q-cdl-3", null, { type: "fix", value: "550" }, 0);
+// Höhe: fest 589 m aus content.js, höchstens 10 % daneben, sonst sofort 5 Minuten Strafzeit
+assert.strictEqual(T.config("q-cdl-3", C).answer, 589);
+assert.strictEqual(T.config("q-cdl-3").answer, undefined);
+ts = tu("q-cdl-3", null, { type: "fix", value: "640" }, 0);
+assert.strictEqual(T.result(T.config("q-cdl-3", C), ts, 0).ok, true);
 tf("q-cdl-3", ts, { type: "fix", value: "600" }, 0);
-assert.strictEqual(T.result(T.config("q-cdl-3"), tu("q-cdl-3", ts, { type: "answer", value: 500 }, 0), 0).ok, true);
-ts = tu("q-cdl-3", ts, { type: "answer", value: "499" }, 0);
-assert.strictEqual(T.result(T.config("q-cdl-3"), ts, 0).ok, false);
-ts = tu("q-cdl-3", ts, { type: "penalty" }, 1000);
+assert.strictEqual(tu("q-cdl-3", ts, { type: "newRound" }, 0).guess, null);
+assert.strictEqual(T.result(T.config("q-cdl-3", C), tu("q-cdl-3", null, { type: "fix", value: "530,1" }, 0), 0).ok, true);
+ts = tu("q-cdl-3", null, { type: "fix", value: "530" }, 1000); // 59 m daneben > 58,9 m
 assert.strictEqual(ts.guess, null);
+assert.deepStrictEqual(ts.lastMiss, { guess: 530, by: "Tester" });
 assert.strictEqual(T.penaltyLeft(ts, 1000 + 4 * 60000), 60000);
-tf("q-cdl-3", ts, { type: "fix", value: 1 }, 1000 + 299999);
-assert.strictEqual(tu("q-cdl-3", ts, { type: "fix", value: 1 }, 1000 + 300000).guess, 1);
-// Lorbeerwald: 10 Minuten Strafzeit; Seilbahn hat keine
-assert.strictEqual(tu("q-san-3", null, { type: "penalty" }, 0).penaltyUntil, 600000);
+tf("q-cdl-3", ts, { type: "fix", value: 589 }, 1000 + 299999);
+assert.strictEqual(tu("q-cdl-3", ts, { type: "fix", value: 589 }, 1000 + 300000).guess, 589);
+// Strafzeit per Knopf „Daneben“ (für selbst beurteilte Versuche) – nur wo es eine gibt
+assert.strictEqual(tu("q-cdl-3", null, { type: "penalty" }, 0).penaltyUntil, 300000);
 tf("q-rbr-2", null, { type: "penalty" }, 0);
-// Kompass: 208° ± 20°, eine von zwei Messungen reicht
+// Links: Flughafen-Ankünfte und UNESCO-Kriterien
+assert.strictEqual(T.config("q-san-3").url, "https://whc.unesco.org/en/criteria/");
+assert(!IXT.quests["q-san-3"].task.includes("whc.unesco"));
+assert(IXT.quests["q-scr-2"].task.includes("höchstens 50°"));
+// Kompass: 208° ± 50°, eine von zwei Messungen reicht, beide daneben → sofort Strafzeit
 assert.strictEqual(T.angleDiff(350, 10), 20);
 assert.strictEqual(T.angleDiff(208, 28), 180);
-ts = tu("q-scr-2", null, { type: "measure", deg: 170 }, 0);
+ts = tu("q-scr-2", null, { type: "measure", deg: 150 }, 0);
 assert.strictEqual(T.result(T.config("q-scr-2"), ts, 0), null);
-ts = tu("q-scr-2", ts, { type: "measure", deg: 228.4 }, 0);
+ts = tu("q-scr-2", ts, { type: "measure", deg: 258.4 }, 0);
 assert.strictEqual(T.result(T.config("q-scr-2"), ts, 0).ok, true);
 tf("q-scr-2", ts, { type: "measure", deg: 200 }, 0);
-ts = tu("q-scr-2", tu("q-scr-2", null, { type: "measure", deg: 100 }, 0), { type: "measure", deg: 229 }, 0);
-assert.strictEqual(T.result(T.config("q-scr-2"), ts, 0).ok, false);
+ts = tu("q-scr-2", tu("q-scr-2", null, { type: "measure", deg: 100 }, 0), { type: "measure", deg: 259 }, 5000);
+assert.strictEqual(T.result(T.config("q-scr-2"), ts, 5000), null);
+assert.strictEqual(ts.penaltyUntil, 5000 + 300000);
+assert.deepStrictEqual(ts.lastMiss.measures.map((m) => m.deg), [100, 259]);
+assert.deepStrictEqual(ts.measures, []);
+tf("q-scr-2", ts, { type: "measure", deg: 208 }, 6000);
 // Tic-Tac-Toe: Sieg, Unentschieden, Rückgängig
 tf("q-rbr-3", null, { type: "move", cell: 0 }, 0);
 tf("q-rbr-3", null, { type: "players", x: "Anna", o: "anna" }, 0);

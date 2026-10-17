@@ -6,6 +6,8 @@ Aufgaben:
   * prüft das Passwort und gibt ein Token aus
   * speichert den gemeinsamen Spielstand (data/state.json) mit Versionsnummer,
     damit alle drei Handys denselben Stand sehen
+  * merkt sich alle Namen, mit denen sich jemand angemeldet hat (data/players.json),
+    z. B. für die Spielerauswahl beim Tic-Tac-Toe (bleibt auch nach einem Reset)
 
 Konfiguration über Umgebungsvariablen:
   MADEIRA_PASSWORD   Passwort für den Login (Pflicht)
@@ -67,6 +69,34 @@ def _save(conf, doc):
     os.replace(tmp, path)
 
 
+def _players_path(conf):
+    return os.path.join(conf["data_dir"], "players.json")
+
+
+def _load_players(conf):
+    try:
+        with open(_players_path(conf), encoding="utf-8") as f:
+            names = json.load(f)
+        return [n for n in names if isinstance(n, str)] if isinstance(names, list) else []
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def _add_player(conf, name):
+    """Namen merken (ohne Doppelte, Groß-/Kleinschreibung egal) und alle Namen zurückgeben."""
+    name = " ".join(str(name or "").split())[:24]
+    with _lock:
+        names = _load_players(conf)
+        if name and name.lower() not in [n.lower() for n in names] and len(names) < 50:
+            names.append(name)
+            os.makedirs(conf["data_dir"], exist_ok=True)
+            tmp = _players_path(conf) + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(names, f, ensure_ascii=False)
+            os.replace(tmp, _players_path(conf))
+        return names
+
+
 def _now_ms():
     """Serverzeit in ms – alle Handys rechnen Timer damit, damit sie synchron laufen."""
     return int(time.time() * 1000)
@@ -112,12 +142,17 @@ def _api(path, environ, start_response, conf):
     if path == "login" and method == "POST":
         body = _read_body(environ) or {}
         if conf["password"] and hmac.compare_digest(str(body.get("password", "")), conf["password"]):
-            return _json(start_response, "200 OK", {"token": _token(conf)})
+            return _json(start_response, "200 OK", {"token": _token(conf), "players": _add_player(conf, body.get("name"))})
         time.sleep(1)  # bremst Rateversuche
         return _json(start_response, "401 Unauthorized", {"error": "Falsches Passwort"})
 
     if not _authorized(environ, conf):
         return _json(start_response, "401 Unauthorized", {"error": "Nicht angemeldet"})
+
+    # Name melden (beim App-Start und nach „Name ändern“) – auch für schon Angemeldete
+    if path == "player" and method == "POST":
+        body = _read_body(environ) or {}
+        return _json(start_response, "200 OK", {"players": _add_player(conf, body.get("name"))})
 
     if path == "state" and method == "GET":
         doc = _load(conf)
@@ -130,8 +165,9 @@ def _api(path, environ, start_response, conf):
                 except ValueError:
                     pass
         if since is not None and since == doc["version"]:
-            return _json(start_response, "200 OK", {"version": doc["version"], "unchanged": True, "now": _now_ms()})
-        return _json(start_response, "200 OK", dict(doc, now=_now_ms()))
+            return _json(start_response, "200 OK", {"version": doc["version"], "unchanged": True, "now": _now_ms(),
+                                                    "players": _load_players(conf)})
+        return _json(start_response, "200 OK", dict(doc, now=_now_ms(), players=_load_players(conf)))
 
     if path == "state" and method == "POST":
         body = _read_body(environ)
