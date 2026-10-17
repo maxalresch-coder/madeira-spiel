@@ -52,7 +52,7 @@ window.GAME_CONTENT = {
           id: "q-pds-1", title: `Windstärke 5`,
           location: `Windpark auf der Hochebene Paul da Serra, auf dem Teil der Hochebene, der zu Ponta do Sol gehört`, pin: [32.75644, -17.05469], maps: "Miradouro da Bica da Cana",
           desc: `Madeira besteht fast nur aus Steilhängen, mit einer großen Ausnahme: der Paul da Serra, der einzigen Hochebene der Insel auf rund 1.500 Metern. Sie erstreckt sich über mehrere Gemeinden, darunter Ponta do Sol. Weil der Wind hier oben ungebremst über die flache Ebene pfeift, steht hier der größte Windpark Madeiras.`,
-          task: `Eure Aufgabe: Macht ein Foto, auf dem mindestens fünf Windräder zu sehen sind. Das Foto muss innerhalb von Ponta do Sol aufgenommen werden, die Windräder selbst dürfen auch außerhalb stehen.`
+          task: `Eure Aufgabe: Macht ein Foto, auf dem mindestens fünf Windräder zu sehen sind.`
         },
         {
           id: "q-pds-2", title: `Waschstraße`,
@@ -241,7 +241,7 @@ window.GAME_CONTENT = {
         },
         {
           id: "q-pmz-2", title: `Gischt ins Gesicht`,
-          location: `Naturpools (Piscinas Naturais) von Porto Moniz`, pin: [32.8682, -17.1705], maps: "Piscinas Naturais de Porto Moniz",
+          location: `Naturpools (Piscinas Naturais) von Porto Moniz`, pin: [32.8682, -17.1705], maps: "Piscinas Naturais do Porto Moniz",
           desc: `Die Naturpools sind das Wahrzeichen von Porto Moniz: Becken im schwarzen Vulkangestein, zusammen rund 3.800 m² groß, in die der Atlantik bei Flut hineinschwappt.`,
           task: `Eure Aufgabe: Geht im Becken bis an den äußeren Rand, wo die Wellen gegen das Gestein schlagen, und wartet, bis euch eine Welle Wasser ins Gesicht spritzt. Geschafft ist die Quest, wenn es jede von euch erwischt hat.`
         },
