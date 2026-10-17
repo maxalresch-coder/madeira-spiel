@@ -32,6 +32,8 @@
     "q-pds-3": { kind: "photoGrid", fv: 1, photos: 1, grid: 4, label: "Versteck im Foto", icon: "scan-search" },                    // Bananenversteck
     "q-fun-1": { kind: "photoNames", fv: 1, photos: 3, label: "Türen zuordnen", icon: "door-open" },                                // Gespür für die richtige Tür
     "q-mac-3": { kind: "photoPick", fv: 1, photos: 3, label: "Adler-Stein raten", icon: "bird" },                                   // Steinadler
+    // Zeichnen: geheim ausgeloste Bucht der Ponta de São Lourenço nachzeichnen, die anderen raten auf der Karte (bay-map.js)
+    "q-mac-2": { kind: "drawBay", fv: 1, bays: ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"], label: "Bucht zeichnen und raten", icon: "pencil" }, // Bucht gesucht
     // Auswahl: genau 2 der 10 UNESCO-Kriterien; Lösung (ix) + (x) wird bei „Daneben“ nie gezeigt
     "q-san-3": { kind: "choice", pick: 2, solution: ["ix", "x"], penalty: 10, label: "Zwei Kriterien wählen", icon: "list-checks" } // Mit Lorbeeren und UNESCO gekrönt
   };
@@ -89,7 +91,7 @@
   const usedList = (ts) => unhide(ts.used) || [];
   const PHOTO_PUZZLES = ["photoGrid", "photoNames", "photoPick"];
   const isPhotoPuzzle = (cfg) => PHOTO_PUZZLES.indexOf(cfg.kind) >= 0;
-  const isSecret = (cfg) => cfg.kind === "secretTerms" || cfg.kind === "secretRank" || cfg.kind === "photoWord" || isPhotoPuzzle(cfg);
+  const isSecret = (cfg) => cfg.kind === "secretTerms" || cfg.kind === "secretRank" || cfg.kind === "photoWord" || isPhotoPuzzle(cfg) || cfg.kind === "drawBay";
 
   // ---------------------------------------------------------------- Zufall
   // Regel: Jede mögliche Anordnung muss gleich wahrscheinlich sein (auch die richtige Lösung).
@@ -192,6 +194,11 @@
         const answer = unhide(ts.secret);
         return { ok: ts.guess === answer, answer };
       }
+      case "drawBay": {
+        if (!ts.secret || !ts.drawing || ts.guess == null) return null;
+        const bay = unhide(ts.secret), hit = ts.guess === bay;
+        return { ok: hit || !!ts.accepted, hit, bay };
+      }
       case "photoNames": {
         if (!ts.secret || !ts.guess) return null;
         const names = unhide(ts.secret) || [];
@@ -226,7 +233,7 @@
     const distinct = (words) => { if (new Set(words.map(norm)).size !== words.length) fail("Bitte keine doppelten Einträge."); };
     const round0s = {
       secret: null, fruits: null, guess: null, guessed: null, tips: 0, revealed: false, guessOrder: null,
-      photos: null, draft: null, draftLetters: null, attempts: [], solved: false, failed: false, accepted: false, letters: null
+      photos: null, draft: null, draftLetters: null, attempts: [], solved: false, failed: false, accepted: false, letters: null, drawing: null
     };
     const ph = phase(cfg, ts);
 
@@ -241,12 +248,14 @@
           if (cfg.kind === "secretTerms") (unhide(ts.secret) || []).forEach(add);
           if (cfg.kind === "photoWord") add((unhide(ts.secret) || []).join(""));
           if (cfg.kind === "secretRank") (ts.fruits || []).forEach(add);
+          if (cfg.kind === "drawBay") add(unhide(ts.secret)); // gezeichnete Bucht: erst wieder dran, wenn alle anderen dran waren
         }
         return Object.assign(ts, round0s, { used: hide(used), round: (ts.round || 1) + 1 });
       }
     }
 
     if (isPhotoPuzzle(cfg)) return updatePhotoPuzzle(cfg, ts, op, now, by, ph, round0s);
+    if (cfg.kind === "drawBay") return updateDrawBay(cfg, ts, op, now, by, ph);
 
     if (cfg.kind === "secretTerms") {
       if (op.type === "fix") {
@@ -451,6 +460,52 @@
     }
     fail("Das geht hier nicht.");
   }
+  // „Bucht gesucht“: Zufall lost geheim eine Bucht aus (bayChoices: gleichverteilt unter den noch nicht gezeichneten; waren
+  // alle dran, wieder alle außer der zuletzt gezeichneten) → Zeichnung bestätigen (Phase 2) → eine Bucht tippen (Phase 3).
+  // Die Zeichnung liegt offen im Spielstand (Striche), die Bucht nur verschleiert; „Neue Runde“/Reset löschen beides.
+  function bayChoices(cfg, ts) {
+    const used = usedList(ts || {});
+    const left = cfg.bays.filter((b) => used.indexOf(b) < 0);
+    if (left.length) return left;
+    const last = used[used.length - 1];
+    return cfg.bays.filter((b) => b !== last);
+  }
+  const DRAW_TOOLS = ["p", "b", "e"];
+  function checkDrawing(d) {
+    const strokes = d && Array.isArray(d.strokes) ? d.strokes : null;
+    if (!strokes || !strokes.length) fail("Bitte erst etwas zeichnen.");
+    if (strokes.length > 600) fail("Die Zeichnung ist zu groß.");
+    let total = 0;
+    const clean = strokes.map((st) => {
+      const pts = Array.isArray(st.p) ? st.p : [];
+      if (DRAW_TOOLS.indexOf(st.t) < 0 || !/^#[0-9a-f]{6}$/i.test(String(st.c)) || [1, 2, 3].indexOf(st.w) < 0 || pts.length < 2 || pts.length % 2) fail("Ungültige Zeichnung.");
+      total += pts.length;
+      return { t: st.t, c: String(st.c).toLowerCase(), w: st.w, p: pts.map((v) => Math.max(0, Math.min(1000, Math.round(Number(v) || 0)))) };
+    });
+    if (total > 60000) fail("Die Zeichnung ist zu groß.");
+    return { v: 1, strokes: clean };
+  }
+  function updateDrawBay(cfg, ts, op, now, by, ph) {
+    switch (op.type) {
+      case "start": // geheime Bucht auslosen (Zufall im Browser gezogen, hier nur geprüft)
+        if (ts.secret) fail("Die Bucht ist schon ausgelost.");
+        if (bayChoices(cfg, ts).indexOf(String(op.bay)) < 0) fail("Diese Bucht ist gerade nicht dran.");
+        return Object.assign(ts, { secret: hide(String(op.bay)), drawing: null, guess: null, accepted: false, by });
+      case "fix":
+        if (ph !== 1 || !ts.secret) fail(ts.secret ? "Schon bestätigt." : "Erst eine Bucht auslosen.");
+        return Object.assign(ts, { drawing: checkDrawing(op.drawing), drawnBy: by });
+      case "guess":
+        if (ph !== 2) fail("Gerade wird nicht geraten.");
+        if (cfg.bays.indexOf(String(op.bay)) < 0) fail("Bitte eine Bucht antippen.");
+        return Object.assign(ts, { guess: String(op.bay), guessBy: by });
+      case "accept": {
+        const r = result(cfg, ts, now);
+        if (!r || r.hit || ts.accepted) fail("Das geht hier nicht.");
+        return Object.assign(ts, { accepted: true, acceptedBy: by });
+      }
+    }
+    fail("Das geht hier nicht.");
+  }
   // Phase eines Hilfsmittels mit geheimer Eingabe: 1 geheim eingeben, 2 raten, 3 Ergebnis (gelöst oder aufgelöst).
   // Hängt nur am gemeinsamen Zustand – alle Handys zeigen dieselbe Phase.
   function phase(cfg, ts) {
@@ -460,6 +515,7 @@
     if (cfg.kind === "secretRank") return ts.guess ? 3 : 2;
     if (cfg.kind === "photoWord") return ts.solved || ts.failed ? 3 : 2;
     if (isPhotoPuzzle(cfg)) return ts.guess != null ? 3 : 2;
+    if (cfg.kind === "drawBay") return !ts.drawing ? 1 : ts.guess != null ? 3 : 2;
     // Churchill: auch nach dem 6. Tipp darf noch markiert werden (der letzte Tipp kann richtig gewesen sein)
     if (cfg.kind === "secretTerms") { const r = result(cfg, ts, 0); return r && r.ok ? 3 : 2; }
     return 2;
@@ -605,7 +661,7 @@
   const api = {
     TOOLS, LINKS, ARRIVALS_URL, UNESCO_URL, UNESCO_CRITERIA, ToolError, config, links, hasState, update, result, penaltyLeft,
     angleDiff, compassHit, tttStatus, norm, letterCount, sameName, hide, unhide, isSecret, randomInt, shuffle, letter, sameLetter,
-    phase, sanitize, draftEntries, isPhotoPuzzle
+    phase, sanitize, draftEntries, isPhotoPuzzle, bayChoices, checkDrawing
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.QuestTools = api;

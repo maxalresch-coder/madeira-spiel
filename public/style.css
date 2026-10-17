@@ -783,3 +783,42 @@ span.pt-btn { cursor: default; }
 .handoff p { margin: 0; }
 .team-input { width: 100%; }
 .photo-zone .photo-files { align-self: center; min-height: 44px; }
+/* Bucht gesucht: Karte der Ponta de São Lourenço, Küstenausschnitt, Zeichenfläche */
+.bay-map-wrap { width: 100%; overflow-x: auto; border-radius: 12px; -webkit-overflow-scrolling: touch; }
+.bay-map { display: block; width: 100%; height: auto; }
+.bay-map-wrap.big .bay-map { width: 220%; }
+.bm-sea { fill: #cfe7f0; }
+.bm-land path { fill: #e8d9b5; stroke: #7a5a2e; stroke-width: 1.2px; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.bm-mark circle { fill: var(--ocean); stroke: #fff; stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.bm-mark text { fill: #fff; font-weight: 800; text-anchor: middle; font-family: var(--sans, Inter, sans-serif); }
+.bm-mark text.bm-name { fill: var(--ocean-deep); text-anchor: start; font-weight: 700; paint-order: stroke; stroke: rgba(255,255,255,.85); stroke-width: 3px; vector-effect: non-scaling-stroke; }
+.bm-mark.sel circle { fill: #e5b53b; }
+.bm-mark.right circle { fill: var(--laurel); }
+.bm-mark.wrong circle { fill: var(--hibiscus); }
+.bm-hl { fill: rgba(47, 158, 68, .12); stroke: var(--laurel); stroke-width: 3px; vector-effect: non-scaling-stroke; }
+svg[data-tool-ui="baymap"] { cursor: pointer; }
+.bay-chips .chip { min-width: 44px; min-height: 40px; background: var(--sea); color: var(--ocean-deep); }
+.bay-chips .chip.on { background: var(--ocean); color: #fff; }
+.bay-big-btn, .bay-ref-btn { align-self: center; min-height: 40px; }
+.bay-ref { border-radius: 12px; overflow: hidden; border: 1.5px solid var(--line); }
+.bay-crop { display: block; width: 100%; height: auto; max-height: 34vh; background: #cfe7f0; }
+.bay-drawing { display: block; width: 100%; height: auto; border-radius: 12px; border: 1.5px solid var(--line); background: #fff; }
+.bay-drawing path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.bay-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bay-compare figure { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.bay-compare figure > svg { border-radius: 10px; border: 1.5px solid var(--line); width: 100%; height: auto; aspect-ratio: 4 / 3; background: #cfe7f0; }
+.bay-compare figcaption { font-size: .82rem; color: var(--muted); text-align: center; }
+.draw { display: flex; flex-direction: column; gap: 6px; }
+.draw-bar, .draw-colors { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: center; }
+.draw-btn { width: 40px; height: 40px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); display: grid; place-items: center; padding: 0; cursor: pointer; }
+.draw-btn .ic { width: 20px; height: 20px; }
+.draw-btn.on { background: var(--ocean); border-color: var(--ocean); color: #fff; }
+.draw-btn:disabled { opacity: .35; }
+.draw-size span { display: block; border-radius: 50%; background: currentColor; }
+.draw-sep { width: 1px; height: 26px; background: var(--line); margin: 0 2px; }
+.draw-color { width: 34px; height: 34px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1.5px var(--line); cursor: pointer; padding: 0; }
+.draw-color.on { box-shadow: 0 0 0 3px var(--ocean); }
+.draw-pad { position: relative; width: 100%; aspect-ratio: 4 / 3; border-radius: 12px; border: 1.5px solid var(--line); overflow: hidden; background: #fff;
+  touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: contain; }
+.draw-pad canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.draw-break { flex-basis: 100%; height: 0; }

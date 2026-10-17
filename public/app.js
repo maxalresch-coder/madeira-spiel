@@ -857,6 +857,7 @@
       case "secretRank": return secretRankBody(qid, cfg, ts, now);
       case "photoWord": return photoWordBody(qid, cfg, ts, now);
       case "photoGrid": case "photoNames": case "photoPick": return photoPuzzleBody(qid, cfg, ts, now);
+      case "drawBay": return drawBayBody(qid, cfg, ts, now);
       case "choice": return choiceBody(qid, cfg, ts);
 
       case "tictactoe": {
@@ -1112,6 +1113,219 @@
         '<span class="pr-side"><strong>' + esc((ts.guess || [])[i] || "") + "</strong>" +
         (res ? '<span class="term-ok">' + (res.places[i] ? icon("check") + " richtig" : icon("x") + " richtig: " + esc(res.names[i])) + "</span>" : "") + "</span></li>").join("") + "</ol>" +
       newRoundBtn(!res || !res.ok);
+  }
+
+  // ---- Bucht gesucht (Machico): Zeichenfläche + Karte der Ponta de São Lourenço (Küste: bay-map.js, Quelle CAOP/DGT).
+  // Phase 1: Zufall lost geheim eine Bucht aus; auf dem auslosenden Handy (oder wer „Hier zeichnen“ wählt) erscheinen der
+  // vergrößerte Küstenausschnitt (ohne Nummer/Namen, ein-/ausblendbar) und die Zeichenfläche. Gezeichnet wird nur lokal
+  // (nicht synchronisiert; Entwurf in localStorage), erst „Bestätigen“ speichert die Striche → „Handy weitergeben“.
+  // Phase 2: Zeichnung + Karte mit nummerierten Buchten, eine antippen → „Bestätigen“. Phase 3: grün/rot, richtige Bucht
+  // hervorgehoben, Zeichnung und echter Ausschnitt nebeneinander; „Neue Runde“, bei falsch „Trotzdem richtig“.
+  const BM = () => window.BAY_MAP;
+  const bayById = (id) => BM().bays.find((b) => b.id === id);
+  const bayTitle = (b) => "Bucht " + b.n + (b.name ? " · " + b.name : "");
+  let bayLandCache = "";
+  const bayLand = () => bayLandCache || (bayLandCache = BM().land.map((d) => '<path d="' + d + '"/>').join(""));
+  function bayCrop(id) {
+    const v = bayById(id).view;
+    return '<svg class="bay-crop" viewBox="' + v.join(" ") + '" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Küstenausschnitt">' +
+      '<rect class="bm-sea" x="' + v[0] + '" y="' + v[1] + '" width="' + v[2] + '" height="' + v[3] + '"/><g class="bm-land">' + bayLand() + "</g></svg>";
+  }
+  // Karte des Zipfels mit allen nummerierten Buchten; opts: sel (getippt), right/wrong (Ergebnis), tap (antippbar)
+  function bayMap(opts) {
+    const m = BM(), r = m.w * 0.016;
+    const marks = m.bays.map((b) => {
+      const cls = b.id === opts.right ? " right" : b.id === opts.wrong ? " wrong" : b.id === opts.sel ? " sel" : "";
+      return '<g class="bm-mark' + cls + '"><circle cx="' + b.x + '" cy="' + b.y + '" r="' + r + '"/><text x="' + b.x + '" y="' + b.y + '" dy=".36em" font-size="' + r * 1.25 + '">' + b.n + "</text>" +
+        (b.name ? '<text class="bm-name" x="' + (b.x + r * 1.3) + '" y="' + (b.y + r * 2.2) + '" font-size="' + r * 1.05 + '">' + esc(b.name) + "</text>" : "") + "</g>";
+    }).join("");
+    const hl = opts.right ? (() => { const v = bayById(opts.right).view; return '<rect class="bm-hl" x="' + v[0] + '" y="' + v[1] + '" width="' + v[2] + '" height="' + v[3] + '" rx="' + r * 0.6 + '"/>'; })() : "";
+    return '<div class="bay-map-wrap' + (toolUI.bayBig ? " big" : "") + '"><svg class="bay-map" viewBox="0 0 ' + m.w + " " + m.h + '"' + (opts.tap ? ' data-tool-ui="baymap"' : "") +
+      ' role="img" aria-label="Karte der Ponta de São Lourenço mit nummerierten Buchten"><rect class="bm-sea" width="' + m.w + '" height="' + m.h + '"/><g class="bm-land">' + bayLand() + "</g>" + hl + marks + "</svg></div>";
+  }
+  // Zeichnung: Striche { t: p(Stift)/b(Pinsel)/e(Radierer), c: Farbe, w: 1–3, p: [x, y, …] } in 1.000 × 750
+  const DRAW_W = 1000, DRAW_H = 750, DRAW_SIZES = { 1: 5, 2: 11, 3: 22 };
+  const DRAW_COLORS = ["#1f2933", "#0b5f78", "#3b82f6", "#2f9e44", "#e5b53b", "#e8822d", "#e0475b", "#8b5e3c"];
+  const strokeLook = (st) => (st.t === "b" ? { w: DRAW_SIZES[st.w] * 2.2, a: 0.5, c: st.c } : st.t === "e" ? { w: DRAW_SIZES[st.w] * 2.5, a: 1, c: "#ffffff" } : { w: DRAW_SIZES[st.w], a: 1, c: st.c });
+  function strokeD(p) { // quadratisch geglättet über die Mittelpunkte
+    if (p.length <= 2) return "M" + p[0] + "," + p[1] + " l0.1,0";
+    let d = "M" + p[0] + "," + p[1];
+    for (let i = 2; i < p.length - 2; i += 2) d += " Q" + p[i] + "," + p[i + 1] + " " + (p[i] + p[i + 2]) / 2 + "," + (p[i + 1] + p[i + 3]) / 2;
+    return d + " L" + p[p.length - 2] + "," + p[p.length - 1];
+  }
+  function drawingSvg(drawing) {
+    return '<svg class="bay-drawing" viewBox="0 0 ' + DRAW_W + " " + DRAW_H + '" role="img" aria-label="Zeichnung"><rect width="' + DRAW_W + '" height="' + DRAW_H + '" fill="#fff"/>' +
+      ((drawing && drawing.strokes) || []).map((st) => { const l = strokeLook(st); return '<path d="' + strokeD(st.p) + '" stroke="' + l.c + '" stroke-width="' + l.w + '" opacity="' + l.a + '"/>'; }).join("") + "</svg>";
+  }
+  function paintStroke(ctx, st, k) {
+    const l = strokeLook(st), p = st.p;
+    ctx.save(); ctx.globalAlpha = l.a; ctx.strokeStyle = l.c; ctx.lineWidth = l.w * k; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath(); ctx.moveTo(p[0] * k, p[1] * k);
+    if (p.length <= 2) ctx.lineTo(p[0] * k + 0.1, p[1] * k);
+    for (let i = 2; i < p.length - 2; i += 2) ctx.quadraticCurveTo(p[i] * k, p[i + 1] * k, (p[i] + p[i + 2]) / 2 * k, (p[i + 1] + p[i + 3]) / 2 * k);
+    if (p.length > 2) ctx.lineTo(p[p.length - 2] * k, p[p.length - 1] * k);
+    ctx.stroke(); ctx.restore();
+  }
+  function simplifyStroke(p, tol) { // Ramer–Douglas–Peucker auf [x, y, …]
+    const n = p.length / 2;
+    if (n < 3) return p;
+    const keep = new Uint8Array(n); keep[0] = keep[n - 1] = 1;
+    const stack = [[0, n - 1]];
+    while (stack.length) {
+      const [a, b] = stack.pop(), x1 = p[2 * a], y1 = p[2 * a + 1], dx = p[2 * b] - x1, dy = p[2 * b + 1] - y1, L = Math.hypot(dx, dy) || 1e-9;
+      let best = 0, bi = -1;
+      for (let i = a + 1; i < b; i++) { const dd = Math.abs(dy * (p[2 * i] - x1) - dx * (p[2 * i + 1] - y1)) / L; if (dd > best) { best = dd; bi = i; } }
+      if (best > tol) { keep[bi] = 1; stack.push([a, bi], [bi, b]); }
+    }
+    const out = [];
+    for (let i = 0; i < n; i++) if (keep[i]) out.push(p[2 * i], p[2 * i + 1]);
+    return out;
+  }
+  // Zeichen-Zustand dieses Handys (eine Runde = eine Bucht); Entwurf übersteht Neuladen (localStorage)
+  function drawState(qid, ts) {
+    const key = qid + ":" + (ts.round || 1) + ":" + String(ts.secret || "").slice(-8);
+    let d = toolUI.draw;
+    if (!d || d.key !== key) {
+      let saved = null;
+      try { saved = JSON.parse(store.get("draw:" + key) || "null"); } catch (e) { saved = null; }
+      d = toolUI.draw = { qid, key, strokes: (saved && saved.strokes) || [], redo: [], tool: "p", color: DRAW_COLORS[0], size: 2, showRef: true, el: null, here: !!(saved && saved.here) };
+    }
+    return d;
+  }
+  const saveDraw = (d) => store.set("draw:" + d.key, JSON.stringify({ strokes: d.strokes, here: d.here }));
+  function buildDrawEl(d) {
+    const el = document.createElement("div");
+    el.className = "draw";
+    const tool = (t, ic, label) => '<button class="draw-btn" data-draw="tool:' + t + '" aria-label="' + label + '" title="' + label + '">' + icon(ic) + "</button>";
+    const size = (s) => '<button class="draw-btn draw-size" data-draw="size:' + s + '" aria-label="Strichstärke ' + s + '"><span style="width:' + (4 + s * 4) + "px;height:" + (4 + s * 4) + 'px"></span></button>';
+    el.innerHTML = '<div class="draw-bar">' + tool("p", "pencil", "Stift") + tool("b", "paintbrush", "Pinsel") + tool("e", "eraser", "Radierer") +
+      '<span class="draw-sep"></span>' + size(1) + size(2) + size(3) + '<span class="draw-break"></span>' +
+      '<button class="draw-btn" data-draw="undo" aria-label="Rückgängig" title="Rückgängig">' + icon("undo-2") + "</button>" +
+      '<button class="draw-btn" data-draw="redo" aria-label="Wiederholen" title="Wiederholen">' + icon("redo-2") + "</button>" +
+      '<button class="draw-btn" data-draw="clear" aria-label="Alles löschen" title="Alles löschen">' + icon("trash-2") + "</button>" +
+      '<span class="draw-sep"></span><button class="draw-btn draw-ref" data-draw="ref" aria-label="Ausschnitt ein-/ausblenden" title="Ausschnitt ein-/ausblenden">' + icon("eye-off") + "</button></div>" +
+      '<div class="draw-colors">' + DRAW_COLORS.map((c) => '<button class="draw-color" data-draw="color:' + c + '" style="background:' + c + '" aria-label="Farbe ' + c + '"></button>').join("") + "</div>" +
+      '<div class="draw-pad"><canvas class="draw-base"></canvas><canvas class="draw-live"></canvas></div>';
+    const pad = $(".draw-pad", el), base = $(".draw-base", el), live = $(".draw-live", el);
+    d.el = el; d.base = base; d.live = live; d.pad = pad;
+    el.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-draw]");
+      if (!b) return;
+      ev.stopPropagation();
+      const [what, val] = b.dataset.draw.split(":");
+      if (what === "tool") d.tool = val;
+      else if (what === "size") d.size = +val;
+      else if (what === "color") { d.color = b.dataset.draw.slice(6); if (d.tool === "e") d.tool = "p"; }
+      else if (what === "ref") { d.showRef = !d.showRef; rerenderTools(d.qid); }
+      else if (what === "undo" && d.strokes.length) { d.redo.push(d.strokes.pop()); redrawBase(d); saveDraw(d); }
+      else if (what === "redo" && d.redo.length) { d.strokes.push(d.redo.pop()); redrawBase(d); saveDraw(d); }
+      else if (what === "clear" && d.strokes.length) {
+        confirmBox("Alles löschen?", "Die ganze Zeichnung wird gelöscht.", "Löschen", true).then((ok) => { if (ok) { d.strokes = []; d.redo = []; redrawBase(d); saveDraw(d); drawBarState(d); } });
+      }
+      tapFeedback(b);
+      drawBarState(d);
+    });
+    // Zeichnen mit Finger/Stift/Maus – die Seite scrollt und zoomt dabei nicht (touch-action: none)
+    let cur = null, raf = 0;
+    const pt = (e) => { const r = pad.getBoundingClientRect(); return [Math.round(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * DRAW_W), Math.round(Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) * DRAW_H)]; };
+    const drawLive = () => { raf = 0; const ctx = live.getContext("2d"); ctx.clearRect(0, 0, live.width, live.height); if (cur) paintStroke(ctx, cur, live.width / DRAW_W); };
+    pad.addEventListener("pointerdown", (e) => {
+      if (e.button > 0 || cur) return;
+      e.preventDefault();
+      try { pad.setPointerCapture(e.pointerId); } catch (x) { /* egal */ }
+      toolUI.dragging = true; // während des Zeichnens nichts neu zeichnen
+      cur = { t: d.tool, c: d.tool === "e" ? "#ffffff" : d.color, w: d.size, p: pt(e), id: e.pointerId };
+      drawLive();
+    });
+    pad.addEventListener("pointermove", (e) => {
+      if (!cur || e.pointerId !== cur.id) return;
+      e.preventDefault();
+      const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      (evs.length ? evs : [e]).forEach((ce) => {
+        const [x, y] = pt(ce), n = cur.p.length;
+        if (Math.hypot(x - cur.p[n - 2], y - cur.p[n - 1]) >= 2) cur.p.push(x, y);
+      });
+      if (!raf) raf = requestAnimationFrame(drawLive);
+    });
+    const end = (e) => {
+      if (!cur || e.pointerId !== cur.id) return;
+      const st = { t: cur.t, c: cur.c, w: cur.w, p: simplifyStroke(cur.p, 0.8) };
+      cur = null; drawLive();
+      d.strokes.push(st); d.redo = [];
+      paintStroke(base.getContext("2d"), st, base.width / DRAW_W);
+      saveDraw(d); drawBarState(d);
+      toolUI.dragging = false;
+      if (toolUI.refreshPending) { toolUI.refreshPending = false; render(); }
+    };
+    pad.addEventListener("pointerup", end); pad.addEventListener("pointercancel", end);
+    if (window.ResizeObserver) new ResizeObserver(() => sizeDraw(d)).observe(pad);
+    drawBarState(d);
+    return el;
+  }
+  function drawBarState(d) {
+    if (!d.el) return;
+    $$("[data-draw]", d.el).forEach((b) => {
+      const [what, val] = b.dataset.draw.split(":");
+      b.classList.toggle("on", (what === "tool" && val === d.tool) || (what === "size" && +val === d.size) || (what === "color" && b.dataset.draw.slice(6) === d.color && d.tool !== "e"));
+      if (what === "undo") b.disabled = !d.strokes.length;
+      if (what === "redo") b.disabled = !d.redo.length;
+      if (what === "clear") b.disabled = !d.strokes.length;
+      if (what === "ref") { b.innerHTML = icon(d.showRef ? "eye-off" : "eye"); b.classList.toggle("on", !d.showRef); }
+    });
+  }
+  function sizeDraw(d) { // Canvas in Bildschirmauflösung, Inhalt aus den Strichen neu zeichnen
+    const r = d.pad.getBoundingClientRect();
+    if (!r.width) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), W = Math.round(r.width * dpr), H = Math.round(r.height * dpr);
+    if (d.base.width === W && d.base.height === H) return;
+    [d.base, d.live].forEach((c) => { c.width = W; c.height = H; });
+    redrawBase(d);
+  }
+  function redrawBase(d) {
+    const ctx = d.base.getContext("2d"), k = d.base.width / DRAW_W;
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, d.base.width, d.base.height);
+    d.strokes.forEach((st) => paintStroke(ctx, st, k));
+  }
+  // Zeichenfläche bleibt beim Neuzeichnen erhalten (wie die Kamera): wird in ihren Platz [data-draw-slot] zurückgehängt
+  function mountDraw() {
+    const d = toolUI.draw;
+    if (!d || !d.el) return;
+    const slot = $('[data-draw-slot="' + d.qid + '"]');
+    if (slot && d.el.parentNode !== slot) { slot.appendChild(d.el); sizeDraw(d); }
+  }
+  function drawBayBody(qid, cfg, ts, now) {
+    if (!BM()) return '<p class="tool-warn">Karte fehlt (bay-map.js).</p>';
+    const ph = T.phase(cfg, ts), sel = puzzleSel(qid, ts);
+    if (ph === 1 && !ts.secret) {
+      return phaseBar(1) + lookAway + '<p class="tool-label">Der Zufall wählt geheim eine Bucht. Wer zeichnet, sieht nur ihren Küstenausschnitt.</p>' +
+        tBtn("start", icon("shuffle") + " Bucht auslosen", "btn-primary btn-block");
+    }
+    if (ph === 1) {
+      const d = drawState(qid, ts);
+      if (!d.here) {
+        return phaseBar(1) + '<p class="tool-wait">' + icon("pencil") + " Auf einem anderen Handy wird gerade gezeichnet.</p>" +
+          '<button class="btn btn-ghost btn-block" data-tool-ui="draw-here">' + icon("eye") + " Hier zeichnen</button>" +
+          '<p class="muted small">Zeigt die geheime Bucht auf diesem Handy – nur für die Person, die zeichnet.</p>' + newRoundBtn(false, "Neue Runde (andere Bucht)");
+      }
+      if (!d.el) buildDrawEl(d);
+      return phaseBar(1) + '<p class="tool-label">Zeichne diese Küste nach.</p>' +
+        (d.showRef ? '<div class="bay-ref">' + bayCrop(T.unhide(ts.secret)) + "</div>" : "") +
+        (d.showRef ? "" : '<p class="muted small">Ausschnitt ausgeblendet – das Auge in der Leiste zeigt ihn wieder.</p>') +
+        '<div data-draw-slot="' + qid + '"></div>' + tBtn("fix", icon("lock") + " Bestätigen", "btn-primary btn-block") + newRoundBtn(false, "Neue Runde (andere Bucht)");
+    }
+    const chips = (cls) => '<div class="chips bay-chips">' + BM().bays.map((b) => '<button class="chip' + (sel.bay === b.id ? " on" : "") + '" data-tool-ui="bay" data-bay="' + b.id + '"' + cls + ">" + esc(bayTitle(b).replace("Bucht ", "")) + "</button>").join("") + "</div>";
+    const bigBtn = '<button class="btn btn-small btn-ghost bay-big-btn" data-tool-ui="bay-big">' + icon(toolUI.bayBig ? "zoom-out" : "zoom-in") + (toolUI.bayBig ? " Karte kleiner" : " Karte größer") + "</button>";
+    if (ph === 2) {
+      return phaseBar(2) + '<p class="tool-label">Welche Bucht ist gezeichnet?</p>' + drawingSvg(ts.drawing) +
+        bayMap({ sel: sel.bay, tap: true }) + bigBtn + chips("") +
+        tBtn("guess", icon("lock") + " Bestätigen", "btn-primary btn-block", sel.bay ? "" : " disabled") + newRoundBtn(false);
+    }
+    const res = T.result(cfg, ts, now), right = res ? bayById(res.bay) : null, guess = bayById(ts.guess);
+    return phaseBar(3) + (res ? tResult(res.ok, res.hit ? bayTitle(right) + " erkannt." : ts.accepted ? "Zählt als richtig (" + bayTitle(right) + ")." : "Getippt: " + bayTitle(guess) + " · richtig: " + bayTitle(right) + ".", res.ok ? "Richtig" : "Falsch") : "") +
+      (res ? bayMap({ right: res.bay, wrong: res.hit ? null : ts.guess }) : "") +
+      '<div class="bay-compare"><figure>' + drawingSvg(ts.drawing) + "<figcaption>Zeichnung</figcaption></figure>" +
+      (right ? "<figure>" + bayCrop(right.id) + "<figcaption>" + esc(bayTitle(right)) + "</figcaption></figure>" : "") + "</div>" +
+      newRoundBtn(!res || !res.ok) + (res && !res.hit && !ts.accepted ? tBtn("accept", icon("check") + " Trotzdem richtig", "btn-ghost btn-block") : "");
   }
 
   // ---- Buchstaben-Fotos (Baumstaben): Fotos mit je einem Buchstaben → geheimes Wort; ein Rateversuch pro Runde
@@ -1900,7 +2114,7 @@
       $$(".sort-list", body).forEach(bindSort);
       $$("[data-keep]", body).forEach((i) => { if (kept[i.dataset.keep] != null) i.value = kept[i.dataset.keep]; if (focus === i.dataset.keep) i.focus(); });
     });
-    mountCamera();
+    mountCamera(); mountDraw();
   }
 
   function bindTools(el) {
@@ -1920,6 +2134,7 @@
     });
     $$(".sort-list", el).forEach(bindSort);
     mountCamera(); // Kamera-Vorschau nach dem Neuzeichnen wieder einhängen
+    mountDraw();   // Zeichenfläche ebenso
   }
 
   // „Anzeigen“ nur durch langes Drücken (0,6 s) – blendet das Geheimnis 5 s lang auf diesem Handy ein
@@ -2033,6 +2248,27 @@
       if (i >= 0) sel.splice(i, 1); else if (sel.length < tcfg(qid).pick) sel.push(b.dataset.id); else toast("Genau " + tcfg(qid).pick + " – erst eines abwählen.", true);
       return rerenderTools(qid);
     }
+    if (ui === "bay" || ui === "baymap") { // Bucht gesucht: Bucht antippen (Knopf oder nächste Markierung auf der Karte)
+      const sel = puzzleSel(qid, toolState(qid));
+      if (ui === "bay") sel.bay = b.dataset.bay;
+      else {
+        const svg = b.ownerSVGElement || b, p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY;
+        const m = svg.getScreenCTM(); if (!m) return;
+        const q = p.matrixTransform(m.inverse());
+        let best = null, bd = Infinity;
+        BM().bays.forEach((bb) => { const dd = Math.hypot(bb.x - q.x, bb.y - q.y); if (dd < bd) { bd = dd; best = bb; } });
+        if (best) sel.bay = best.id;
+      }
+      return rerenderTools(qid);
+    }
+    if (ui === "bay-big") { toolUI.bayBig = !toolUI.bayBig; return rerenderTools(qid); }
+    if (ui === "bay-ref") { const d = toolUI.draw; if (d) d.showRef = !d.showRef; return rerenderTools(qid); }
+    if (ui === "draw-here") {
+      return confirmBox("Hier zeichnen?", "Dann erscheint die geheime Bucht auf diesem Handy. Nur für die Person, die zeichnet.", "Hier zeichnen").then((ok) => {
+        if (!ok) return;
+        const d = drawState(qid, toolState(qid)); d.here = true; saveDraw(d); rerenderTools(qid);
+      });
+    }
     if (ui === "cell" || ui === "pick" || ui === "name") { // Foto-Rätsel: Auswahl nur auf diesem Handy bis „Bestätigen“
       const sel = puzzleSel(qid, toolState(qid));
       if (ui === "cell") sel.cell = +b.dataset.cell;
@@ -2071,6 +2307,9 @@
     else if (kind === "secretTerms" && act === "tip") op.d = Number(b.dataset.d);
     else if (kind === "choice" && act === "fix") op.picks = (toolUI.pick[qid] || []).slice();
     else if (T.isPhotoPuzzle(tcfg(qid)) && act === "removePhoto") op.i = Number(b.dataset.i);
+    else if (kind === "drawBay" && act === "start") { const ch = T.bayChoices(tcfg(qid), toolState(qid)); op.bay = ch[T.randomInt(ch.length, rand32)]; } // gleichverteilt
+    else if (kind === "drawBay" && act === "fix") { const d = toolUI.draw; op.drawing = { strokes: d && d.key.indexOf(qid + ":") === 0 ? d.strokes : [] }; }
+    else if (kind === "drawBay" && act === "guess") op.bay = puzzleSel(qid, toolState(qid)).bay;
     else if (T.isPhotoPuzzle(tcfg(qid)) && (act === "fix" || act === "guess")) {
       const ts = toolState(qid), sel = puzzleSel(qid, ts), keys = T.draftEntries(ts.draft).map((d) => d.key);
       if (kind === "photoGrid") op.cell = sel.cell;
@@ -2087,6 +2326,8 @@
         if (act === "reveal" || act === "newRound") toolUI.peek[qid] = 0;
         // Geheimes bestätigt: auf DIESEM Handy erst „Handy weitergeben“ zeigen (ein Handy für alle); andere Handys wie bisher
         if (act === "fix" && T.isSecret(tcfg(qid)) && T.phase(tcfg(qid), toolState(qid)) === 2) toolUI.handoff[qid] = true;
+        if (kind === "drawBay" && act === "start") { const d = drawState(qid, toolState(qid)); d.here = true; saveDraw(d); } // hier wird gezeichnet
+        if (kind === "drawBay" && (act === "fix" || act === "newRound") && toolUI.draw) { store.set("draw:" + toolUI.draw.key, null); if (toolUI.draw.el) toolUI.draw.el.remove(); toolUI.draw = null; }
         rerenderTools(qid);
       }
       else clearAll.forEach((el, i) => { el.value = typed[i]; });
@@ -2801,7 +3042,7 @@
       "<li><strong>Tausch-Joker (10) · 5 im Spiel:</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen. Rückgängig gemachte Tausche zählen nicht.</li>" +
       "<li><strong>Multiplikator (10) · 3 im Spiel:</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. Einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
       "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt. Shop und Erfolge zeigen immer, wie viele Joker schon <em>genutzt</em> wurden, z. B. „Tausch-Joker · 2 von 5 genutzt“.</p>" +
-      "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos oder Kriterien wählen. Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben geht jeder Schritt auf jedem Handy (Phase 1 geheim eingeben, 2 raten, 3 Ergebnis): Wer eingibt, tippt, die anderen schauen weg. Danach ist alles verdeckt; „Anzeigen“ per langem Drücken ist nur für die Person gedacht, die eingegeben hat. „Auflösen“ deckt alles für alle auf. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst.</p>" +
+      "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos, Kriterien wählen oder Bucht zeichnen und raten (Küstenkarte der Ponta de São Lourenço: CAOP, Direção-Geral do Território). Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben geht jeder Schritt auf jedem Handy (Phase 1 geheim eingeben, 2 raten, 3 Ergebnis): Wer eingibt, tippt, die anderen schauen weg. Danach ist alles verdeckt; „Anzeigen“ per langem Drücken ist nur für die Person gedacht, die eingegeben hat. „Auflösen“ deckt alles für alle auf. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +

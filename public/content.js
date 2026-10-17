@@ -177,7 +177,7 @@ window.GAME_CONTENT = {
           id: "q-mac-2", title: `Bucht gesucht`,
           location: `Halbinsel Ponta de São Lourenço, zwischen Caniçal und der Spitze`, pin: [32.7445, -16.7050], maps: "Ponta de São Lourenço, Madeira",
           desc: `Ganz im Osten läuft Madeira in einer schmalen, zerklüfteten Halbinsel aus: der Ponta de São Lourenço. Statt grüner Steilhänge prägen hier rötliche, karge Felsen die Landschaft. Zwischen dem Dorf Caniçal und der Spitze reiht sich Bucht an Bucht, jede mit ihrer eigenen Form.`,
-          task: `Eure Aufgabe: Eine Person sucht sich eine Bucht zwischen Caniçal und der Spitze der Halbinsel aus und zeichnet sie, gern auch zusammen mit einer Skizze der ganzen Halbinsel. Die anderen beiden müssen anhand der Zeichnung herausfinden, welche Bucht gemeint ist, ohne dabei mit der zeichnenden Person zu sprechen. Erraten sie die falsche Bucht, zeichnet die Person eine neue. Alle dürfen Tools wie Google Maps verwenden.`
+          task: `Eure Aufgabe: Das Hilfsmittel lost geheim eine Bucht zwischen Caniçal und der Spitze der Halbinsel aus. Eine Person sieht nur deren Küstenausschnitt und zeichnet ihn nach. Die anderen beiden müssen anhand der Zeichnung auf der Karte der Halbinsel herausfinden, welche Bucht gemeint ist, ohne dabei mit der zeichnenden Person zu sprechen. Erraten sie die falsche Bucht, wird eine neue ausgelost und gezeichnet. Alle dürfen Tools wie Google Maps verwenden.`
         },
         {
           id: "q-mac-3", title: `Steinadler`,

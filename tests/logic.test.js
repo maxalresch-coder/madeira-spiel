@@ -551,4 +551,41 @@ assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, unde
   // Alle drei gelten als geheime Hilfsmittel (Phasen, Rollen frei) und schreiben nichts in die Aktivitäten
   assert(["q-pds-3", "q-fun-1", "q-mac-3"].every((id) => T.isSecret(T.config(id)) && T.isPhotoPuzzle(T.config(id))));
 }
+// ---- Bucht gesucht: Bucht auslosen (ohne Wiederholung, bis alle dran waren) → zeichnen → raten
+{
+  const BG = T.config("q-mac-2"), fsx = require("fs"), vm = require("vm");
+  const sandbox = { window: {} }; vm.runInNewContext(fsx.readFileSync(__dirname + "/../public/bay-map.js", "utf8"), sandbox);
+  const MAP = sandbox.window.BAY_MAP;
+  assert.strictEqual(JSON.stringify(MAP.bays.map((b) => b.id)), JSON.stringify(BG.bays), "Buchten in bay-map.js und tools.js gleich");
+  assert(MAP.bays.length >= 8 && MAP.bays.length <= 12 && MAP.land.length > 10);
+  const draw = { strokes: [{ t: "p", c: "#1f2933", w: 2, p: [10, 10, 200, 300, 400, 120] }, { t: "e", c: "#ffffff", w: 3, p: [50, 50, 60, 60] }] };
+  assert.strictEqual(T.phase(BG, null), 1);
+  tbf("q-mac-2", null, { type: "start", bay: "b99" }, "Anna");
+  let b = tb("q-mac-2", null, { type: "start", bay: "b4" }, "Anna");
+  assert(!JSON.stringify(b).includes('"b4"'), "Bucht nur verschleiert");
+  assert.strictEqual(T.phase(BG, b), 1);
+  tbf("q-mac-2", b, { type: "start", bay: "b5" }, "Anna");          // schon ausgelost
+  tbf("q-mac-2", b, { type: "fix", drawing: { strokes: [] } }, "Anna");
+  tbf("q-mac-2", b, { type: "fix", drawing: { strokes: [{ t: "x", c: "#000000", w: 2, p: [1, 2] }] } }, "Anna");
+  tbf("q-mac-2", b, { type: "guess", bay: "b4" }, "Ben");            // noch nichts gezeichnet
+  b = tb("q-mac-2", b, { type: "fix", drawing: draw }, "Anna");
+  assert.deepStrictEqual([T.phase(BG, b), b.drawing.strokes.length, b.drawing.strokes[0].p], [2, 2, [10, 10, 200, 300, 400, 120]]);
+  tbf("q-mac-2", b, { type: "guess", bay: "zz" }, "Ben");
+  const wrong = tb("q-mac-2", b, { type: "guess", bay: "b2" }, "Ben"), right = tb("q-mac-2", b, { type: "guess", bay: "b4" }, "Carla");
+  assert.deepStrictEqual([T.phase(BG, wrong), T.result(BG, wrong, 0).ok, T.result(BG, wrong, 0).bay, T.result(BG, right, 0).ok], [3, false, "b4", true]);
+  tbf("q-mac-2", right, { type: "accept" }, "Ben");
+  assert.strictEqual(T.result(BG, tb("q-mac-2", wrong, { type: "accept" }, "Ben"), 0).ok, true); // „Trotzdem richtig“
+  const nr = tb("q-mac-2", wrong, { type: "newRound" }, "Ben");
+  assert.deepStrictEqual([T.phase(BG, nr), nr.drawing, nr.secret, nr.guess], [1, null, null, null]);  // Zeichnung gelöscht
+  assert(T.bayChoices(BG, nr).indexOf("b4") < 0 && T.bayChoices(BG, nr).length === 8);              // b4 erst wieder, wenn alle dran waren
+  tbf("q-mac-2", nr, { type: "start", bay: "b4" }, "Ben");
+  // alle durchspielen: danach wieder alle außer der zuletzt gezeichneten
+  let all = nr;
+  for (const id of BG.bays.filter((x) => x !== "b4")) {
+    all = tb("q-mac-2", all, { type: "start", bay: id }, "A");
+    all = tb("q-mac-2", all, { type: "newRound" }, "A");
+  }
+  const last = BG.bays.filter((x) => x !== "b4").pop();
+  assert.deepStrictEqual(T.bayChoices(BG, all), BG.bays.filter((x) => x !== last));
+}
 console.log("Alle Logik-Tests bestanden ✓");

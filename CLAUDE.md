@@ -273,6 +273,25 @@ Vertrauensbasis, keine Beweisfotos.
     (`UNESCO_CRITERIA`), genau 2 wählen und bestätigen; Lösung (ix)+(x) in tools.js, vorher nie gezeigt. Danach wird jedes
     gewählte Kriterium einzeln bewertet („(x) richtig“, „(ii) falsch“, grün/rot); nicht gewählte werden nie verraten;
     nicht beide richtig → automatisch 10 min Strafzeit.
+  - „Bucht zeichnen und raten“ (Bucht gesucht, q-mac-2, `kind: "drawBay"`, geheim → Handy weitergeben): Karte der Ponta de
+    São Lourenço (Caniçal/Prainha bis zur Spitze inkl. Ilhéus) aus `public/bay-map.js` (`window.BAY_MAP`, Koordinaten in
+    Metern), erzeugt mit `tools/buchten_karte.py` aus der **CAOP-Küstenlinie** (Direção-Geral do Território, via
+    github.com/nmota/caop_GeoJSON; OpenStreetMap war gesperrt), vereinfacht auf ~1,6 m – nie von Hand ändern, sondern Skript
+    neu laufen lassen. 9 nummerierte Buchten `b1`–`b9` (Nordküste 1–5 West→Ost, Südküste 6–9 Ost→West), Namen nur bei echten:
+    8 „Baía d'Abra“, 9 „Prainha“; je Bucht Markierung `x/y` und Zoom-Ausschnitt `view`. Ablauf: „Bucht auslosen“ (Aktion
+    `start`, gleichverteilt mit `T.randomInt` über `T.bayChoices` = noch nicht gespielte Buchten, `used`; sind alle durch,
+    alle außer der letzten) → nur das auslosende Handy (`here` im lokalen Entwurf) sieht den Küstenausschnitt (`bayCrop`, ohne
+    Nummer/Name, ein-/ausblendbar) und zeichnet; andere Handys sehen „Auf einem anderen Handy wird gerade gezeichnet“ +
+    „Hier zeichnen“ (Rückfrage, Ein-Handy-Fall nach Neuladen). „Bestätigen“ (Aktion `fix` mit `drawing`) → Handy weitergeben
+    → Phase 2: Zeichnung + Karte mit allen Nummern (`bayMap`, Antippen wählt die nächste Markierung, „Karte größer“, Chips)
+    → „Bestätigen“ (`guess`) → Phase 3: Richtig/Falsch, richtige Bucht auf der Karte hervorgehoben, Zeichnung und echter
+    Ausschnitt nebeneinander; „Neue Runde“ (löscht Zeichnung), bei Falsch zusätzlich „Trotzdem richtig“ (`accept`).
+    **Zeichenfläche** (`buildDrawEl`, einmal gebaut, nach jedem Neuzeichnen mit `mountDraw` in `[data-draw-slot]` zurückgehängt
+    wie die Kamera): 1000×750-Koordinaten, Pointer-Events, `touch-action: none` (Seite scrollt/zoomt nicht), während des
+    Zeichnens `toolUI.dragging` (kein Neuzeichnen). Werkzeuge Stift / weicher Pinsel / Radierer, 3 Stärken, 8 Farben,
+    Rückgängig, Wiederholen, „Alles löschen“ (Rückfrage); kompakte Icon-Leiste. Entwurf nur lokal (localStorage `draw:<Runde>`),
+    übersteht Neuladen; synchronisiert wird erst beim Bestätigen (`T.checkDrawing`: höchstens 600 Striche/60.000 Zahlen).
+    Neue Runde/Reset entfernen die Zeichnung aus dem Spielstand.
   - Links (`LINKS` in tools.js, eigene Zeilen): „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
     „Die zehn UNESCO-Kriterien“ (Mit Lorbeeren und UNESCO gekrönt) → https://whc.unesco.org/en/criteria/.
 - Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann Zertifikat (PDF).
@@ -280,7 +299,8 @@ Vertrauensbasis, keine Beweisfotos.
 ## Aufbau und Gestaltung
 - Dateien: `server.py` (stdlib-WSGI), `public/logic.js` (Regeln), `public/app.js` (UI), `public/content.js` (Quests, Pins
   `pin:[lat,lon]`, `maps` = Google-Maps-Suchname oder null = Koordinaten, optional `mapsUrl` fester Link, optional `link` = Text in der Aufgabe als Link, `height` = Höhe für „Höhe schätzen“),
-  `public/tools.js` (Hilfsmittel), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `tests/logic.test.js`.
+  `public/tools.js` (Hilfsmittel), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `public/bay-map.js`
+  (Buchten-Karte, erzeugt von `tools/buchten_karte.py`), `tests/logic.test.js`.
 - Kopfzeile: links Schriftzug „Operação Madeira“ (Bebas Neue + goldener Kompass, einzeilig, Größe passt sich an),
   rechts genau 4 Icons in dieser Reihenfolge: Shop (shopping-bag) / **Erfolge** (trophy, früher „Statistik“) /
   **Aktivitäten** (history, früher „Logbuch“) / Einstellungen (settings, ganz rechts); beschriftet, aria-label; kein Hilfe-„?“.
