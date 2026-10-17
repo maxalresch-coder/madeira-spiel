@@ -1,4 +1,4 @@
-# Madeira-Spiel online stellen
+# Operação Madeira - Das Spiel online stellen
 
 Die Webseite braucht einen kleinen Server, damit alle drei Handys denselben
 Spielstand sehen. Am einfachsten und **kostenlos ohne Kreditkarte** geht das mit

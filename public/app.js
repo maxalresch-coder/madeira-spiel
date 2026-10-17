@@ -1,5 +1,5 @@
 // ============================================================================
-//  Madeira-Spiel – Oberfläche
+//  Operação Madeira - Das Spiel – Oberfläche
 // ============================================================================
 (function () {
   "use strict";
@@ -169,7 +169,7 @@
     const view = views[app.view] ? app.view : "home";
     $$(".hdr-btn[data-go]").forEach((b) => b.classList.toggle("active", b.dataset.go === view));
     const body = app.state.ended && view === "stats" ? viewEnded(s) : views[view](s);
-    $("#view").innerHTML = (view === "home" ? "" : '<button class="back-btn" data-go="home">' + icon("arrow-left") + ' Zur Startseite</button>') + body;
+    $("#view").innerHTML = (view === "home" ? "" : '<button class="back-btn" data-go="home">' + icon("arrow-left") + ' Zu den Quests</button>') + body;
     if (view === "home") mountMap();
     app.modals.forEach((m) => m.refresh());
   }
@@ -633,7 +633,7 @@
     }).join("");
     return '<section class="stack-zone" aria-label="Stapel-Quests">' +
       '<div class="zone-head"><div><h2>' + icon("layers") + ' Stapel-Quests</h2>' +
-      '<div class="zone-sub">' + open.length + " offen · " + s.deckLeft + " verdeckt im Stapel · " + s.doneStack + " von " + C.stackQuests.length + " erledigt · Multiplikatoren " + s.multCount + " von " + L.MAX_MULTS + " · Tauschen " + s.swaps + " von " + L.MAX_SWAPS + "</div>" +
+      '<div class="zone-sub">' + open.length + " offen · " + s.deckLeft + " verdeckt im Stapel · " + s.doneStack + " von " + C.stackQuests.length + " erledigt · Joker genutzt: Tausch " + s.swaps + " von " + L.MAX_SWAPS + " · Multiplikator " + s.multCount + " von " + L.MAX_MULTS + "</div>" +
       (s.balance < 0 ? '<div class="zone-warn">Kontostand negativ – Tausch-Joker und Multiplikator gesperrt</div>' : "") +
       '</div><div class="deck-stack" aria-hidden="true"></div></div>' +
       quests +
@@ -668,7 +668,8 @@
     const unexplored = C.regions.filter((r) => s.levels[r.id] === 0);
     const jokerUsed = app.state.joker;
     const jokerBody = jokerUsed ?
-      '<p class="muted small" style="margin:0">Eingesetzt für <strong>' + esc(IX.regions[jokerUsed.region].name) + "</strong> (" + esc(jokerUsed.by) + "). Rückgängig im Logbuch.</p>" :
+      '<div class="row"><p class="muted small" style="margin:0;flex:1">Eingesetzt für <strong>' + esc(IX.regions[jokerUsed.region].name) + "</strong> (" + esc(jokerUsed.by) + "). Rückgängig im Logbuch.</p>" +
+        '<button class="btn btn-primary" disabled>Kaufen</button></div>' :
       unexplored.length ?
         '<div class="row"><select id="joker-region">' + unexplored.map((r) => '<option value="' + r.id + '">' + esc(r.name) + "</option>").join("") + "</select>" +
         '<button class="btn btn-primary" id="buy-joker" ' + (locked || s.balance < L.PRICES.joker ? "disabled" : "") + ">Kaufen</button></div>" :
@@ -681,14 +682,13 @@
       '<div class="muted small" style="text-align:right">verdient ' + fmt(s.earned) + "<br>ausgegeben " + fmt(s.spent) + "</div></div>" +
       (locked ? '<div class="locked">Der Kontostand ist negativ – der Shop ist gesperrt, bis wieder Punkte reinkommen.</div>' : "") +
       '<p class="muted small">Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen.</p>' +
-      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">' + icon("compass") + ' Region-Joker</h3><span class="price">' + L.PRICES.joker + " P</span></div>" +
-      '<p class="muted small" style="margin:0">Eine Region gilt als erkundet, bringt aber keine 100 Punkte. Sie kann danach normal mit Quests auf Erobert und Erschlossen gebracht werden. <strong>Einmal pro Spiel.</strong></p>' + jokerBody + "</div>" +
-      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">' + icon("arrow-left-right") + ' Tausch-Joker</h3><span class="price">' + L.PRICES.swap + " P</span></div>" +
-      '<p class="muted small" style="margin:0">Eine offene Stapel-Quest geht zurück in den Stapel, eine neue wird vom Stapel gezogen. <strong>Höchstens ' + L.MAX_SWAPS + "-mal pro Spiel – " + s.swaps + " von " + L.MAX_SWAPS + " genutzt.</strong></p>" +
-      (s.swaps >= L.MAX_SWAPS ? '<div class="locked" style="margin:0">Tausch-Limit erreicht – Tauschen ist nicht mehr möglich.</div>' :
-        '<div class="open-pick">' + openBtns("data-swap", (id) => locked || app.state.mults[id] || !app.state.deck.length) + "</div>") + "</div>" +
-      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">' + icon("sparkles") + ' Multiplikator</h3><span class="price">' + L.PRICES.mult + " P</span></div>" +
-      '<p class="muted small" style="margin:0">Zufälliger Faktor auf eine offene Stapel-Quest: 95 % ×0,5–×2,0, 5 % Jackpot ×5. Ergebnis wird aufgerundet. Lohnt sich vor allem bei schweren Stapel-Quests. <strong>' + (L.MAX_MULTS - s.multCount) + " von 3 übrig.</strong></p>" +
+      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">' + icon("compass") + ' Region-Joker <span class="used">· ' + s.jokerUsed + " von 1 genutzt</span></h3><span class=\"price\">" + L.PRICES.joker + " P</span></div>" +
+      '<p class="muted small" style="margin:0">Eine Region gilt als erkundet, bringt aber keine 100 Punkte. Sie kann danach normal mit Quests auf Erobert und Erschlossen gebracht werden.</p>' + jokerBody + "</div>" +
+      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">' + icon("arrow-left-right") + ' Tausch-Joker <span class="used">· ' + s.swaps + " von " + L.MAX_SWAPS + " genutzt</span></h3><span class=\"price\">" + L.PRICES.swap + " P</span></div>" +
+      '<p class="muted small" style="margin:0">Eine offene Stapel-Quest geht zurück in den Stapel, eine neue wird vom Stapel gezogen.</p>' +
+      '<div class="open-pick">' + openBtns("data-swap", (id) => locked || s.swaps >= L.MAX_SWAPS || app.state.mults[id] || !app.state.deck.length) + "</div></div>" +
+      '<div class="panel shop-item"><div class="row between"><h3 style="margin:0">' + icon("sparkles") + ' Multiplikator <span class="used">· ' + s.multCount + " von " + L.MAX_MULTS + " genutzt</span></h3><span class=\"price\">" + L.PRICES.mult + " P</span></div>" +
+      '<p class="muted small" style="margin:0">Zufälliger Faktor auf eine offene Stapel-Quest: 95 % ×0,5–×2,0, 5 % Jackpot ×5. Ergebnis wird aufgerundet. Lohnt sich vor allem bei schweren Stapel-Quests.</p>' +
       '<div class="open-pick">' + openBtns("data-mult", (id) => locked || app.state.mults[id] || s.multCount >= L.MAX_MULTS) + "</div></div>";
   }
 
@@ -741,9 +741,9 @@
         '<p class="avg-line"><strong>Durchschnitt: ' + fmt(s.earned / days) + " Punkte pro Tag</strong>" +
         '<span class="muted small"> · seit Spielbeginn, ' + days + (days === 1 ? " Tag" : " Tage") + "</span></p></div>" +
       '<div class="section-title"><h3>Woher die Punkte kommen</h3></div><div class="panel">' +
-        pieChart([["Regionen & Stufen", s.regionPts, "var(--einfach)"], ["Insel-Bonus", s.madeiraBonus, "var(--medium)"], ["Stapel-Quests", s.stackPts, "var(--hard)"]], "Punkte") +
+        pieChart([["Regionen & Stufen", s.regionPts, "var(--einfach)"], ["Insel-Bonus", s.madeiraBonus, "var(--medium)"], ["Stapel-Quests", s.stackPts, "var(--hard)"]], "Punkte", true) +
         '<div class="joker-list">' +
-          "<div>Joker:</div>" +
+          "<div>Joker genutzt:</div>" +
           '<div class="ind">Tausch ' + s.swaps + " von " + L.MAX_SWAPS + "</div>" +
           '<div class="ind">Multiplikator ' + s.multCount + " von " + L.MAX_MULTS + "</div>" +
           '<div class="ind">Region-Joker ' + s.jokerUsed + " von 1</div>" +
@@ -766,7 +766,7 @@
     return "Maximum: " + fmt(s.maxPoints) + (s.maxDelta ? " (Basis " + fmt(L.MAX_POINTS) + ", Multiplikatoren " + signed(s.maxDelta) + ")" : "");
   }
   // Tortendiagramm mit Legende; leere Anteile werden nicht gezeichnet, stehen aber mit 0 in der Legende
-  function pieChart(parts, unit) {
+  function pieChart(parts, unit, asPercent) {
     const total = parts.reduce((a, p) => a + Math.max(0, p[1]), 0);
     const R = 60, cx = 64, cy = 64;
     let slices = "";
@@ -785,7 +785,9 @@
     }
     const label = parts.map((p) => p[0] + ": " + fmt(p[1])).join(", ");
     return '<div class="pie"><svg viewBox="0 0 128 128" role="img" aria-label="' + esc(unit + " – " + label) + '">' + slices + "</svg>" +
-      '<ul class="pie-legend">' + parts.map((p) => '<li><i style="background:' + p[2] + '"></i><span>' + esc(p[0]) + "</span><strong>" + fmt(p[1]) + "</strong></li>").join("") + "</ul></div>";
+      '<ul class="pie-legend">' + parts.map((p) => '<li><i style="background:' + p[2] + '"></i><span>' + esc(p[0]) + "</span>" +
+        (asPercent ? "<strong>" + (total ? Math.round(p[1] / total * 100) : 0) + ' %</strong><small class="muted"> · ' + fmt(p[1]) + " P</small>" : "<strong>" + fmt(p[1]) + "</strong>") +
+        "</li>").join("") + "</ul></div>";
   }
   function kpi(v, l) { return '<div class="kpi"><div class="v">' + v + '</div><div class="l">' + l + "</div></div>"; }
   function barChart(days) {
@@ -908,7 +910,7 @@
       '<rect x="24" y="24" width="' + (W - 48) + '" height="' + (H - 48) + '" fill="none" stroke="#0b5f78" stroke-width="6" rx="18"/>' +
       '<rect x="40" y="40" width="' + (W - 80) + '" height="' + (H - 80) + '" fill="none" stroke="#e5b53b" stroke-width="2" rx="12"/>' +
       t(W / 2, 110, "ZERTIFIKAT", 54, 'text-anchor="middle" font-weight="700" letter-spacing="8" fill="#0b5f78"') +
-      t(W / 2, 150, "Madeira-Spiel · " + date, 20, 'text-anchor="middle" fill="#5f6f76"') +
+      t(W / 2, 150, "Operação Madeira - Das Spiel · " + date, 20, 'text-anchor="middle" fill="#5f6f76"') +
       t(W / 2, 200, "Hiermit wird bestätigt, dass", 20, 'text-anchor="middle" fill="#5f6f76"') +
       t(W / 2, 245, names || "das Team", 36, 'text-anchor="middle" font-weight="700"') +
       t(W / 2, 285, "Madeira als Team erkundet und den Rang „" + s.rankName + "“ erreicht haben.", 22, 'text-anchor="middle"') +
@@ -946,7 +948,7 @@
 
   // ------------------------------------------------------------------ Hilfe
   function openHelp() {
-    openModal(() => '<div class="modal-head"><h2>Spielanleitung</h2><button class="modal-close" data-close aria-label="Schließen">' + icon("x") + '</button></div>' +
+    openModal(() => '<div class="modal-head"><div><h2>Spielanleitung</h2><div class="muted small">Operação Madeira - Das Spiel</div></div><button class="modal-close" data-close aria-label="Schließen">' + icon("x") + '</button></div>' +
       '<div class="help">' +
       "<h3>" + icon("target") + " Ziel</h3><p>Ihr spielt als <strong>ein Team</strong>: Erkundet alle 10 Regionen Madeiras mit regionalen Quests und sammelt zusätzlich Punkte mit Stapel-Quests. Alle Punkte gehören dem Team – wir vertrauen uns, es gibt keine Beweisfotos.</p>" +
       "<h3>" + icon("map-pinned") + " Regionale Quests und Stufen</h3><p>Jede Region hat 3 regionale Quests an festen Orten – auf der Inselkarte als Pins markiert. Pin antippen öffnet die Quest, Region antippen zeigt alle 3. Eine erledigte regionale Quest erkundet die Region, jede weitere hebt sie eine Stufe.</p>" +
@@ -954,10 +956,10 @@
       "<p>Alle 10 Regionen erkundet: <strong>„Madeira erkundet!“ +300 Insel-Bonus</strong>. Danach geht das Spiel weiter. Alle 10 Regionen erobert bzw. erschlossen: Meilensteine <strong>„Madeira erobert!“</strong> und <strong>„Madeira erschlossen!“</strong> (ohne Extrapunkte).</p>" +
       "<h3>" + icon("layers") + " Stapel-Quests</h3><p>26 Stapel-Quests, überall auf der Insel machbar (einfach 15, mittel 25, schwer 50 Punkte). Sie liegen gemischt in einem Stapel; immer 3 sind offen, der Rest bleibt verdeckt. Ist eine erledigt, wird automatisch eine neue vom Stapel gezogen. Stapel-Quests erkunden keine Region.</p>" +
       "<p>„" + icon("list-checks") + " Alle Quests“ zeigt alle 56 Quests zum Ansehen.</p>" +
-      "<h3>" + icon("shopping-bag") + " Shop</h3><ul><li><strong>Region-Joker (150):</strong> Region gilt als erkundet, ohne die 100 Punkte. Einmal pro Spiel.</li>" +
-      "<li><strong>Tausch-Joker (10):</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen. Höchstens 5-mal pro Spiel (rückgängig gemachte Tausche zählen nicht).</li>" +
-      "<li><strong>Multiplikator (10):</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. 3 pro Spiel, einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
-      "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt.</p>" +
+      "<h3>" + icon("shopping-bag") + " Shop</h3><ul><li><strong>Region-Joker (150) · 1 im Spiel:</strong> Region gilt als erkundet, ohne die 100 Punkte.</li>" +
+      "<li><strong>Tausch-Joker (10) · 5 im Spiel:</strong> eine offene Stapel-Quest zurück in den Stapel, eine neue wird vom Stapel gezogen. Rückgängig gemachte Tausche zählen nicht.</li>" +
+      "<li><strong>Multiplikator (10) · 3 im Spiel:</strong> zufälliger Faktor ×0,5–×2,0 (5 % Jackpot ×5) auf eine offene Stapel-Quest, aufgerundet. Einer pro Stapel-Quest; sie kann danach nicht getauscht werden. Lohnt sich vor allem bei schweren Stapel-Quests.</li></ul>" +
+      "<p>Jeder ausgegebene Punkt fehlt am Ende bei den Belohnungen. Ist der Kontostand negativ, ist der Shop gesperrt. Shop und Statistik zeigen immer, wie viele Joker schon <em>genutzt</em> wurden, z. B. „Tausch-Joker · 2 von 5 genutzt“.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht in der Statistik.</p>" +
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder im Logbuch " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset gilt für alle Handys und braucht die Eingabe „RESET“.</p>" +
@@ -1163,7 +1165,7 @@
       case "help-btn": case "help-btn2": return openHelp();
       case "buy-joker": {
         const rid = $("#joker-region").value;
-        return confirmBox("Region-Joker kaufen?", IX.regions[rid].name + " gilt dann als erkundet (ohne 100 Punkte). Kosten: 150 Punkte. Nur einmal pro Spiel.", "Kaufen (150)")
+        return confirmBox("Region-Joker kaufen?", IX.regions[rid].name + " gilt dann als erkundet (ohne 100 Punkte). Kosten: 150 Punkte. Region-Joker: 0 von 1 genutzt.", "Kaufen (150)")
           .then((ok) => ok && act({ type: "joker", regionId: rid }));
       }
       case "end-btn": return startEnd();

@@ -227,7 +227,7 @@
       }
       case "joker": {
         const r = ix.regions[action.regionId] || fail("Unbekannte Region.");
-        if (state.joker) fail("Der Region-Joker wurde schon eingesetzt (einmal pro Spiel).");
+        if (state.joker) fail("Der Region-Joker ist schon genutzt (1 von 1 genutzt).");
         if (regionLevel(state, content, r.id) > 0) fail(r.name + " ist schon erkundet.");
         requireShop(before, PRICES.joker);
         state.joker = { region: r.id, by, t: now };
@@ -240,7 +240,7 @@
         if (slot < 0) fail("Diese Stapel-Quest ist gerade nicht offen.");
         if (state.mults[id]) fail("Eine Stapel-Quest mit Multiplikator kann nicht getauscht werden.");
         if (!state.deck.length) fail("Der Stapel ist leer – es gibt nichts zum Tauschen.");
-        if (activeSwaps(state) >= MAX_SWAPS) fail("Der Tausch-Joker wurde schon " + MAX_SWAPS + "-mal benutzt – mehr geht nicht.");
+        if (activeSwaps(state) >= MAX_SWAPS) fail("Alle Tausch-Joker sind genutzt (" + MAX_SWAPS + " von " + MAX_SWAPS + " genutzt).");
         requireShop(before, PRICES.swap);
         const fresh = state.deck.shift();
         // feste, zufällig wirkende Position (nicht ganz oben): gleiches Ergebnis bei Wiederholung
@@ -255,7 +255,7 @@
         if (state.open.indexOf(id) < 0) fail("Diese Stapel-Quest ist gerade nicht offen.");
         if (state.mults[id]) fail("Diese Stapel-Quest hat schon einen Multiplikator.");
         const slot = multFreeSlot(state);
-        if (slot < 0) fail("Alle 3 Multiplikatoren sind schon im Einsatz.");
+        if (slot < 0) fail("Alle Multiplikatoren sind genutzt (" + MAX_MULTS + " von " + MAX_MULTS + " genutzt).");
         requireShop(before, PRICES.mult);
         state.mults[id] = { slot, factor: state.rolls[slot], by, t: now };
         const f = state.rolls[slot];

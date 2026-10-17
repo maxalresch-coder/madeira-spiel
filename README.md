@@ -1,10 +1,10 @@
-# Madeira-Spiel
+# Operação Madeira - Das Spiel
 
 Private Handy-Webseite für ein Urlaubsspiel zu dritt auf Madeira: Als Team
 alle 10 Regionen mit regionalen Quests erkunden, Stapel-Quests erledigen, Punkte sammeln und am Ende
 gegen Belohnungen eintauschen – mit Zertifikat als PDF.
 
-**Online stellen:** siehe [ANLEITUNG.md](ANLEITUNG.md).
+**Online stellen:** siehe [ANLEITUNG.md](ANLEITUNG.md). (Repository und Ordner heißen weiterhin `madeira-spiel`.)
 
 ## Was drin ist
 
@@ -16,7 +16,7 @@ gegen Belohnungen eintauschen – mit Zertifikat als PDF.
   nahe beieinanderliegende Pins werden zu einer Gruppe mit Anzahl zusammengefasst)
 - **Stapel-Quests**: 26 Stück, fest gemischter Stapel, immer 3 offen, automatisch wird vom Stapel gezogen
 - **Alle Quests**: Übersicht über alle 56 Quests (nur zum Ansehen)
-- **Shop**: Region-Joker (150, einmal), Tausch-Joker (10), Multiplikator (10, max. 3,
+- **Shop**: Region-Joker (150, 1 im Spiel), Tausch-Joker (10, 5 im Spiel), Multiplikator (10, 3 im Spiel,
   95 % ×0,5–×2,0 / 5 % Jackpot ×5, aufgerundet); gesperrt bei negativem Kontostand
 - **Rückgängig** für alles, mit identischem Ergebnis bei Wiederholung; **Logbuch** mit Zeit und Name
 - **Kompletter Reset** mit doppelter Sicherheitsabfrage („RESET“ eintippen)

@@ -422,3 +422,12 @@ h2 .ic, h3 .ic { width: 1em; height: 1em; vertical-align: -0.12em; }
 .joker-list .spent { margin-top: .8em; font-weight: 600; }
 .kpi .l { font-size: .82rem; }
 .chart text { font: 600 22px var(--font); }
+
+/* ---------- Spielname, Joker-Anzeige ---------- */
+.brand-title { white-space: normal; line-height: 1.1; font-size: clamp(.9rem, 4.1vw, 1.08rem); }
+.brand-sub { display: block; font-family: var(--font); font-weight: 600; font-size: .62rem; letter-spacing: .08em; text-transform: uppercase; opacity: .75; margin-top: 1px; }
+.brand-rank { margin-top: 3px; }
+.login-box h1 { margin-bottom: 0; }
+.login-sub { margin: 2px 0 6px; font-size: .8rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.shop-item h3 .used { font-family: var(--font); font-size: .85rem; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.pie-legend small { font-size: .8rem; font-weight: 500; white-space: nowrap; }

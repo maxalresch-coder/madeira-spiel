@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Madeira-Spiel – kleiner Server ohne externe Abhängigkeiten.
+"""Operação Madeira - Das Spiel – kleiner Server ohne externe Abhängigkeiten.
 
 Aufgaben:
   * liefert die Webseite (Ordner public/) aus – nur unter dem geheimen Link
@@ -199,5 +199,5 @@ if __name__ == "__main__":
         raise SystemExit("Bitte MADEIRA_PASSWORD setzen, z. B.: MADEIRA_PASSWORD=test python3 server.py")
     port = int(os.environ.get("PORT", "8000"))
     key = _conf()["key"]
-    print(f"Madeira-Spiel läuft auf http://localhost:{port}/{key + '/' if key else ''}")
+    print(f"Operação Madeira läuft auf http://localhost:{port}/{key + '/' if key else ''}")
     make_server("", port, application, server_class=_Server).serve_forever()
