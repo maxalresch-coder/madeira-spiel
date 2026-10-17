@@ -277,7 +277,7 @@ body.is-offline :is([data-done], [data-swap], [data-mult], [data-undo], [data-qu
 .map-wrap .map-ov { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
 .map-ov .pin { pointer-events: auto; }
 .map-ov .region-label { font-size: 11.5px; stroke-width: 3px; }
-.map-reset { position: absolute; top: 8px; right: 8px; width: 40px; height: 40px; border-radius: 12px; border: 0;
+.map-reset { position: absolute; top: 8px; right: 8px; width: 40px; height: 40px; border-radius: 50%; border: 0;
   background: var(--surface); color: var(--ink); box-shadow: var(--shadow); display: grid; place-items: center; cursor: pointer;
   opacity: 0; transform: scale(.8); pointer-events: none; transition: opacity .2s, transform .2s; }
 .map-reset .ic { width: 20px; height: 20px; }
@@ -839,9 +839,9 @@ svg[data-tool-ui="baymap"] { cursor: pointer; }
 .draw-break { flex-basis: 100%; height: 0; }
 
 /* ---- Wo bin ich? (Standort nur auf Knopfdruck) */
-.zone-head .here-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 12px; border-radius: 999px; border: 1.5px solid var(--line);
-  background: var(--surface); color: var(--ink); font: 700 .85rem var(--font); white-space: nowrap; cursor: pointer; flex: none; align-self: flex-start; }
-.zone-head .here-btn .ic { width: 18px; height: 18px; color: var(--hibiscus); }
+.map-locate { position: absolute; top: 8px; right: 8px; width: 40px; height: 40px; border-radius: 50%; border: 0;
+  background: var(--surface); color: var(--hibiscus); box-shadow: var(--shadow); display: grid; place-items: center; cursor: pointer; }
+.map-locate .ic { width: 20px; height: 20px; }
 .here-box { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 8px 10px; border-radius: 12px; background: var(--surface); border: 1.5px solid var(--line); }
 .here-box > .ic, .here-box .here-ic { width: 20px; height: 20px; color: var(--hibiscus); flex: none; }
 .here-box .grow { flex: 1; min-width: 0; }
@@ -871,3 +871,12 @@ svg[data-tool-ui="baymap"] { cursor: pointer; }
 .alt-vals { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .alt-val { padding: 10px; border-radius: 12px; background: var(--sea, #eef6f8); text-align: center; }
 .bay-zoom-row .bay-reset { white-space: nowrap; flex: none; }
+/* Inselkarte: „Wo bin ich?“ oben rechts, „Zurücksetzen“ daneben (Buchten-Karte unverändert) */
+.map-wrap .map-reset { right: 56px; }
+/* Bereich „Regionale Quests“: Überschrift, Zeile darunter und Legende einzeilig (Legende sonst 2 × 2) */
+.zone-head h2 { white-space: nowrap; }
+.region-zone .zone-head > div { min-width: 0; }
+.region-zone .zone-sub { white-space: nowrap; font-size: .78rem; }
+.region-zone .legend { display: grid; grid-template-columns: repeat(4, auto); justify-content: start; gap: 6px 14px; white-space: nowrap; }
+@media (max-width: 410px) { .region-zone .legend { grid-template-columns: repeat(2, auto); gap: 6px 22px; } }
+@media (max-width: 340px) { .region-zone .zone-sub { font-size: .7rem; } }

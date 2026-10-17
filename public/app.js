@@ -387,13 +387,13 @@
       (app.state.ended ? '<div class="panel ended-note"><strong>' + icon("flag") + ' Urlaub beendet.</strong> <button class="btn btn-small btn-gold" data-go="stats">Zertifikat & Belohnungen</button></div>' : "") +
       '<section class="home-sec region-zone" aria-label="Regionale Quests">' +
       '<div class="zone-head"><div><h2>' + icon("map-pinned") + ' Regionale Quests</h2>' +
-      '<div class="zone-sub">' + s.explored + " von " + C.regions.length + " Regionen erkundet · " + s.questsDone + " von 30 erledigt</div></div>" +
-      '<button class="here-btn" data-here aria-label="Wo bin ich? Standort einmalig abfragen">' + icon("locate-fixed") + "<span>Wo bin ich?</span></button></div>" +
+      '<div class="zone-sub">' + s.explored + " von " + C.regions.length + " Regionen erkundet · " + s.questsDone + " von 30 erledigt</div></div></div>" +
       // Karte (per CSS-Transform gezoomt) + Ebene darüber mit Pins, Namen und Standortpunkt in Bildschirmgröße
       '<div class="map-wrap' + (st.s > 1.001 ? " zoomed" : "") + '" id="map-wrap"><div class="map-stage" id="map-stage" style="transform:translate3d(' + st.tx + "px," + st.ty + "px,0) scale(" + st.s + ')">' +
         '<svg id="island" viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg" style="--zs:' + st.s + '"><g id="regions">' + regionPaths(s.levels) + "</g></svg></div>" +
         '<svg class="map-ov" id="map-ov"><g id="pins"></g><g id="labels">' + labels + "</g></svg>" +
-        '<button class="map-reset" data-map-reset aria-label="Ganze Insel zeigen">' + icon("scan") + "</button></div>" +
+        '<button class="map-reset" data-map-reset aria-label="Ganze Insel zeigen">' + icon("scan") + "</button>" +
+        '<button class="map-locate" data-here aria-label="Wo bin ich? Standort einmalig abfragen" title="Wo bin ich?">' + icon("locate-fixed") + "</button></div>" +
       '<div class="map-bar"><div class="legend">' + legend + "</div></div>" + hereBox() + "</section>" +
       stackZone(s) +
       '<button class="btn btn-ghost btn-block all-quests-btn" data-all-quests>' + icon("list-checks") + ' Alle Quests anzeigen</button>';
@@ -454,6 +454,7 @@
     const el = document.elementFromPoint(x, y);
     if (!el || !el.closest) return;
     if (el.closest("[data-map-reset]")) { mapUI.pz.reset(); return; }
+    if (el.closest("[data-here]")) { whereAmI(); return; }
     const pin = el.closest("[data-pin]"), grp = el.closest("[data-group]"), reg = el.closest(".region-path[data-region]");
     // Maus: den Klick nach dem Loslassen abfangen, sonst schließt er das neue Fenster sofort (Finger: kein Klick)
     if ((pin || grp) && mouse) mapUI.ghostUntil = Date.now() + 500;
@@ -661,7 +662,8 @@
       const b = mapUI.labelBox[name], p = mapScreen(MAP.labels[name]);
       boxes.push([p[0] + b[0] - 2, p[1] + b[1] - 1, b[2] + 4, b[3] + 2]);
     });
-    if (mapUI.st.s > 1.001) boxes.push([W - 54, 0, 54, 54]); // Knopf „Zurücksetzen“ oben rechts frei lassen
+    boxes.push([W - 54, 0, 54, 54]);                                   // Knopf „Wo bin ich?“ oben rechts frei lassen
+    if (mapUI.st.s > 1.001) boxes.push([W - 102, 0, 50, 54]);          // daneben „Zurücksetzen“ (nur gezoomt)
     const rad = (g) => (g.items.length > 1 ? PIN.r + 4 : PIN.r + 3);
     const onLabel = (x, y, R) => boxes.some(([bx, by, bw, bh]) => Math.hypot(x - Math.max(bx, Math.min(x, bx + bw)), y - Math.max(by, Math.min(y, by + bh))) <= R);
     const hitHead = (x, y, R, self) => groups.find((o) => o !== self && Math.hypot(x - o.x, y - o.y) <= R + rad(o) + 1);
@@ -3643,10 +3645,10 @@
     if (!L.isCompatible(app.state, C)) return;
     if (t.closest(".modal")) return; // Modals binden selbst
     if (t.hasAttribute("data-map-reset")) { if (mapUI.pz) mapUI.pz.reset(); return; } // auch per Tastatur
+    if (t.hasAttribute("data-here")) return whereAmI();
     if (t.closest("#map-wrap")) return; // Inselkarte: eigene Steuerung (Antippen, Zoomen, Zurücksetzen über panZoom)
     if (t.hasAttribute("data-all-quests")) return openAllQuests();
     if (t.dataset.openTool) return openTool(t.dataset.openTool); // Hilfsmittel einer offenen Stapel-Quest
-    if (t.hasAttribute("data-here")) return whereAmI();
     if (t.hasAttribute("data-here-close")) { mapUI.here = null; return render(); }
     if (t.dataset.go) return go(t.dataset.go);
     if (t.dataset.region) return openRegion(t.dataset.region);

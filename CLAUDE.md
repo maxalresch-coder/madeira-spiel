@@ -341,19 +341,21 @@ Vertrauensbasis, keine Beweisfotos.
   Bei ≤ 380 px: Knöpfe 44 px, lange Beschriftungen („Aktivitäten“, „Einstellungen“) kleiner (`.hdr-wide`, `.hdr-set`),
   Schriftzug passt sich an (fitLogo, bei 360 px ca. 16 px) – nach Änderungen an der Kopfzeile bei 360/390 px nachmessen.
   Eigenes Logo: `public/images/logo.svg` oder `logo.png` ersetzt den Schriftzug.
-- Startseite (keine untere Leiste): Block „Regionale Quests“ (Überschrift auf Karten-Hintergrund) mit Inselkarte,
-  Legende nur 4 Stufen; darunter der kräftig blaue Block „Stapel-Quests“ (3 offene, Tausch/Multiplikator,
+- Startseite (keine untere Leiste): Block „Regionale Quests“ (Überschrift auf Karten-Hintergrund, **einzeilig** wie
+  „Stapel-Quests“; darunter einzeilig „X von 10 Regionen erkundet · X von 30 erledigt“, auch bei „10 von 10 · 30 von 30“;
+  unter 340 px Schrift kleiner) mit Inselkarte, Legende nur 4 Stufen: **eine Zeile**, wenn sie passt (ab 411 px Breite),
+  sonst sauber **2 × 2** (`grid`, nie 3 + 1); darunter der kräftig blaue Block „Stapel-Quests“ (3 offene, Tausch/Multiplikator,
   Zeile „… · Joker genutzt: Tausch X von 5 · Multiplikator X von 3“); dann Knopf „Alle Quests anzeigen“.
 - Pins: einzelne = Punkt-Symbol, Farbe offen = unbesucht-Grau, erledigt = erkundet-Hellgrün, deutlicher Rand;
   nahe Pins → Gruppe mit Anzahl (Antippen = Auswahl). Pin → einzelne Quest; Region → alle 3 Quests.
   Größe `PIN` (r 11 px, Tippfläche `hit` 22 px Radius = 44 px). **Regionsnamen bleiben lesbar:** `avoidLabels` rückt
   Pin-Köpfe, die auf einem Namen oder einem anderen Kopf liegen, höchstens ~44 px weiter (zuerst nach oben); geht das nicht,
-  werden sie zur Gruppe zusammengelegt (auch der Knopf „Zurücksetzen“ bleibt frei). Nach Änderungen bei 384×854 prüfen
+  werden sie zur Gruppe zusammengelegt (auch die Knöpfe oben rechts bleiben frei). Nach Änderungen bei 384×854 prüfen
   (alle 10 Namen frei, ungezoomt und gezoomt).
 - **Zoomen/Verschieben wie eine Karten-App** (`panZoom(wrap, stage, st, opts)`, für Inselkarte und Buchten-Karte):
   zwei Finger = Pinch-Zoom um den Punkt zwischen den Fingern (1×–8×, `ZOOM_MAX`); ein Finger ungezoomt = Seite scrollt
   (`touch-action: pan-y`), gezoomt = Karte verschieben (`touch-action: none`); Doppeltippen = ×2 (bei 8× zurück);
-  Knopf „Zurücksetzen“ (Icon `scan`, nur gezoomt sichtbar) = ganze Insel; Mausrad/Ziehen am Computer. Die Karte wird **nur per
+  Knopf „Zurücksetzen“ (rundes Icon `scan`, nur gezoomt sichtbar, links neben „Wo bin ich?“) = ganze Insel; Mausrad/Ziehen am Computer. Die Karte wird **nur per
   CSS-Transform** des Inhalts (`#map-stage`, `translate3d … scale`) bewegt – kein Neuzeichnen; sie füllt immer den Rahmen
   (lässt sich nicht hinausschieben). Touch-Ereignisse mit `preventDefault` bei zwei Fingern/gezoomtem Verschieben (Seite
   zoomt nicht mit, iPhone zusätzlich `gesturestart`). Ein Verschieben gilt nie als Antippen; Antippen (`mapTap`):
@@ -363,7 +365,8 @@ Vertrauensbasis, keine Beweisfotos.
   **Pins, Namen und Standortpunkt** liegen in einer eigenen Ebene darüber (`#map-ov`, Bildschirmpixel): immer gleich groß;
   während der Geste werden nur ihre Positionen nachgeführt (`moveOverlay`), Gruppen werden höchstens alle 150 ms neu
   gebildet (`maybeRelayout` → `layoutPins`: lösen sich beim Reinzoomen auf, fassen sich beim Rauszoomen zusammen).
-- **„Wo bin ich?“** (Knopf rechts in der Kopfzeile „Regionale Quests“): Kasten unter der Karte („Ihr seid in …“ bzw.
+- **„Wo bin ich?“** (rundes Standort-Symbol `locate-fixed` oben rechts in der Karte, `.map-locate`, gleiche Optik wie
+  „Zurücksetzen“; Antippen läuft über `mapTap`, Maus/Tastatur über den Klick): Kasten unter der Karte („Ihr seid in …“ bzw.
   „Gerade in keiner Region.“ + Höhe, ×), Region blinkt 3× kurz (`here-hl`), roter pulsierender Punkt (SMIL-`animate`) am
   Standort; verweigerte Erlaubnis → kurze Meldung. Nur lokal (`mapUI.here`).
 - Quest-Fenster: Bild oben (`public/images/quests/<ID>.jpg`, erst beim Öffnen geladen, fehlend = nichts), Titel,
