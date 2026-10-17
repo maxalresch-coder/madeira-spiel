@@ -707,3 +707,13 @@ img.gone { visibility: hidden; }
 .pr-letter { font-family: var(--display); font-weight: 800; font-size: 1.6rem; min-width: 1em; }
 .pr-right { font-size: .85rem; color: var(--hibiscus); }
 @media (max-width: 380px) { .pr-photo { width: 128px; height: 96px; } }
+
+/* ---------- Foto-Grundlage: unsichtbare Datei-Felder, fehlgeschlagene Fotos ---------- */
+.photo-file { position: fixed; left: -1000px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.photo-failed { display: grid; gap: 8px; margin-top: 10px; }
+.pf-item { display: flex; gap: 10px; align-items: flex-start; border: 1.5px solid var(--hibiscus); background: rgba(224, 71, 91, .07); border-radius: 12px; padding: 10px 12px; }
+.pf-item > .ic { color: var(--hibiscus); width: 22px; height: 22px; margin-top: 2px; }
+.pf-text { display: grid; gap: 4px; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.pf-text details summary { cursor: pointer; color: var(--muted); min-height: 32px; display: flex; align-items: center; }
+.pf-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.pf-btns .btn { min-height: 44px; }

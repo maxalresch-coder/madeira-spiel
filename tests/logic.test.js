@@ -418,9 +418,23 @@ ts = tb("q-pmz-3", ts, { type: "movePhoto", i: 2, d: 1 }, "Ben");          // LO
 ts = tb("q-pmz-3", ts, { type: "removePhoto", i: 5 }, "Ben");               // → LORBE
 ts = tb("q-pmz-3", ts, { type: "addPhoto", photo: pid(9), letter: "r" }, "Ben"); // → LORBER
 assert.deepStrictEqual(T.unhide(ts.draftLetters), ["L", "O", "R", "B", "E", "R"]);
-const arr = tb("q-pmz-3", ts, { type: "arrange", order: [pid(9), pid(0), pid(1), pid(3), pid(2), pid(4)] }, "Anna");
+const keys = ts.draft.map((d) => d.key);
+assert.strictEqual(new Set(keys).size, 6);
+const arr = tb("q-pmz-3", ts, { type: "arrange", order: [keys[5]].concat(keys.slice(0, 5)) }, "Anna");
 assert.deepStrictEqual([arr.draft.map((d) => d.photo)[0], T.unhide(arr.draftLetters).join("")], [pid(9), "RLORBE"]);
-tbf("q-pmz-3", ts, { type: "arrange", order: [pid(9), pid(0)] }, "Anna");
+tbf("q-pmz-3", ts, { type: "arrange", order: [keys[0], keys[1]] }, "Anna");
+tbf("q-pmz-3", ts, { type: "arrange", order: [keys[0], keys[0], keys[1], keys[2], keys[3], keys[4]] }, "Anna");
+// Dasselbe Foto mehrfach: Duplizieren fügt eine Kopie direkt darunter ein (eigenes Buchstabenfeld, gleiche Server-Datei)
+const dup = tb("q-pmz-3", ts, { type: "duplicate", i: 2, key: "kcopy1" }, "Anna");
+assert.deepStrictEqual([dup.draft.length, dup.draft[3].photo, dup.draft[3].key, T.unhide(dup.draftLetters).join("|")], [7, dup.draft[2].photo, "kcopy1", "L|O|R||B|E|R"]);
+tbf("q-pmz-3", dup, { type: "duplicate", i: 0, key: "kcopy1" }, "Anna"); // Schlüssel schon vergeben
+const dup2 = tb("q-pmz-3", tb("q-pmz-3", dup, { type: "setLetter", i: 3, letter: "R" }, "Anna"), { type: "removePhoto", i: 2 }, "Anna");
+assert.deepStrictEqual([dup2.draft.length, dup2.draft[2].key, dup2.draft[2].photo, T.unhide(dup2.draftLetters).join("")], [6, "kcopy1", dup.draft[2].photo, "LORBER"]);
+// zweimal dieselbe Datei hochgeladen (zwei Server-IDs) oder dieselbe ID zweimal: beides erlaubt
+const same = tb("q-pmz-3", tb("q-pmz-3", null, { type: "addPhoto", photo: pid(1), key: "ka1" }, "A"), { type: "addPhoto", photo: pid(1), key: "ka2" }, "A");
+assert.deepStrictEqual(same.draft.map((d) => d.photo), [pid(1), pid(1)]);
+// alter Entwurf ohne Schlüssel bekommt automatisch welche
+assert.strictEqual(new Set(T.draftEntries([{ photo: pid(1) }, { photo: pid(2) }]).map((d) => d.key)).size, 2);
 ts = tb("q-pmz-3", ts, { type: "fix" }, "Ben");
 assert.deepStrictEqual([ts.letters, ts.photos.length, ts.draft, T.phase(PW, ts)], [6, 6, null, 2]);
 assert.deepStrictEqual(ts.photos, [pid(0), pid(1), pid(3), pid(2), pid(4), pid(9)]);

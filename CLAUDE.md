@@ -12,6 +12,13 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
 - Spielregeln/Punkte/Quest-Texte nur ändern, wenn ausdrücklich verlangt. Quest-Texte **wortwörtlich** lassen.
 - Oberfläche im Browser prüfen (Playwright, Chromium vorinstalliert; Handybreite 360 und 390 px).
   Lokal: `MADEIRA_PASSWORD=test MADEIRA_LINK_KEY=geheim python3 server.py` → http://localhost:8000/geheim/
+- **Android und iPhone:** Wir nutzen Android (Chrome) **und** iPhone (Safari). Jede Funktion muss auf beiden laufen. Wo ein
+  Gerät etwas nicht kann, gibt es einen sinnvollen Ersatz (z. B. Vibration nur auf Android → auf dem iPhone kurzer Ton
+  `beep`/`signalEnd` bzw. sichtbares Aufblinken `tapFeedback`; Datei-Felder nie `display:none`, sonst öffnet Safari die
+  Auswahl teils nicht). Nach Änderungen zusätzlich in WebKit testen (Playwright `webkit` + iPhone-Geräteemulation). Ist
+  WebKit in der Umgebung nicht installiert (`/opt/pw-browsers` enthält nur Chromium; `playwright install` nicht ausführen),
+  in Chromium mit iPhone-Emulation testen (iPhone-Viewport/Touch, ohne `navigator.vibrate`, `createImageBitmap` ohne
+  Größen-Optionen) und dem Nutzer sagen, was nur auf einem echten iPhone prüfbar ist.
 - OpenStreetMap/Nominatim/Wikipedia sind in der Umgebung gesperrt; Koordinaten per Websuche ermitteln
   und mit den Gemeindegrenzen (CAOP, github.com/nmota/caop_GeoJSON) prüfen. Pins nie eigenmächtig verschieben,
   Abweichungen melden.
@@ -114,13 +121,19 @@ Vertrauensbasis, keine Beweisfotos.
   - **Fotos (wiederverwendbare Foto-Grundlage):** `photoPicker(qid, mehrere)` zeigt „Foto aufnehmen“ (`capture="environment"`)
     und „Aus Galerie wählen“ (`multiple`: mehrere Bilder auf einmal); offline stattdessen ein Hinweis. `handlePhotos` verarbeitet
     die Bilder **nacheinander** (nie mehrere gleichzeitig im Speicher) mit Fortschrittsanzeige „Foto X von Y“, in der Reihenfolge,
-    in der das Handy sie liefert. Die Datei-Felder (`#photo-camera`, `#photo-gallery`) liegen **dauerhaft** außerhalb der
-    Hilfsmittel (`photoInput`), Knöpfe rufen `choosePhotos` auf; Neuzeichnen entfernt sie nie, und `value = ""` wird erst
-    gesetzt, wenn alle gewählten Dateien gelesen sind (sonst geben iPhones die Dateien teils frei → „kein lesbares Bild“;
-    zurücksetzen, damit dieselbe Datei erneut gewählt werden kann). Dekodieren: (1) `createImageBitmap` in Zielgröße (auch
-    ohne bekannte Größe, z. B. HEIC: 1.000 px Breite), (2) Rückfall Bild-Element mit `img.decode()`; erst wenn beides scheitert
-    eine Fehlermeldung **mit Dateityp und Größe** (`photoErrorText`). 0-Byte/nicht lesbare Datei → „liegt nur in der Cloud …“.
-    Jedes Bild bekommt eigene, kurzlebige Canvas/Bitmap/Objekt-URL (nie wiederverwendet). **Speichersparend verkleinern** (`shrinkPhoto`, wichtig gegen „Zu wenig Speicher“ auf iPhones):
+    in der das Handy sie liefert. Die Datei-Felder (`#photo-camera`, `#photo-gallery`, Klasse `.photo-file`: unsichtbar, aber
+    nicht `display:none`) liegen **dauerhaft** außerhalb der Hilfsmittel (`photoInput`), Knöpfe rufen `choosePhotos` auf.
+    **Ablauf einer Auswahl (`onPhotosChosen`) – wichtig gegen zufällige Fehler auf Android** (Bilder aus der Fotoauswahl
+    gibt es nur „auf Abruf“; spätes/mehrfaches Lesen derselben Datei schlug sporadisch fehl): (1) **sofort** jede Datei genau
+    einmal vollständig lesen (`readPhotoFile`: `file.arrayBuffer()` → eigener Blob im Speicher, bis zu 3 Versuche mit Pause),
+    (2) erst danach `value = ""` (dieselbe Datei kann erneut gewählt werden), (3) **streng nacheinander** verkleinern
+    (`shrinkPhoto` aus der Kopie) → hochladen (`uploadPhoto`, bis zu 3 Versuche bei Netz-/Serverfehler) → eintragen.
+    Ergebnis jeder Verkleinerung prüfen (nicht leer, beginnt mit JPEG-Kennung, `isJpeg`); sonst automatisch kleiner/mit
+    weniger Qualität erneut; Dekodieren: (1) `createImageBitmap` in Zielgröße, (2) `img.decode()`, (3) nach Pause mit halber
+    Größe. Fehlgeschlagene Fotos bleiben (nur lokal, `toolUI.photoFailed`) mit „Erneut versuchen“ (ohne neu auswählen) und
+    „Entfernen“ sichtbar; die Meldung nennt die Stufe (`PHOTO_STAGES`: Lesen auf dem Handy / Verkleinern / Hochladen zum
+    Server / Eintragen) und unter „Details“ Fehlername, Dateityp, Größe. Server (`_save_photo`) lehnt nur ab: leer, zu groß
+    (> 600 KB), kein JPEG – jeweils mit eigener Meldung. Jedes Bild bekommt eigene, kurzlebige Canvas/Bitmap/Objekt-URL. **Speichersparend verkleinern** (`shrinkPhoto`, wichtig gegen „Zu wenig Speicher“ auf iPhones):
     Abmessungen + EXIF-Ausrichtung aus dem Dateianfang lesen (`readImageInfo`, ohne zu dekodieren), dann
     `createImageBitmap(file, {resizeWidth})` – dekodiert direkt in Zielgröße (nur die Breite vorgeben, damit nichts verzerrt);
     hat der Browser nicht selbst gedreht (Seitenverhältnis), dreht das Canvas nach EXIF. **Nie ein Canvas in voller
@@ -152,8 +165,13 @@ Vertrauensbasis, keine Beweisfotos.
     und schreiben fest → jede Position grün/rot („richtig wäre: …“); alle richtig = „Geschafft!“, sonst „Daneben“ + „Neue Runde – mit anderen Früchten“.
   - „Buchstaben-Fotos“ (Baumstaben, `kind: "photoWord"`): Phase 1 zeigt oben gut sichtbar „Foto aufnehmen“ (Kamera) und
     „Aus Galerie wählen“ (mehrere); ≥ 5 Fotos als sortierbare Liste (Ziehen am Griff mit Animation wie Früchteschweiger,
-    Aktion `arrange` mit Foto-IDs, plus Pfeile ▲▼, Löschen), je Foto ein Feld für genau einen Buchstaben (A–Z, Ä, Ö, Ü, ß;
-    `T.letter`); Entwurf `draft` + verschleierte `draftLetters`, synchron, übersteht Neuladen. „Festschreiben“ (ab 5 Fotos
+    Aktion `arrange` mit den Schlüsseln der Einträge, plus Pfeile ▲▼, Löschen, **Duplizieren**), je Foto ein Feld für genau
+    einen Buchstaben (A–Z, Ä, Ö, Ü, ß;
+    `T.letter`); Entwurf `draft` (Einträge `{key, photo}`, `T.draftEntries`) + verschleierte `draftLetters`, synchron, übersteht
+    Neuladen. **Dasselbe Bild darf mehrfach vorkommen** (z. B. doppeltes L): keine Prüfung auf doppelte Bilder; „Duplizieren“
+    (Aktion `duplicate`) fügt eine Kopie direkt darunter ein, ohne erneutes Hochladen – eigener Schlüssel, eigenes
+    Buchstabenfeld, unabhängig verschiebbar/löschbar; Kopien verweisen auf dieselbe Server-Datei, die bleibt, solange
+    irgendein Eintrag sie nutzt (der Server löscht nur Fotos ohne Verweis). Erneutes Wählen desselben Bildes geht ebenfalls. „Festschreiben“ (ab 5 Fotos
     mit Buchstaben) setzt das geheime Wort zusammen (keine Wörter früherer Runden). Phase 2 und 3 wie bei der Eingabe
     **untereinander** (`photoRows`: ein Foto pro Zeile, von oben nach unten in Wortreihenfolge, Buchstabenfeld bzw.
     Buchstabe daneben; kein Raster). Phase 2: Fotos ohne Buchstaben, daneben je ein Feld → „Festschreiben und vergleichen“ (**nur ein Versuch**) → Buchstabe für Buchstabe

@@ -271,8 +271,11 @@
     }
 
     if (cfg.kind === "photoWord") {
-      // Entwurf: Fotos (offen, damit der Server sie nicht löscht) + Buchstaben (verschleiert)
-      const draft = (ts.draft || []).slice(), letters = (unhide(ts.draftLetters) || []).slice();
+      // Entwurf: Fotos (offen, damit der Server sie nicht löscht) + Buchstaben (verschleiert). Jeder Eintrag hat einen
+      // eigenen Schlüssel (key): Dasselbe Bild darf mehrfach vorkommen (z. B. doppeltes L), Kopien verweisen auf dieselbe
+      // Server-Datei und lassen sich trotzdem einzeln verschieben/löschen. Die Datei bleibt, solange ein Eintrag sie nutzt.
+      const draft = draftEntries(ts.draft), letters = (unhide(ts.draftLetters) || []).slice();
+      const newKey = (k) => { const key = String(k || ""); if (!/^k[0-9a-z]{2,24}$/.test(key) || draft.some((d) => d.key === key)) fail("Ungültiger Eintrag."); return key; };
       const saveDraft = () => Object.assign(ts, { draft, draftLetters: hide(letters) });
       const at = (i) => { i = Number(i); if (!(i >= 0 && i < draft.length)) fail("Unbekanntes Foto."); return i; };
       const inPhase1 = () => { if (ph !== 1) fail("Das Wort ist schon festgeschrieben."); };
@@ -281,9 +284,17 @@
           inPhase1();
           if (!/^p[0-9a-f]{24}$/.test(String(op.photo))) fail("Ungültiges Foto.");
           if (draft.length >= 20) fail("Höchstens 20 Fotos.");
-          draft.push({ photo: op.photo });
+          draft.push({ key: op.key ? newKey(op.key) : "k" + op.photo.slice(1, 13) + draft.length, photo: op.photo });
           letters.push(letter(op.letter) || "");
           return saveDraft();
+        case "duplicate": { // Kopie direkt darunter, ohne erneutes Hochladen, mit eigenem Buchstabenfeld
+          inPhase1();
+          const i = at(op.i);
+          if (draft.length >= 20) fail("Höchstens 20 Fotos.");
+          draft.splice(i + 1, 0, { key: newKey(op.key), photo: draft[i].photo });
+          letters.splice(i + 1, 0, "");
+          return saveDraft();
+        }
         case "setLetter": {
           inPhase1();
           const i = at(op.i), l = op.letter === "" ? "" : letter(op.letter);
@@ -297,12 +308,12 @@
           draft.splice(i, 1); letters.splice(i, 1);
           return saveDraft();
         }
-        case "arrange": { // neue Reihenfolge per Ziehen (Foto-IDs); Buchstaben wandern mit
+        case "arrange": { // neue Reihenfolge per Ziehen (Schlüssel der Einträge); Buchstaben wandern mit
           inPhase1();
           const order = (op.order || []).map(String);
-          if (order.length !== draft.length || draft.some((d) => order.indexOf(d.photo) < 0)) fail("Bitte alle Fotos in eine Reihenfolge bringen.");
+          if (order.length !== draft.length || new Set(order).size !== order.length || draft.some((d) => order.indexOf(d.key) < 0)) fail("Bitte alle Fotos in eine Reihenfolge bringen.");
           const pairs = draft.map((d, i) => [d, letters[i]]);
-          const sorted = order.map((id) => pairs.find((p) => p[0].photo === id));
+          const sorted = order.map((k) => pairs.find((p) => p[0].key === k));
           return Object.assign(ts, { draft: sorted.map((p) => p[0]), draftLetters: hide(sorted.map((p) => p[1] || "")) });
         }
         case "movePhoto": {
@@ -359,6 +370,10 @@
   function sanitize(cfg, ts) {
     if (!ts || !cfg || !cfg.fv) return ts;
     return ts.fv === cfg.fv ? ts : null;
+  }
+  // Einträge des Foto-Entwurfs mit Schlüssel (ältere Entwürfe hatten nur die Foto-ID)
+  function draftEntries(draft) {
+    return (draft || []).map((d, i) => ({ key: d.key || "k" + String(d.photo).slice(1, 13) + i, photo: d.photo }));
   }
   // Rangfolge prüfen: eine Anordnung genau dieser Früchte
   function checkOrder(fruits, order) {
@@ -491,7 +506,7 @@
   const api = {
     TOOLS, LINKS, ARRIVALS_URL, UNESCO_URL, UNESCO_CRITERIA, ToolError, config, links, hasState, update, result, penaltyLeft,
     angleDiff, compassHit, tttStatus, norm, letterCount, sameName, hide, unhide, isSecret, randomInt, shuffle, letter, sameLetter,
-    phase, sanitize
+    phase, sanitize, draftEntries
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.QuestTools = api;

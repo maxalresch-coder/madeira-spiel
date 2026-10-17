@@ -641,7 +641,7 @@
   // in einem eigenen Fenster. Der Zustand liegt in state.tools und wird über den Server geteilt.
   // Änderungen laufen über eine Warteschlange, damit schnelles Antippen (z. B. „+1 Auto“) nichts
   // verliert. Hilfsmittel haken nie ab und geben keine Punkte.
-  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, dragging: false, refreshPending: false };
+  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, dragging: false, refreshPending: false };
   const compass = { on: false, failed: "", samples: [], last: 0 };
   const tcfg = (qid) => T.config(qid, C);
   function serverNow() { return Date.now() + app.clockOffset; }
@@ -1026,18 +1026,19 @@
     const photoRows = (cells) => '<ol class="photo-rows">' + cells.map((c, i) => '<li class="pr-item' + (c.cls ? " " + c.cls : "") + '"><span class="pr-no">' + (i + 1) + "</span>" +
       photoImg(c.photo, "pr-photo") + '<span class="pr-side">' + c.html + "</span></li>").join("") + "</ol>";
     if (ph === 1) {
-      const draft = ts.draft || [], letters = T.unhide(ts.draftLetters) || [];
+      const draft = T.draftEntries(ts.draft), letters = T.unhide(ts.draftLetters) || [];
       const ready = draft.length >= cfg.minLetters && letters.length === draft.length && letters.every(Boolean);
       return phaseBar(1) + lookAway +
         '<p class="tool-label">Für jeden Buchstaben einen Baum oder Ast fotografieren, dessen Form ihn darstellt – in der richtigen Reihenfolge, mindestens ' + cfg.minLetters + ". Zu jedem Foto genau einen Buchstaben eintragen.</p>" +
         photoPicker(qid, true) +
         (draft.length ? '<p class="muted small">Reihenfolge ändern: am Griff ziehen oder mit den Pfeilen.</p>' +
           '<ol class="sort-list photo-sort" data-sort="' + qid + ':photos" data-sync>' + draft.map((d, i) =>
-            '<li class="sort-item photo-sort-item" data-val="' + esc(d.photo) + '"><span class="sort-grip" data-grip aria-hidden="true">' + icon("grip-vertical") + "</span>" +
+            '<li class="sort-item photo-sort-item" data-val="' + esc(d.key) + '"><span class="sort-grip" data-grip aria-hidden="true">' + icon("grip-vertical") + "</span>" +
             '<span class="ps-photo">' + photoImg(d.photo, "ps-thumb") + '<span class="sort-place">' + (i + 1) + "</span></span>" +
             letterInput('data-letter="' + i + '"', letters[i], i) +
             '<span class="ps-move">' + pbtn("movePhoto", "chevron-up", i, -1, "nach vorne", i === 0) + pbtn("movePhoto", "chevron-down", i, 1, "nach hinten", i === draft.length - 1) + "</span>" +
-            pbtn("removePhoto", "trash-2", i, 0, "Foto löschen") + "</li>").join("") + "</ol>" : "") +
+            '<span class="ps-move">' + pbtn("duplicate", "copy", i, 0, "Duplizieren (Kopie darunter, z. B. für doppelte Buchstaben)", draft.length >= 20) +
+            pbtn("removePhoto", "trash-2", i, 0, "Foto löschen") + "</span></li>").join("") + "</ol>" : "") +
         tBtn("fix", icon("lock") + " Festschreiben" + (draft.length ? " (" + draft.length + " Buchstaben)" : ""), "btn-primary btn-block", ready ? "" : " disabled") +
         '<p class="muted small">' + (draft.length < cfg.minLetters ? "Noch " + (cfg.minLetters - draft.length) + " Foto" + (cfg.minLetters - draft.length === 1 ? "" : "s") + " bis zum Festschreiben. " : "") +
           "Fotos bleiben auch beim Neuladen der Seite erhalten. Wörter aus früheren Runden zählen nicht noch einmal.</p>" +
@@ -1082,31 +1083,41 @@
   // Der Server löscht Fotos selbst, sobald der Spielstand nicht mehr auf sie verweist (Geschafft, Neue Runde, Reset).
   const PHOTO_SIDE = 1000, PHOTO_BYTES = 200 * 1024;
   function photoPicker(qid, multiple) {
-    if (!app.online) return '<div class="tool-warn">' + icon("wifi-off") + " Offline – Fotos aufnehmen geht erst wieder mit Netz.</div>";
+    const failed = photoFailedHTML(qid);
+    if (!app.online) return '<div class="tool-warn">' + icon("wifi-off") + " Offline – Fotos aufnehmen geht erst wieder mit Netz.</div>" + failed;
     const up = toolUI.uploading[qid];
     if (up) {
-      return '<div class="tool-wait photo-progress">' + icon("camera") + "<div><strong>Foto " + Math.min(up.done + 1, up.total) + " von " + up.total + "</strong> wird verkleinert und hochgeladen …" +
-        '<div class="progress"><div style="width:' + Math.round(up.done / up.total * 100) + '%"></div></div></div></div>';
+      return '<div class="tool-wait photo-progress">' + icon("camera") + "<div><strong>Foto " + Math.min(up.done + 1, up.total) + " von " + up.total + "</strong> " +
+        (up.step === "read" ? "wird vom Handy gelesen …" : "wird verkleinert und hochgeladen …") +
+        '<div class="progress"><div style="width:' + Math.round(up.done / up.total * 100) + '%"></div></div></div></div>' + failed;
     }
     return '<div class="grid2 photo-pick">' +
       '<button class="btn btn-primary" data-tool-ui="photo-camera">' + icon("camera") + " Foto aufnehmen</button>" +
-      '<button class="btn btn-ghost" data-tool-ui="photo-gallery"' + (multiple ? " data-multiple" : "") + ">" + icon("image") + " Aus Galerie wählen</button></div>";
+      '<button class="btn btn-ghost" data-tool-ui="photo-gallery"' + (multiple ? " data-multiple" : "") + ">" + icon("image") + " Aus Galerie wählen</button></div>" + failed;
   }
-  // Die Datei-Felder liegen dauerhaft (unsichtbar) außerhalb der Hilfsmittel: Neu zeichnen entfernt sie nie, und sie
-  // werden erst geleert, wenn alle gewählten Bilder gelesen sind. (Vorher wurde das Feld sofort geleert und beim
-  // Anzeigen des Fortschritts entfernt – iPhones geben die gewählten Dateien dann teils frei → „kein lesbares Bild“.)
+  // Fotos, die nicht geklappt haben, bleiben (nur auf diesem Handy) sichtbar – mit „Erneut versuchen“ und „Entfernen“
+  const PHOTO_STAGES = { read: "Lesen auf dem Handy fehlgeschlagen", shrink: "Verkleinern fehlgeschlagen", upload: "Hochladen zum Server fehlgeschlagen", add: "Eintragen fehlgeschlagen" };
+  function photoFailedHTML(qid) {
+    const list = toolUI.photoFailed[qid] || [];
+    if (!list.length) return "";
+    return '<div class="photo-failed">' + list.map((j) => '<div class="pf-item">' + icon("circle-x") + '<div class="pf-text"><strong>' + esc(PHOTO_STAGES[j.err.stage]) + "</strong>" +
+      '<div class="small">' + esc(j.err.hint || "") + "</div>" +
+      '<details class="small"><summary>Details</summary>Fehler: ' + esc(j.err.name) + (j.err.message ? " – " + esc(j.err.message) : "") +
+        "<br>Datei: " + esc(j.name || "ohne Namen") + " · " + esc(j.type || "unbekannter Dateityp") + " · " + fmtSize(j.size || 0) + "</details>" +
+      '<div class="pf-btns"><button class="btn btn-small btn-primary" data-tool-ui="photo-retry" data-lid="' + j.lid + '">' + icon("rotate-ccw") + " Erneut versuchen</button>" +
+      '<button class="btn btn-small btn-ghost" data-tool-ui="photo-drop" data-lid="' + j.lid + '">Entfernen</button></div></div></div>').join("") + "</div>";
+  }
+  // Die Datei-Felder liegen dauerhaft (unsichtbar, aber nicht „display:none“ – sonst öffnet Safari die Auswahl teils
+  // nicht) außerhalb der Hilfsmittel; Neuzeichnen entfernt sie nie.
   function photoInput(kind) {
     let el = document.getElementById("photo-" + kind);
     if (!el) {
       el = document.createElement("input");
-      el.type = "file"; el.accept = "image/*"; el.id = "photo-" + kind; el.hidden = true;
+      el.type = "file"; el.accept = "image/*"; el.id = "photo-" + kind; el.className = "photo-file"; el.tabIndex = -1;
+      el.setAttribute("aria-hidden", "true");
       if (kind === "camera") el.setAttribute("capture", "environment");
       document.body.appendChild(el);
-      el.addEventListener("change", async () => {
-        const files = Array.from(el.files || []), qid = toolUI.photoTarget;
-        try { if (qid && files.length) await handlePhotos(qid, files); } // Reihenfolge so, wie das Handy sie liefert
-        finally { el.value = ""; } // zurücksetzen, damit auch dieselbe Datei erneut gewählt werden kann
-      });
+      el.addEventListener("change", () => onPhotosChosen(el));
     }
     return el;
   }
@@ -1121,37 +1132,80 @@
   }
   const photoUrl = (id) => "api/photo/" + encodeURIComponent(id) + "?t=" + encodeURIComponent(app.token || "");
   const photoImg = (id, cls) => '<img class="' + (cls || "tool-photo") + '" src="' + photoUrl(id) + '" alt="Foto" decoding="async" onerror="this.classList.add(\'gone\')">';
-  // Bilder nacheinander verarbeiten (nie mehrere gleichzeitig im Speicher), mit Fortschrittsanzeige
-  async function handlePhotos(qid, files) {
-    files = Array.from(files || []);
-    if (!files.length) return;
-    if (!app.online) { toast(OFFLINE_MSG, true); return; }
-    if (toolUI.uploading[qid]) { toast("Bitte warten, bis die Fotos hochgeladen sind.", true); return; }
-    const up = toolUI.uploading[qid] = { done: 0, total: files.length };
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const newKey = () => "k" + rand32().toString(36) + rand32().toString(36).slice(0, 4);
+  class PhotoError extends Error {
+    constructor(stage, name, message, hint) { super(message || name); this.stage = stage; this.errName = name; this.hint = hint || ""; }
+  }
+  const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(n ? 1 : 0, Math.round(n / 1024)) + " KB");
+
+  // Ablauf einer Auswahl (Ursache der zufälligen Fehler: Android liefert Bilder aus der Fotoauswahl nur „auf Abruf“;
+  // spätes und mehrfaches Lesen derselben Datei – Kopf, Dekodieren, Rückfall – schlug sporadisch fehl):
+  // 1) SOFORT jede Datei genau einmal vollständig lesen (bis zu 3 Versuche) → eigene Kopie im Speicher,
+  // 2) erst danach das Datei-Feld zurücksetzen (dieselbe Datei kann wieder gewählt werden),
+  // 3) streng nacheinander: verkleinern (mit Wiederholung kleiner) → hochladen (bis zu 3 Versuche) → eintragen.
+  async function onPhotosChosen(el) {
+    const files = Array.from(el.files || []), qid = toolUI.photoTarget;
+    if (!qid || !files.length) { el.value = ""; return; }
+    const up = toolUI.uploading[qid] = { done: 0, total: files.length, step: "read" };
     rerenderTools(qid);
-    const errors = [];
-    for (const f of files) {
+    const jobs = [];
+    for (const f of files) { jobs.push(await readPhotoFile(f)); up.done++; rerenderTools(qid); }
+    el.value = "";
+    await processPhotos(qid, jobs);
+  }
+  async function readPhotoFile(f) {
+    const job = { lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, data: null, err: null };
+    let last = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const id = await uploadPhoto(await shrinkPhoto(f));
-        if (!toolDo(qid, { type: "addPhoto", photo: id })) errors.push(null);
-      } catch (e) {
-        errors.push(photoErrorText(e, f));
-        if (!app.online) break;
+        const buf = await f.arrayBuffer();
+        if (!buf.byteLength) throw Object.assign(new Error("Die Datei ist leer (0 Byte)"), { name: "EmptyFile" });
+        job.data = new Blob([buf], { type: f.type || "application/octet-stream" });
+        job.size = buf.byteLength;
+        return job;
+      } catch (e) { last = e; await pause(300 * attempt); }
+    }
+    job.err = { stage: "read", name: (last && last.name) || "Lesefehler", message: (last && last.message) || "",
+      hint: "Liegt das Bild nur in der Cloud? Bitte erst auf dem Handy öffnen (herunterladen) und dann „Erneut versuchen“." };
+    return job;
+  }
+  async function processPhotos(qid, jobs) {
+    const up = toolUI.uploading[qid] = { done: 0, total: jobs.length, step: "process" };
+    rerenderTools(qid);
+    const failed = toolUI.photoFailed[qid] = toolUI.photoFailed[qid] || [];
+    let bad = 0;
+    for (const job of jobs) { // streng nacheinander, nie parallel
+      if (!job.err) {
+        try {
+          const small = await shrinkPhoto(job.data);
+          const id = await uploadPhoto(small);
+          if (!toolDo(qid, { type: "addPhoto", photo: id, key: newKey() })) throw new PhotoError("add", "Nicht eingetragen", "Das Foto passt gerade nicht in die Runde (z. B. schon festgeschrieben oder 20 Fotos).");
+          job.data = null; job.file = null; // Speicher freigeben
+        } catch (e) {
+          job.err = e instanceof PhotoError ? { stage: e.stage, name: e.errName, message: e.message === e.errName ? "" : e.message, hint: e.hint }
+            : { stage: "shrink", name: e.name || "Fehler", message: e.message || "" };
+        }
       }
+      if (job.err) { bad++; failed.push(job); }
       up.done++;
       rerenderTools(qid);
     }
     delete toolUI.uploading[qid];
     rerenderTools(qid);
-    const msgs = errors.filter(Boolean);
-    if (errors.length) toast((errors.length === 1 ? "Ein Foto" : errors.length + " Fotos") + " nicht hochgeladen. " + (msgs[0] || "Bitte nochmal versuchen."), true);
+    if (bad) toast((bad === 1 ? "Ein Foto" : bad + " Fotos") + " nicht hochgeladen – siehe Liste: „Erneut versuchen“ oder „Entfernen“.", true);
   }
-  class PhotoError extends Error {}
-  const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " MB" : Math.max(1, Math.round(n / 1024)) + " KB");
-  // Verständliche Meldung; bei echten Fehlern mit Dateityp und Größe (zum Weitermelden)
-  function photoErrorText(e, f) {
-    if (e instanceof PhotoError) return e.message;
-    return "Foto konnte nicht hochgeladen werden (" + ((e && e.message) || "Fehler") + " · " + (f.type || "unbekannter Dateityp") + " · " + fmtSize(f.size || 0) + ").";
+  async function retryPhoto(qid, lid) {
+    const list = toolUI.photoFailed[qid] || [], i = list.findIndex((j) => j.lid === lid);
+    if (i < 0 || toolUI.uploading[qid]) return;
+    if (!app.online) { toast(OFFLINE_MSG, true); return; }
+    const job = list.splice(i, 1)[0];
+    job.err = null;
+    if (!job.data) { // Lesen war fehlgeschlagen: noch einmal von der gewählten Datei lesen
+      const again = await readPhotoFile(job.file);
+      job.data = again.data; job.err = again.err; job.size = again.size;
+    }
+    await processPhotos(qid, [job]);
   }
 
   // Abmessungen + EXIF-Ausrichtung aus dem Dateianfang lesen (ohne das Bild zu dekodieren)
@@ -1187,79 +1241,123 @@
     }
     return 0;
   }
-  // Speichersparend verkleinern: Das Kamerafoto (12–50 Megapixel) wird nie in voller Größe in ein Canvas gezeichnet.
-  // Reihenfolge der Versuche: (1) createImageBitmap direkt in Zielgröße, (2) Bild-Element mit img.decode() (z. B. für
-  // HEIC/HEIF vom iPhone, falls (1) scheitert). Erst wenn beides scheitert, gibt es eine Fehlermeldung. Jedes Bild bekommt
-  // eigene, kurzlebige Objekte (Canvas, Bitmap, Objekt-URL), die sofort freigegeben und nie wiederverwendet werden.
-  // EXIF-Ausrichtung: Dreht der Browser nicht selbst, drehen wir (Hochkant-Fotos kommen aufrecht an).
-  async function shrinkPhoto(file) {
-    const cloud = "Dieses Bild liegt nur in der Cloud oder kann gerade nicht gelesen werden. Bitte erst auf dem Handy öffnen (herunterladen) und erneut wählen.";
-    if (!file || !file.size) throw new PhotoError(cloud);
-    let info = null;
-    try { info = await readImageInfo(file); } catch (e) { throw new PhotoError(cloud); } // Datei nicht lesbar (z. B. nur in der Cloud)
-    let src = null, url = null, o = 1;
+  // Speichersparend verkleinern (aus der Kopie im Speicher): Das Kamerafoto (12–50 Megapixel) wird nie in voller Größe
+  // in ein Canvas gezeichnet. Dekodieren: (1) createImageBitmap direkt in Zielgröße, (2) Bild-Element mit img.decode()
+  // (z. B. HEIC/HEIF), (3) noch einmal mit halber Größe nach kurzer Pause (Speicherknappheit). Jedes Ergebnis wird geprüft
+  // (nicht leer, echtes JPEG); ist es leer, automatisch kleiner/mit weniger Qualität erneut. Canvas, Bitmap und
+  // Objekt-URL sind kurzlebig, werden sofort freigegeben und nie wiederverwendet.
+  async function decodePhoto(blob, info, width) {
+    let src = null, o = 1, lastErr = null;
+    if (window.createImageBitmap) {
+      try { src = await createImageBitmap(blob, { resizeWidth: width, resizeQuality: "high" }); } catch (e) { src = null; lastErr = e; }
+      if (src && info) {
+        const turned = info.w !== info.h && (src.width > src.height) !== (info.w > info.h); // Browser hat 90° gedreht
+        o = info.o >= 5 ? (turned ? 1 : info.o) : 1; // Spiegeln/180° wendet jeder aktuelle Browser selbst an
+      }
+    }
+    if (src) return { src, o, url: null };
+    const url = URL.createObjectURL(blob), img = new Image(); // Rückfall: Bild-Element (Browser dreht selbst)
+    img.src = url;
     try {
-      if (window.createImageBitmap) {
-        // nur die Breite vorgeben (die Höhe folgt dem Seitenverhältnis, nichts wird verzerrt); ohne bekannte Größe
-        // (z. B. HEIC) 1.000 px Breite – auch dann bleibt das Bild klein
-        const ow = info ? (info.o >= 5 ? info.h : info.w) : 0;
-        const rw = info ? Math.max(1, Math.round(ow * Math.min(1, PHOTO_SIDE / Math.max(info.w, info.h)))) : PHOTO_SIDE;
-        try { src = await createImageBitmap(file, { resizeWidth: rw, resizeQuality: "high" }); } catch (e) { src = null; }
-        if (src && info) {
-          const turned = info.w !== info.h && (src.width > src.height) !== (info.w > info.h); // Browser hat 90° gedreht
-          o = info.o >= 5 ? (turned ? 1 : info.o) : 1; // Spiegeln/180° wendet jeder aktuelle Browser selbst an
-        }
-      }
-      if (!src) { // Rückfall: Bild-Element (Browser dreht selbst)
-        url = URL.createObjectURL(file);
-        const img = new Image();
-        img.src = url;
-        try {
-          if (img.decode) await img.decode();
-          else await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
-        } catch (e) { throw new Error("kein lesbares Bild"); }
-        if (!img.naturalWidth) throw new Error("kein lesbares Bild");
-        src = img;
-      }
-      const sw = src.naturalWidth || src.width, sh = src.naturalHeight || src.height;
-      const ow = o >= 5 ? sh : sw, oh = o >= 5 ? sw : sh;
-      let side = PHOTO_SIDE, q = 0.82, blob = null;
-      const c = document.createElement("canvas");
-      try {
-        for (let k = 0; k < 8; k++) {
-          const sc = Math.min(1, side / Math.max(ow, oh));
-          const dw = Math.max(1, Math.round(ow * sc)), dh = Math.max(1, Math.round(oh * sc));
-          c.width = dw; c.height = dh;
-          const ctx = c.getContext("2d");
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          if (o === 5) ctx.transform(0, 1, 1, 0, 0, 0);
-          else if (o === 6) ctx.transform(0, 1, -1, 0, dw, 0);
-          else if (o === 7) ctx.transform(0, -1, -1, 0, dw, dh);
-          else if (o === 8) ctx.transform(0, -1, 1, 0, 0, dh);
-          ctx.drawImage(src, 0, 0, o >= 5 ? dh : dw, o >= 5 ? dw : dh);
-          blob = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
-          if (blob && blob.size < PHOTO_BYTES) break;
-          if (q > 0.55) q -= 0.12; else side = Math.round(side * 0.8);
-        }
-      } finally { c.width = 0; c.height = 0; } // Speicher sofort freigeben (wichtig für iPhones)
-      if (!blob) throw new Error("Umwandeln fehlgeschlagen");
-      return blob;
-    } finally {
-      if (src && src.close) src.close();
-      if (src && src.removeAttribute) src.removeAttribute("src");
-      if (url) URL.revokeObjectURL(url);
+      if (img.decode) await img.decode();
+      else await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+      if (!img.naturalWidth) throw new Error("Bild hat keine Größe");
+      return { src: img, o: 1, url };
+    } catch (e) {
+      img.removeAttribute("src"); URL.revokeObjectURL(url);
+      throw new PhotoError("shrink", (lastErr && lastErr.name) || e.name || "DecodeError", "Das Bild ließ sich nicht öffnen (Format nicht unterstützt?)");
     }
   }
-  async function uploadPhoto(blob) {
-    let res;
-    try {
-      res = await fetch("api/photo", { method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: "Bearer " + app.token }, body: blob, cache: "no-store" });
-    } catch (e) { setOnline(false); throw new Error("keine Verbindung"); }
-    if (res.status >= 500) setOnline(false);
-    const data = await res.json().catch(() => null);
-    if (!res.ok || !data || !data.id) throw new Error((data && data.error) || "Server-Fehler");
-    return data.id;
+  async function shrinkPhoto(blob) {
+    let info = null;
+    try { info = await readImageInfo(blob); } catch (e) { info = null; }
+    const ow = info ? (info.o >= 5 ? info.h : info.w) : 0;
+    let width = info ? Math.max(1, Math.round(ow * Math.min(1, PHOTO_SIDE / Math.max(info.w, info.h)))) : PHOTO_SIDE;
+    let lastErr = null;
+    for (let round = 0; round < 3; round++) {
+      let d = null;
+      try { d = await decodePhoto(blob, info, width); } catch (e) { lastErr = e; await pause(400); width = Math.max(200, Math.round(width / 2)); continue; }
+      try {
+        const sw = d.src.naturalWidth || d.src.width, sh = d.src.naturalHeight || d.src.height;
+        const o = d.o, ow2 = o >= 5 ? sh : sw, oh2 = o >= 5 ? sw : sh;
+        let side = PHOTO_SIDE, q = 0.82;
+        for (let k = 0; k < 8; k++) {
+          const sc = Math.min(1, side / Math.max(ow2, oh2));
+          const dw = Math.max(1, Math.round(ow2 * sc)), dh = Math.max(1, Math.round(oh2 * sc));
+          const c = document.createElement("canvas");
+          let out = null;
+          try {
+            c.width = dw; c.height = dh;
+            const ctx = c.getContext("2d");
+            if (!ctx) throw new Error("kein Canvas");
+            if (o === 5) ctx.transform(0, 1, 1, 0, 0, 0);
+            else if (o === 6) ctx.transform(0, 1, -1, 0, dw, 0);
+            else if (o === 7) ctx.transform(0, -1, -1, 0, dw, dh);
+            else if (o === 8) ctx.transform(0, -1, 1, 0, 0, dh);
+            ctx.drawImage(d.src, 0, 0, o >= 5 ? dh : dw, o >= 5 ? dw : dh);
+            out = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
+          } catch (e) { out = null; lastErr = e; } finally { c.width = 0; c.height = 0; } // sofort freigeben
+          if (out && out.size > 200 && (await isJpeg(out))) {
+            if (out.size < PHOTO_BYTES) return out;
+            q = q > 0.55 ? q - 0.12 : q; if (q <= 0.55) side = Math.round(side * 0.8);
+          } else { // leer/kaputt (z. B. Speicherknappheit): kleiner und mit weniger Qualität erneut
+            side = Math.round(side * 0.7); q = Math.max(0.5, q - 0.1);
+            await pause(150);
+          }
+        }
+      } finally {
+        if (d.src.close) d.src.close();
+        if (d.url) { d.src.removeAttribute("src"); URL.revokeObjectURL(d.url); }
+      }
+      width = Math.max(200, Math.round(width / 2));
+    }
+    if (lastErr instanceof PhotoError) throw lastErr;
+    throw new PhotoError("shrink", (lastErr && lastErr.name) || "LeeresErgebnis", "Beim Verkleinern entstand kein gültiges Bild (zu wenig Speicher?)");
   }
+  async function isJpeg(b) {
+    const h = new Uint8Array(await b.slice(0, 3).arrayBuffer());
+    return h[0] === 0xff && h[1] === 0xd8 && h[2] === 0xff;
+  }
+  // Hochladen mit bis zu 3 Versuchen (Netz weg, Server kurz nicht erreichbar); Ablehnungen (4xx) nicht wiederholen
+  async function uploadPhoto(blob) {
+    let last = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      let res = null;
+      try {
+        res = await fetch("api/photo", { method: "POST", headers: { "Content-Type": "image/jpeg", Authorization: "Bearer " + app.token }, body: blob, cache: "no-store" });
+      } catch (e) { last = new PhotoError("upload", e.name || "NetworkError", "keine Verbindung zum Server"); await pause(600 * attempt); continue; }
+      const data = await res.json().catch(() => null);
+      if (res.ok && data && data.id) return data.id;
+      last = new PhotoError("upload", "HTTP " + res.status, (data && data.error) || "Server-Fehler");
+      if (res.status < 500) break;
+      await pause(600 * attempt);
+    }
+    if (last && last.errName === "NetworkError") setOnline(false);
+    throw last;
+  }
+  // ---- Rückmeldung auf Android und iPhone: Vibration gibt es nur auf Android (Chrome). Ersatz auf dem iPhone:
+  // kurzer Ton (Audio wird beim ersten Antippen freigeschaltet, wie Safari es verlangt) bzw. sichtbares Aufblinken.
+  let audioCtx = null;
+  document.addEventListener("pointerdown", () => {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!audioCtx && AC && !navigator.vibrate) { try { audioCtx = new AC(); } catch (e) { audioCtx = null; } }
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+  }, true);
+  function beep(times) {
+    if (!audioCtx) return;
+    for (let i = 0; i < times; i++) {
+      const t0 = audioCtx.currentTime + i * 0.28, osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+      osc.frequency.value = 880; g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(0.3, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+      osc.connect(g); g.connect(audioCtx.destination); osc.start(t0); osc.stop(t0 + 0.22);
+    }
+  }
+  function signalEnd() { if (navigator.vibrate) navigator.vibrate([250, 120, 250]); else beep(2); }
+  function tapFeedback(el) {
+    if (navigator.vibrate) { navigator.vibrate(15); return; }
+    if (el && el.animate) el.animate([{ transform: "scale(.96)" }, { transform: "scale(1)" }], { duration: 160 }); // iPhone: sichtbar
+  }
+
   // Zufallszahl 0 … 2^32−1 aus dem sicheren Zufallsgenerator (für T.shuffle, siehe Zufallsregel)
   function rand32() { return crypto.getRandomValues(new Uint32Array(1))[0]; }
 
@@ -1343,7 +1441,7 @@
       timer = setTimeout(() => {
         timer = null;
         toolUI.peek[t.dataset.tool] = serverNow() + 5000;
-        if (navigator.vibrate) navigator.vibrate(30);
+        if (navigator.vibrate) navigator.vibrate(30); // iPhone: der Knopf zeigt das Halten sichtbar an (.holding)
         rerenderTools(t.dataset.tool);
       }, 600);
     });
@@ -1422,6 +1520,8 @@
     if (ui === "compass-on") return enableCompass();
     if (ui === "peek-off") { toolUI.peek[qid] = 0; return rerenderTools(qid); }
     if (ui === "photo-camera") return choosePhotos(qid, "camera");
+    if (ui === "photo-retry") return retryPhoto(qid, b.dataset.lid);
+    if (ui === "photo-drop") { toolUI.photoFailed[qid] = (toolUI.photoFailed[qid] || []).filter((j) => j.lid !== b.dataset.lid); return rerenderTools(qid); }
     if (ui === "photo-gallery") return choosePhotos(qid, "gallery", b.hasAttribute("data-multiple"));
     if (ui === "mv") {
       const sync = b.hasAttribute("data-sync");
@@ -1457,6 +1557,7 @@
     }
     else if (kind === "photoWord" && act === "guess") op.letters = texts("g", toolState(qid).letters || 0).v;
     else if (kind === "photoWord" && (act === "movePhoto" || act === "removePhoto")) { op.i = Number(b.dataset.i); op.d = Number(b.dataset.d || 0); }
+    else if (kind === "photoWord" && act === "duplicate") { op.i = Number(b.dataset.i); op.key = newKey(); }
     else if (kind === "secretTerms" && act === "mark") op.i = Number(b.dataset.i);
     else if (kind === "secretTerms" && act === "tip") op.d = Number(b.dataset.d);
     else if (kind === "choice" && act === "fix") op.picks = (toolUI.pick[qid] || []).slice();
@@ -1488,7 +1589,7 @@
     const typed = clear ? clear.value : "";
     if (clear) clear.value = ""; // vor dem Neuzeichnen leeren, sonst bleibt die Zahl stehen
     if (!toolDo(qid, op) && clear) clear.value = typed;
-    if (act === "inc" && navigator.vibrate) navigator.vibrate(15);
+    if (act === "inc") tapFeedback(b);
   }
 
   function toolDo(qid, op, quiet) {
@@ -1603,7 +1704,7 @@
       // Signal nur für abgelaufene Countdowns und Strafzeiten (nicht z. B. für „Anzeigen“)
       if (at != null && (timed || at <= now) && !toolUI.signaled.has(key)) {
         toolUI.signaled.add(key);
-        if (navigator.vibrate) navigator.vibrate([250, 120, 250]);
+        signalEnd(); // Vibration (Android) bzw. Ton (iPhone) – dazu die Anzeige auf allen Geräten
       }
       rerenderTools(qid);
     });

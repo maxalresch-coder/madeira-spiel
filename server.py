@@ -130,20 +130,28 @@ def _gc_photos(conf, state):
 
 
 def _save_photo(conf, environ):
+    """Speichert ein hochgeladenes JPEG. Liefert (id, None) oder (None, Fehlertext).
+    Der Browser verkleinert jedes Foto vorher und schickt immer JPEG; geprüft wird nur, dass etwas ankam,
+    dass es nicht zu groß ist und dass es mit der JPEG-Kennung (FF D8 FF) beginnt."""
     try:
-        length = int(environ.get("CONTENT_LENGTH") or 0)
+        length = int(environ.get("CONTENT_LENGTH") or -1)
     except ValueError:
-        length = 0
-    if length <= 0 or length > MAX_PHOTO:
-        return None
-    data = environ["wsgi.input"].read(length)
-    if data[:3] != b"\xff\xd8\xff":  # nur JPEG
-        return None
+        length = -1
+    if length > MAX_PHOTO:
+        return None, "Foto zu groß (%d KB, erlaubt %d KB)" % (length // 1024, MAX_PHOTO // 1024)
+    # ohne Längenangabe (z. B. „chunked“) höchstens MAX_PHOTO + 1 Bytes lesen
+    data = environ["wsgi.input"].read(length if length >= 0 else MAX_PHOTO + 1)
+    if not data:
+        return None, "leeres Foto angekommen"
+    if len(data) > MAX_PHOTO:
+        return None, "Foto zu groß"
+    if data[:3] != b"\xff\xd8\xff":
+        return None, "kein JPEG angekommen"
     os.makedirs(_photo_dir(conf), exist_ok=True)
     pid = "p" + secrets.token_hex(12)
     with open(os.path.join(_photo_dir(conf), pid + ".jpg"), "wb") as f:
         f.write(data)
-    return pid
+    return pid, None
 
 
 def _now_ms():
@@ -215,9 +223,9 @@ def _api(path, environ, start_response, conf):
         return _json(start_response, "401 Unauthorized", {"error": "Nicht angemeldet"})
 
     if path == "photo" and method == "POST":
-        pid = _save_photo(conf, environ)
+        pid, err = _save_photo(conf, environ)
         if not pid:
-            return _json(start_response, "400 Bad Request", {"error": "Foto ungültig oder zu groß"})
+            return _json(start_response, "400 Bad Request", {"error": err})
         return _json(start_response, "200 OK", {"id": pid})
 
     # Name melden (beim App-Start und nach „Name ändern“) – auch für schon Angemeldete
