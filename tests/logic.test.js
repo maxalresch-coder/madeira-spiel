@@ -558,6 +558,23 @@ assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, unde
   const MAP = sandbox.window.BAY_MAP;
   assert.strictEqual(JSON.stringify(MAP.bays.map((b) => b.id)), JSON.stringify(BG.bays), "Buchten in bay-map.js und tools.js gleich");
   assert(MAP.bays.length >= 8 && MAP.bays.length <= 12 && MAP.land.length > 10);
+  // Nummern im Wasser vor der Bucht: nicht auf/an Küste oder Inseln, Linie zur Buchtmitte kreuzt keine Küste, keine Überlappung
+  {
+    const segs = [];
+    MAP.land.forEach((d) => { const q = d.slice(1, -1).split(" ").map((t) => t.split(",").map(Number)); q.forEach((p, i) => segs.push([q[(i || q.length) - 1], p])); });
+    const dist = (p, [a, b]) => { const dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1))); return Math.hypot(a[0] + t * dx - p[0], a[1] + t * dy - p[1]); };
+    const cross = (p, q, [a, b]) => { const c = (o, u, v) => (u[0] - o[0]) * (v[1] - o[1]) - (u[1] - o[1]) * (v[0] - o[0]); return c(a, b, p) * c(a, b, q) < 0 && c(p, q, a) * c(p, q, b) < 0; };
+    const r = MAP.r, [vx, vy, vw, vh] = MAP.view;
+    MAP.bays.forEach((b, i) => {
+      const L = [b.x, b.y], T = [b.tx, b.ty];
+      assert(Math.min(...segs.map((sg) => dist(L, sg))) > r + 20, "Nummer " + b.n + " berührt keine Küste");
+      assert(!segs.some((sg) => cross(L, T, sg)), "Linie " + b.n + " kreuzt keine Küste");
+      assert(b.n <= 6 ? b.y < b.ty : b.y > b.ty, "Nummer " + b.n + " auf der richtigen Seite (Nord/Süd)");
+      assert(b.x - r >= vx && b.x + r <= vx + vw && b.y - r >= vy && b.y + r <= vy + vh, "Nummer " + b.n + " im Kartenausschnitt");
+      MAP.bays.forEach((c, j) => { if (j > i) assert(Math.hypot(b.x - c.x, b.y - c.y) > 2 * r + 30 && !cross(L, T, [[c.x, c.y], [c.tx, c.ty]]), "Nummern " + b.n + "/" + c.n + " überlappen nicht"); });
+      assert(!b.name || (b.nx !== undefined && ["start", "end", "middle"].includes(b.na)));
+    });
+  }
   // Ausschnitte: gedreht (nur Drehung), Öffnung waagrecht oben, die ganze Buchtküste darunter und im Ausschnitt
   for (const bay of MAP.bays) {
     const pts = bay.poly.slice(1).split(" ").map((q) => q.split(",").map(Number)), t = bay.rot * Math.PI / 180;

@@ -1138,17 +1138,30 @@
       '<path class="bc-strip" d="' + b.poly + 'Z" stroke-width="' + 2 * b.d + '"/><path class="bm-sea" d="' + b.poly + 'Z"/>' +
       '<path class="bc-coast" d="' + b.poly + '"/><g class="bm-land">' + b.isl.map((k) => '<path d="' + land[k] + '"/>').join("") + "</g></g></g></svg>";
   }
-  // Karte des Zipfels mit allen nummerierten Buchten; opts: sel (getippt), right/wrong (Ergebnis), tap (antippbar)
+  // Karte des Zipfels mit allen nummerierten Buchten; opts: sel (getippt), right/wrong (Ergebnis), tap (antippbar).
+  // Die Nummern stehen im offenen Wasser vor ihrer Bucht (Platz berechnet tools/buchten_karte.py: keine Überdeckung von Küste,
+  // Inseln, Buchten oder anderen Nummern), eine dünne Linie führt zur Buchtmitte (tx/ty).
   function bayMap(opts) {
-    const m = BM(), r = m.w * 0.016;
-    const marks = m.bays.map((b) => {
-      const cls = b.id === opts.right ? " right" : b.id === opts.wrong ? " wrong" : b.id === opts.sel ? " sel" : "";
-      return '<g class="bm-mark' + cls + '"><circle cx="' + b.x + '" cy="' + b.y + '" r="' + r + '"/><text x="' + b.x + '" y="' + b.y + '" dy=".36em" font-size="' + r * 1.25 + '">' + b.n + "</text>" +
-        (b.name ? '<text class="bm-name" x="' + (b.x + r * 1.3) + '" y="' + (b.y + r * 2.2) + '" font-size="' + r * 1.05 + '">' + esc(b.name) + "</text>" : "") + "</g>";
-    }).join("");
+    const m = BM(), r = m.r, v = m.view;
+    const cls = (b) => (b.id === opts.right ? " right" : b.id === opts.wrong ? " wrong" : b.id === opts.sel ? " sel" : "");
+    const leads = m.bays.map((b) => '<g class="bm-lead' + cls(b) + '"><line x1="' + b.x + '" y1="' + b.y + '" x2="' + b.tx + '" y2="' + b.ty + '"/><circle cx="' + b.tx + '" cy="' + b.ty + '" r="' + r * 0.2 + '"/></g>').join("");
+    const marks = m.bays.map((b) => '<g class="bm-mark' + cls(b) + '"><circle class="bm-hit" cx="' + b.x + '" cy="' + b.y + '" r="' + r * 2.2 + '"/><circle cx="' + b.x + '" cy="' + b.y + '" r="' + r + '"/>' +
+      '<text x="' + b.x + '" y="' + b.y + '" dy=".36em" font-size="' + r * 1.25 + '">' + b.n + "</text>" +
+      (b.name ? '<text class="bm-name" x="' + b.nx + '" y="' + b.ny + '" style="text-anchor:' + b.na + '" font-size="' + r * 1.05 + '">' + esc(b.name) + "</text>" : "") + "</g>").join("");
     const hl = opts.right ? '<path class="bm-hl" d="' + bayById(opts.right).poly + 'Z"/>' : ""; // Wasserfläche der Bucht, nach Norden ausgerichtet
-    return '<div class="bay-map-wrap' + (toolUI.bayBig ? " big" : "") + '"><svg class="bay-map" viewBox="0 0 ' + m.w + " " + m.h + '"' + (opts.tap ? ' data-tool-ui="baymap"' : "") +
-      ' role="img" aria-label="Karte der Ponta de São Lourenço mit nummerierten Buchten"><rect class="bm-sea" width="' + m.w + '" height="' + m.h + '"/><g class="bm-land">' + bayLand() + "</g>" + hl + marks + "</svg></div>";
+    return '<div class="bay-map-wrap' + (toolUI.bayBig ? " big" : "") + '"><svg class="bay-map" viewBox="' + v.join(" ") + '"' + (opts.tap ? ' data-tool-ui="baymap"' : "") +
+      ' role="img" aria-label="Karte der Ponta de São Lourenço mit nummerierten Buchten"><rect class="bm-sea" x="' + v[0] + '" y="' + v[1] + '" width="' + v[2] + '" height="' + v[3] + '"/><g class="bm-land">' + bayLand() + "</g>" + hl + leads + marks + "</svg></div>";
+  }
+  // Antippen auf der Karte: in einer Bucht → diese Bucht, sonst die nächste Nummer oder Buchtmitte
+  let bayPolys = null;
+  function bayAt(x, y) {
+    const inPoly = (pts) => { let c = false; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) { const [x1, y1] = pts[j], [x2, y2] = pts[i]; if ((y1 > y) !== (y2 > y) && x < x1 + (y - y1) * (x2 - x1) / (y2 - y1)) c = !c; } return c; };
+    bayPolys = bayPolys || BM().bays.map((b) => b.poly.slice(1).split(" ").map((q) => q.split(",").map(Number)));
+    const hit = BM().bays.find((b, i) => inPoly(bayPolys[i]));
+    if (hit) return hit;
+    let best = null, bd = Infinity;
+    BM().bays.forEach((b) => { const dd = Math.min(Math.hypot(b.x - x, b.y - y), Math.hypot(b.tx - x, b.ty - y)); if (dd < bd) { bd = dd; best = b; } });
+    return best;
   }
   // Zeichnung: Striche { t: p(Stift)/b(Pinsel)/e(Radierer), c: Farbe, w: 1–3, p: [x, y, …] } in 1.000 × 750
   const DRAW_W = 1000, DRAW_H = 750, DRAW_SIZES = { 1: 5, 2: 11, 3: 22 };
@@ -2255,15 +2268,14 @@
       if (i >= 0) sel.splice(i, 1); else if (sel.length < tcfg(qid).pick) sel.push(b.dataset.id); else toast("Genau " + tcfg(qid).pick + " – erst eines abwählen.", true);
       return rerenderTools(qid);
     }
-    if (ui === "bay" || ui === "baymap") { // Bucht gesucht: Bucht antippen (Knopf oder nächste Markierung auf der Karte)
+    if (ui === "bay" || ui === "baymap") { // Bucht gesucht: Bucht antippen (Knopf, Nummer oder die Bucht selbst auf der Karte)
       const sel = puzzleSel(qid, toolState(qid));
       if (ui === "bay") sel.bay = b.dataset.bay;
       else {
         const svg = b.ownerSVGElement || b, p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY;
         const m = svg.getScreenCTM(); if (!m) return;
         const q = p.matrixTransform(m.inverse());
-        let best = null, bd = Infinity;
-        BM().bays.forEach((bb) => { const dd = Math.hypot(bb.x - q.x, bb.y - q.y); if (dd < bd) { bd = dd; best = bb; } });
+        const best = bayAt(q.x, q.y);
         if (best) sel.bay = best.id;
       }
       return rerenderTools(qid);

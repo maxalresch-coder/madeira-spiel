@@ -283,6 +283,12 @@ Vertrauensbasis, keine Beweisfotos.
     echten: 8 „Baía d'Abra“, 9 „Prainha“. Je Bucht im Skript: Markierung + die **beiden Landspitzen am Eingang**; daraus
     berechnet: `poly` = Buchtküste von Landspitze zu Landspitze (geschlossen = Wasserfläche; das Skript rückt die Öffnung
     automatisch auf die äußersten Landspitzen), `isl` = Inseln darin, `rot` = Drehung, `d` = Landstreifen, `top`/`box`.
+    **Nummern auf der Karte** (`place_labels` im Skript): jede Nummer (Radius `r`) im offenen Wasser **vor** ihrer Bucht
+    (Nordküste 1–6 nach Norden, Südküste 7–9 nach Süden), mit Abstand zur Küste, dünne dezente Linie + Punkt zur Buchtmitte
+    (`tx/ty`, von der Öffnung aus frei sichtbar); Nummern, Linien und Namen (`nx/ny/na`) berühren keine Küste, Insel oder Bucht
+    und überlappen sich nicht (Skript sucht die Anordnung, Test prüft es); Kartenausschnitt `view` wird dafür erweitert.
+    Antippen (`bayAt`): in einer Bucht → diese Bucht, sonst nächste Nummer/Buchtmitte; unsichtbare große Tippfläche
+    (`.bm-hit`, 2,2 × r) um jede Nummer. Gilt genauso für die Auflösung.
     **Küstenausschnitt** (`bayCrop`): nur gedreht (nie gespiegelt), sodass die Öffnung **oben** liegt (Meer der Bucht oben,
     Land unten/seitlich); gezeigt wird **nur die Bucht**: gleichmäßiger Landstreifen (Breite `d`) entlang der Buchtküste,
     Wasser der Bucht, Inseln darin; alles oberhalb der Öffnung abgeschnitten (`clipPath`). Echtes Land außerhalb wird nicht
@@ -291,8 +297,7 @@ Vertrauensbasis, keine Beweisfotos.
     Buchten, `used`; sind alle durch, alle außer der letzten) → nur das auslosende Handy (`here` im lokalen Entwurf) sieht den
     Küstenausschnitt (ohne Nummer/Name, ein-/ausblendbar) und zeichnet; andere Handys sehen „Auf einem anderen Handy wird
     gerade gezeichnet“ + „Hier zeichnen“ (Rückfrage, Ein-Handy-Fall nach Neuladen). „Bestätigen“ (Aktion `fix` mit `drawing`)
-    → Handy weitergeben → Phase 2: Zeichnung + Karte mit allen Nummern (`bayMap`, Antippen wählt die nächste Markierung,
-    „Karte größer“, Chips) → „Bestätigen“ (`guess`) → Phase 3: Richtig/Falsch, Zeichnung und gedrehter Ausschnitt nebeneinander,
+    → Handy weitergeben → Phase 2: Zeichnung + Karte mit allen Nummern (`bayMap`, „Karte größer“, Chips) → „Bestätigen“ (`guess`) → Phase 3: Richtig/Falsch, Zeichnung und gedrehter Ausschnitt nebeneinander,
     dazu die Bucht auf der Karte (nach Norden, ungedreht) grün hervorgehoben (`bm-hl` = `poly`); „Neue Runde“ (löscht
     Zeichnung), bei Falsch zusätzlich „Trotzdem richtig“ (`accept`).
     **Zeichenfläche** (`buildDrawEl`, einmal gebaut, nach jedem Neuzeichnen mit `mountDraw` in `[data-draw-slot]` zurückgehängt
