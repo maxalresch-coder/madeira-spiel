@@ -250,7 +250,7 @@
 
     if (cfg.kind === "secretTerms") {
       if (op.type === "fix") {
-        if (ph !== 1) fail("Die Begriffe sind schon festgeschrieben.");
+        if (ph !== 1) fail("Die Begriffe sind schon bestätigt.");
         const terms = (op.terms || []).map((t) => String(t || "").trim().slice(0, 60));
         if (terms.length !== cfg.count || terms.some((t) => !t)) fail("Bitte alle " + cfg.count + " Begriffe eintragen.");
         distinct(terms); fresh(terms);
@@ -274,18 +274,18 @@
 
     if (cfg.kind === "secretRank") {
       if (op.type === "setFruits") {
-        if (ph !== 1) fail("Die Rangfolge ist schon festgeschrieben.");
+        if (ph !== 1) fail("Die Rangfolge ist schon bestätigt.");
         const fruits = (op.fruits || []).map((t) => String(t || "").trim().slice(0, 40));
         if (fruits.length !== cfg.count || fruits.some((t) => !t)) fail("Bitte alle " + cfg.count + " Früchte eintragen.");
         distinct(fruits); fresh(fruits);
         return Object.assign(ts, round0s, { fruits });
       }
-      if (op.type === "editFruits") { // zurück zur Eingabe der Früchte (nur vor dem Festschreiben)
-        if (ph !== 1) fail("Die Rangfolge ist schon festgeschrieben.");
+      if (op.type === "editFruits") { // zurück zur Eingabe der Früchte (nur vor dem Bestätigen)
+        if (ph !== 1) fail("Die Rangfolge ist schon bestätigt.");
         return Object.assign(ts, { fruits: null });
       }
       if (op.type === "fix") {
-        if (ph !== 1 || !ts.fruits) fail(ts.fruits ? "Schon festgeschrieben." : "Erst die Früchte eintragen.");
+        if (ph !== 1 || !ts.fruits) fail(ts.fruits ? "Schon bestätigt." : "Erst die Früchte eintragen.");
         // op.start = zufällige Startreihenfolge für das Raten (gleichmäßig gemischt, siehe shuffle)
         return Object.assign(ts, { secret: hide(checkOrder(ts.fruits, op.order)), guessOrder: checkOrder(ts.fruits, op.start), by });
       }
@@ -302,7 +302,7 @@
       const newKey = (k) => { const key = String(k || ""); if (!/^k[0-9a-z]{2,24}$/.test(key) || draft.some((d) => d.key === key)) fail("Ungültiger Eintrag."); return key; };
       const saveDraft = () => Object.assign(ts, { draft, draftLetters: hide(letters) });
       const at = (i) => { i = Number(i); if (!(i >= 0 && i < draft.length)) fail("Unbekanntes Foto."); return i; };
-      const inPhase1 = () => { if (ph !== 1) fail("Das Wort ist schon festgeschrieben."); };
+      const inPhase1 = () => { if (ph !== 1) fail("Das Wort ist schon bestätigt."); };
       switch (op.type) {
         case "addPhoto":
           inPhase1();
@@ -381,7 +381,7 @@
     fail("Das geht hier nicht.");
   }
   // Foto-Rätsel: Phase 1 Fotos aufnehmen (Entwurf `draft`, für alle sichtbar und synchron, damit sie ein Neuladen
-  // überstehen) und geheim festlegen (Auswahl nur auf dem Handy, bis „Festschreiben“) → Phase 2 raten → Phase 3 Ergebnis.
+  // überstehen) und geheim festlegen (Auswahl nur auf dem Handy, bis „Bestätigen“) → Phase 2 raten → Phase 3 Ergebnis.
   // Das Geheimnis liegt nur verschleiert im Spielstand (hide); die Fotos erscheinen in zufälliger, gleichverteilter
   // Reihenfolge (op.order, im Browser mit shuffle gezogen). „Neue Runde“ leert alles – der Server löscht dann die Fotos.
   //  photoGrid  (Bananenversteck): 1 Foto, geheimes Feld im 4×4-Raster, Tipp = ein Feld; „Trotzdem richtig“ bei falsch
@@ -389,7 +389,7 @@
   //  photoPick  (Steinadler): 3 Fotos, eines ist der Adler, Tipp = ein Foto
   function updatePhotoPuzzle(cfg, ts, op, now, by, ph, round0s) {
     const draft = draftEntries(ts.draft);
-    const inPhase1 = () => { if (ph !== 1) fail("Schon festgeschrieben."); };
+    const inPhase1 = () => { if (ph !== 1) fail("Schon bestätigt."); };
     const keysOf = (order) => {
       const o = (order || []).map(String);
       if (o.length !== draft.length || new Set(o).size !== o.length || draft.some((d) => o.indexOf(d.key) < 0)) fail("Bitte alle Fotos verwenden.");
@@ -503,9 +503,9 @@
         if (!st.draw && !st.winner && (ts.moves || []).length) fail("Die Runde läuft noch.");
         return Object.assign(ts, { moves: [], round: (ts.round || 1) + 1 });
       }
-      // Festgeschriebenes bleibt bis zur Auflösung
+      // Bestätigtes bleibt bis zur Auflösung
       const begun = ts.guess != null || (ts.measures || []).length > 0;
-      if (begun && !result(cfg, ts, now)) fail("Erst auflösen – eine festgeschriebene Schätzung bleibt bis dahin stehen.");
+      if (begun && !result(cfg, ts, now)) fail("Erst auflösen – eine bestätigte Schätzung bleibt bis dahin stehen.");
       return Object.assign(ts, round0);
     }
 
@@ -523,7 +523,7 @@
       case "traffic":
       case "height":
         if (op.type === "fix") {
-          if (ts.guess != null) fail("Die Schätzung ist schon festgeschrieben.");
+          if (ts.guess != null) fail("Die Schätzung ist schon bestätigt.");
           const v = num(op.value, "die Schätzung");
           if (cfg.kind === "height") {
             if (cfg.answer == null) fail("Die Höhe fehlt in content.js.");
@@ -533,7 +533,7 @@
           }
           return Object.assign(ts, { guess: Math.round(v), guessBy: by });
         }
-        if (ts.guess == null) fail("Erst die Schätzung festschreiben.");
+        if (ts.guess == null) fail("Erst die Schätzung bestätigen.");
         if (cfg.kind !== "height" && op.type === "start") {
           if (ts.startedAt != null) fail("Läuft schon.");
           return Object.assign(ts, { startedAt: now, stoppedAt: null, count: 0 });

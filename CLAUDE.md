@@ -29,14 +29,15 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
 3. Nur wenn nötig: auf der Seite „Neues Spiel starten“ bzw. Reset. Ein Reset ist nötig, wenn sich Quest-/Stapel-IDs
    oder die Spielstand-Struktur ändern (dann `SCHEMA` in logic.js erhöhen → App zeigt automatisch „Neue Spielinhalte“).
 Konfiguration in der WSGI-Datei (`pythonanywhere_wsgi.py`): `MADEIRA_PASSWORD`, `MADEIRA_LINK_KEY` (geheimer Link-Teil).
-Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Fotos der Hilfsmittel: `data/photos/` (alles nicht in git). Details: ANLEITUNG.md.
+Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Mitspieler: `data/team.json`, Fotos der Hilfsmittel: `data/photos/` (alles nicht in git). Details: ANLEITUNG.md.
 
 ## Fehlerprotokoll (bei Problemen ZUERST hier nachsehen)
 - Jeder Fehler beim Foto-Upload wird vom Handy automatisch an den Server gemeldet (`POST api/client-error`, ohne Netz in
   localStorage `errQueue` gemerkt und später nachgeschickt) und in **`data/client-errors.log`** gespeichert (auf PythonAnywhere:
   `~/madeira-spiel/data/client-errors.log`; eine JSON-Zeile je Fehler, höchstens 500): `time`, `ua` (Gerät/Browser), `stage`
   (Auswahl / Lesen / Verkleinern / Hochladen / Server / Eintragen / Aufnahme / Kamera), `name`, `message`, `fileName`, `fileType`, `fileSize`,
-  `attempts` (alle Fehlversuche davor), `player`, `detail` (RAM, Bildschirm, Zeit); bei Galerie-Fotos zusätzlich `pick`
+  `attempts` (alle Fehlversuche davor), `player`, `detail` (RAM, Bildschirm, Zeit); bei Galerie-Fotos zusätzlich `readWays`
+  (versuchte Lesewege arrayBuffer / createImageBitmap / Objekt-URL + img mit Ergebnis), `lastModified` (der Datei), `pick`
   (die wievielte Auswahl in dieser Sitzung), `readDelayMs` (ms zwischen change-Event und Lesebeginn) und `sync` (ob während
   „Galerie offen“ bzw. „beim Lesen“ eine Synchronisierung lief – sollte immer „nein“ sein, sie ist dann pausiert).
 - „Kamera: Kamera-Erlaubnis abgelehnt“ / „Kamera: Kamera nicht verfügbar“ (getUserMedia fehlt, kein Gerät, Wechsel
@@ -44,7 +45,8 @@ Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Fotos der Hilf
 - Bisher gefundene Ursachen (Android 10, Chrome, 4 GB): `NotReadableError … permission problems …` = Android entzieht die
   Leseerlaubnis kurz nach der Auswahl (→ Lesen startet synchron im change-Event); „Seite neu geladen“ während der
   Kamera-App (→ Kamera in der Seite); zweite Galerie-Auswahl über dasselbe, wiederverwendete Datei-Feld scheiterte mit
-  `NotReadableError` (→ frisches Datei-Feld je Auswahl).
+  `NotReadableError` (→ frisches Datei-Feld je Auswahl); immer dieselben Dateien scheitern (z. B. 1000160161.jpg), andere
+  gehen – Android gibt bestimmte Bilder nicht heraus (→ andere Lesewege, sonst „Dieses Bild gibt dein Handy nicht frei“).
 - „Auswahl: Seite neu geladen“ = die Seite wurde neu geladen, während Kamera/Galerie offen war (Android hat den Browser wegen
   Speichermangel beendet; erkannt über localStorage `photoPick`).
 - In der App: Einstellungen → **Fehlerprotokoll** (Unterseite `errors`): letzte 30 Einträge (`GET api/client-errors`),
@@ -102,16 +104,25 @@ Vertrauensbasis, keine Beweisfotos.
     Müssen Spieler selbst urteilen, gibt es einen Knopf „Daneben“ (Aktion `penalty`), der sie sofort startet. Nie zwei
     Bestätigungen hintereinander, kein Knopf „Strafzeit starten“. Gesperrt ist nur das Hilfsmittel dieser Quest (Countdown
     sichtbar, auch in der Zeile); alles andere bleibt nutzbar; synchron und übersteht Neuladen.
-  - **Spielerauswahl** zeigt alle Namen, mit denen sich je jemand angemeldet hat (Server speichert sie in `data/players.json`
-    beim Login und beim App-Start/Namenswechsel über `POST api/player`; `players` kommt mit jeder Spielstand-Antwort).
-    Kein Eingabefeld für weitere Namen.
+  - **Ein Handy für alle (Grundregel):** Jedes Hilfsmittel muss mit nur einem Handy komplett spielbar sein (3 Spieler, ein
+    Handy) und weiterhin mit mehreren Handys. Neue Hilfsmittel darauf prüfen.
+  - **Mitspieler** (Einstellungen → „Mitspieler“, Unterseite `team`): 3 frei bearbeitbare Namen, für alle Handys gleich
+    (`data/team.json` auf dem Server, `POST api/team`, `team` kommt mit jeder Spielstand-Antwort → `app.team`; bleibt nach
+    Reset). Noch nie gespeichert → vorausgefüllt mit den ersten bekannten Anmelde-Namen (`data/players.json`).
+    **Alle Hilfsmittel nehmen ihre Namen aus `teamNames()`** (Tic-Tac-Toe, Türen …), nicht aus den Anmeldungen; fehlen
+    Namen, Hinweis + Knopf „Mitspieler eintragen“. Getipptes in den Feldern übersteht die Synchronisierung (`app.teamDraft`,
+    Feld im Fokus wird nicht ersetzt).
+  - **„Handy weitergeben“:** Nach dem Bestätigen von Geheimem (alle `T.isSecret`-Hilfsmittel, Aktion `fix` → Phase 2)
+    zeigt **nur das bestätigende Handy** einen Zwischenbildschirm „Handy weitergeben“ mit „Weiter“ (`toolUI.handoff`,
+    `handoffScreen`); andere Handys gehen direkt zum Raten. Ist die Phase inzwischen weiter, entfällt er automatisch.
+  - Wortwahl: Knöpfe/Meldungen sagen **„Bestätigen“** (nie „Bestätigen“), z. B. „Bestätigen und vergleichen“.
   - **Rollen hängen nie an einem Handy (Grundregel):** Wir spielen als Team und reichen Handys herum. Jeder Schritt eines
-    Hilfsmittels (geheim eingeben, festschreiben, raten, auflösen, neue Runde) geht auf **jedem** eingeloggten Handy, auch auf
+    Hilfsmittels (geheim eingeben, bestätigen, raten, auflösen, neue Runde) geht auf **jedem** eingeloggten Handy, auch auf
     dem, auf dem eingegeben wurde. Keine Auswahl „Wer gibt ein?“, keine Prüfung nach Spieler oder Gerät. Der Ablauf richtet
     sich nur nach der **Phase** des gemeinsamen Zustands (`T.phase`: 1 „Geheim eingeben“ → 2 „Raten“ → 3 „Ergebnis“, als
     Leiste `phaseBar` angezeigt); alle Handys zeigen immer dieselbe Phase.
   - **Geheime Eingaben** (`kind` secretTerms/secretRank/photoWord und die Foto-Rätsel photoGrid/photoNames/photoPick, Logik `updateSecret` in tools.js): In Phase 1 tippt, wer
-    eingibt (die anderen schauen weg). Nach dem Festschreiben ist das Geheimnis auf **allen** Handys verdeckt, auch auf dem
+    eingibt (die anderen schauen weg). Nach dem Bestätigen ist das Geheimnis auf **allen** Handys verdeckt, auch auf dem
     eingebenden. „Anzeigen“ ist auf jedem Handy möglich, aber nur durch **langes Drücken** (0,6 s → 5 s sichtbar, nur lokal)
     mit dem Hinweis „Nur für die Person, die eingegeben hat“ (Vertrauen). „Auflösen“ deckt alles für alle auf (→ Phase 3).
     „Neue Runde“ führt in **jeder** Phase zurück zu Phase 1; Begriffe früherer Runden sind gesperrt (`used`, App weist darauf hin).
@@ -119,13 +130,13 @@ Vertrauensbasis, keine Beweisfotos.
     anderer/fehlender Version verwirft `T.sanitize` automatisch (in `update`, `result`, `phase` und `toolState`) – das
     Hilfsmittel startet dann in Phase 1 statt mit kaputtem Altzustand (z. B. Baumstaben-Wort ohne Fotos aus der Vorversion). Geheimes liegt leicht verschleiert im Spielstand (`hide`/`unhide`, Vertrauensbasis, kein
     echter Schutz). Wortvergleich (`norm`): Groß-/Kleinschreibung, Leerzeichen am Rand und Akzente egal; ä=ae, ö=oe, ü=ue, ß=ss.
-  - Entwürfe vor dem Festschreiben (Sortierung, Auswahl) bleiben nur auf dem jeweiligen Handy; festgeschrieben wird synchron.
+  - Entwürfe vor dem Bestätigen (Sortierung, Auswahl) bleiben nur auf dem jeweiligen Handy; bestätigt wird synchron.
   - **Eingabefelder (Regel für alle Hilfsmittel):** Beim Tippen darf sich die Tastatur nie schließen und der Cursor nie aus
     dem Feld springen. Darum wird ein Feld, in dem gerade getippt wird, **nie ersetzt** (`typingIn`: `rerenderTools` und das
     Neuzeichnen des Hilfsmittel-Fensters werden aufgeschoben und nach Verlassen der Felder nachgeholt – mit ~350 ms
     Verzögerung, damit ein angetippter Knopf nicht unter dem Finger ersetzt wird). Gespeichert wird verzögert (500 ms nach
     der letzten Eingabe, `queueLetter`/`flushLetters`, `toolDo(…, quiet)` ohne Neuzeichnen), beim Verlassen der Felder oder
-    spätestens beim Festschreiben/Verschieben (`flushLetters` vor jeder Aktion). Felder für **einzelne Buchstaben**
+    spätestens beim Bestätigen/Verschieben (`flushLetters` vor jeder Aktion). Felder für **einzelne Buchstaben**
     (`.letter-input`, ohne `maxlength`): nach einem Buchstaben springt der Cursor ins nächste Feld (Tastatur bleibt offen);
     Tippen in ein volles Feld ersetzt den Buchstaben; Löschtaste im leeren Feld springt ins vorherige Feld und löscht dort
     (keydown „Backspace“ + `beforeinput` „deleteContentBackward“ für Android) – gehalten wird so Feld für Feld rückwärts
@@ -180,7 +191,12 @@ Vertrauensbasis, keine Beweisfotos.
     dreht das Canvas nach EXIF (1–8); (2) `createImageBitmap(file, {resizeWidth})`; (3) Bild-Element mit Objekt-URL
     (`img.decode()`, z. B. iPhone/HEIC). Scheitert alles: Dateianfang erneut lesen → nicht lesbar = Stufe „Lesen“, sonst
     kleiner erneut (3 Runden) → „Verkleinern“. Ergebnis jeder Verkleinerung prüfen (nicht leer, `isJpeg`), sonst kleiner/mit
-    weniger Qualität erneut. Fehlgeschlagene Fotos bleiben (nur lokal, `toolUI.photoFailed`) mit „Erneut versuchen“ und
+    weniger Qualität erneut. **Andere Lesewege** (`startRead`): scheitert `file.arrayBuffer()`, werden nacheinander `createImageBitmap(file)`
+    (`readViaBitmap`) und Objekt-URL + `<img>` (`readViaImg`) probiert – beide zeichnen gleich verkleinert (≤ 1.000 px,
+    `drawSmall`) ins Canvas (dann `job.small`); erst wenn alle scheitern, gilt das Bild als nicht lesbar (Meldung „Dieses Bild
+    gibt dein Handy nicht frei. Bitte ein anderes wählen oder die Kamera nutzen.“ + Knopf „Bild neu auswählen“); die anderen
+    Bilder der Auswahl werden trotzdem übernommen. Protokoll: `readWays` (jeder Weg mit Ergebnis), `lastModified`.
+    Fehlgeschlagene Fotos bleiben (nur lokal, `toolUI.photoFailed`) mit „Erneut versuchen“ und
     „Entfernen“ sichtbar; Meldung nennt die Stufe (`PHOTO_STAGES`: Auswahl / Lesen auf dem Handy / Verkleinern / Hochladen
     zum Server / Server hat abgelehnt / Eintragen / Aufnahme), „Details“ zeigen Fehlername, Dateityp, Größe und alle Fehlversuche;
     jeder Fehler landet im Fehlerprotokoll (`reportPhotoError`). Server (`_save_photo`) lehnt nur ab: leer, zu groß
@@ -196,19 +212,19 @@ Vertrauensbasis, keine Beweisfotos.
     (Geschafft → `photos: []`, Neue Runde/Reset → Zustand leer). Foto-IDs nie verschleiern (`hide`), sonst findet der Server sie nicht.
   Aktuelle Hilfsmittel:
   - Countdown: Light Show 10 s, Dreieck auf Dreieck 10 s, Werdet brava … 30 s, Treibgutkreuz 30 s (Start/Abbrechen/Neustart, Ende: Anzeige + Vibration).
-  - „Fahrzeit schätzen und stoppen“ (Seilbahn): Schätzung festschreiben, Stoppuhr, ≤ 15 s daneben, sonst neue Runde.
-  - „Autos zählen“ (Höllen-Verkehr): Schätzung festschreiben, 1-Minuten-Countdown, „+1 Auto“/−1, ≤ 1 daneben, sonst neue Runde.
+  - „Fahrzeit schätzen und stoppen“ (Seilbahn): Schätzung bestätigen, Stoppuhr, ≤ 15 s daneben, sonst neue Runde.
+  - „Autos zählen“ (Höllen-Verkehr): Schätzung bestätigen, 1-Minuten-Countdown, „+1 Auto“/−1, ≤ 1 daneben, sonst neue Runde.
   - „Höhe schätzen“ (Angsthase oder Augenmaß?): echte Höhe **589 m** in content.js (`height`), vorher nie angezeigt; gemeinsame
-    Schätzung festschreiben → sofort „Geschafft!“ (mit echter Höhe) bei ≤ 10 %, sonst „Daneben“ + automatisch 5 min Strafzeit.
+    Schätzung bestätigen → sofort „Geschafft!“ (mit echter Höhe) bei ≤ 10 %, sonst „Daneben“ + automatisch 5 min Strafzeit.
   - „Kompass: Wo liegt Rio?“ (Grüße nach Rio): DeviceOrientation (iPhone: Erlaubnis per Knopf), Wert erst beim Tippen
     „Hier ist Rio!“, Ziel 208° ± **50°**; eine Runde = 2 Messungen, eine Treffer reicht, beide daneben → automatisch 5 min
     Strafzeit; ohne Kompass Hinweis auf Kompass-App + Wert eintragen.
   - „Tic-Tac-Toe-Spielfeld“ (Tic-Tac-São-Bento): 2 Spielende wählen, Sieg/Unentschieden, Zug zurück, neue Runde.
-  - „Fünf geheime Begriffe“ (Was Churchill sah): 5 Begriffe festschreiben; „Tipps: X von 6“ mit „+1 Tipp“/−1; erratene
+  - „Fünf geheime Begriffe“ (Was Churchill sah): 5 Begriffe bestätigen; „Tipps: X von 6“ mit „+1 Tipp“/−1; erratene
     Begriffe werden angetippt (auf jedem Handy; erratene sind für alle sichtbar); ≥ 3 erraten → „Geschafft!“ (Phase 3);
     6 Tipps und < 3 → „Daneben“ + „Neue Runde“, bleibt aber Phase 2, damit der letzte Tipp noch als erraten markiert werden kann.
   - „Geheime Rangfolge“ (Früchteschweiger): Phase 1: 3 Früchte eintragen (Namen später für alle sichtbar, „Früchte ändern“
-    bis zum Festschreiben), geheim sortieren (oben = beste, Entwurf nur lokal) und festschreiben; dabei wird eine zufällige Startreihenfolge für die Ratenden gemischt (Zufallsregel, jede Reihenfolge
+    bis zum Bestätigen), geheim sortieren (oben = beste, Entwurf nur lokal) und bestätigen; dabei wird eine zufällige Startreihenfolge für die Ratenden gemischt (Zufallsregel, jede Reihenfolge
     gleich wahrscheinlich, auch die richtige). Geraten wird **gemeinsam** (synchron auf allen Handys, `guessOrder`)
     und schreiben fest → jede Position grün/rot („richtig wäre: …“); alle richtig = „Geschafft!“, sonst „Daneben“ + „Neue Runde – mit anderen Früchten“.
   - „Buchstaben-Fotos“ (Baumstaben, `kind: "photoWord"`): Phase 1 zeigt oben gut sichtbar „Foto aufnehmen“ (Kamera) und
@@ -219,29 +235,29 @@ Vertrauensbasis, keine Beweisfotos.
     Neuladen. **Dasselbe Bild darf mehrfach vorkommen** (z. B. doppeltes L): keine Prüfung auf doppelte Bilder; „Duplizieren“
     (Aktion `duplicate`) fügt eine Kopie direkt darunter ein, ohne erneutes Hochladen – eigener Schlüssel, eigenes
     Buchstabenfeld, unabhängig verschiebbar/löschbar; Kopien verweisen auf dieselbe Server-Datei, die bleibt, solange
-    irgendein Eintrag sie nutzt (der Server löscht nur Fotos ohne Verweis). Erneutes Wählen desselben Bildes geht ebenfalls. „Festschreiben“ (ab 5 Fotos
+    irgendein Eintrag sie nutzt (der Server löscht nur Fotos ohne Verweis). Erneutes Wählen desselben Bildes geht ebenfalls. „Bestätigen“ (ab 5 Fotos
     mit Buchstaben) setzt das geheime Wort zusammen (keine Wörter früherer Runden). Phase 2 und 3 wie bei der Eingabe
     **untereinander** (`photoRows`: ein Foto pro Zeile, von oben nach unten in Wortreihenfolge, Buchstabenfeld bzw.
-    Buchstabe daneben; kein Raster). Phase 2: Fotos ohne Buchstaben, daneben je ein Feld → „Festschreiben und vergleichen“ (**nur ein Versuch**) → Buchstabe für Buchstabe
+    Buchstabe daneben; kein Raster). Phase 2: Fotos ohne Buchstaben, daneben je ein Feld → „Bestätigen und vergleichen“ (**nur ein Versuch**) → Buchstabe für Buchstabe
     grün/rot, „X von Y Buchstaben richtig“ (Groß/klein egal). Alle richtig = „Geschafft!“ mit Wort (Fotos werden gelöscht);
-    sonst „Daneben“ (`failed`, Phase 3): Wort wird aufgedeckt, **kein** erneutes Festschreiben – nur „Neue Runde“ (neues Wort,
+    sonst „Daneben“ (`failed`, Phase 3): Wort wird aufgedeckt, **kein** erneutes Bestätigen – nur „Neue Runde“ (neues Wort,
     neue Fotos) oder „Trotzdem richtig“ (knappe Fälle; entscheidet, wer das Wort ausgedacht hat).
   - **Foto-Rätsel** (`kind` photoGrid/photoNames/photoPick, `T.isPhotoPuzzle`, Logik `updatePhotoPuzzle`, Oberfläche
     `photoPuzzleBody`): nutzen die Foto-Grundlage unverändert (`photoPicker`, Aktionen `addPhoto`/`removePhoto` in Phase 1,
-    Entwurf `draft` synchron). Geheime Auswahl nur lokal (`toolUI.sel`, `puzzleSel`) bis „Festschreiben“; danach nur
+    Entwurf `draft` synchron). Geheime Auswahl nur lokal (`toolUI.sel`, `puzzleSel`) bis „Bestätigen“; danach nur
     verschleiert (`hide`) im Spielstand, für niemanden sichtbar (kein „Anzeigen“), keine Einträge bei den Aktivitäten.
     Fotos erscheinen beim Raten in zufälliger, gleichverteilter Reihenfolge (`T.shuffle` + `rand32`, Teil der Aktion `fix`).
     Ein Tipp pro Runde → Phase 3. „Neue Runde“ leert den Zustand (Fotos weg → Server löscht sie), Reset ebenso.
     - „Versteck im Foto“ (Bananenversteck, photoGrid): 1 Foto (ein neues ersetzt es), 4×4-Raster darüber; geheimes Feld
       markieren → die anderen tippen ein Feld → „Richtig“ (grün, gefunden → neu verstecken) oder „Falsch“ (rot, Versteck
       grün umrandet; „Nicht gefunden – Quest geschafft!“) + „Trotzdem richtig“ (Aktion `accept`). Zeile: „gefunden“/„Geschafft“.
-    - „Türen zuordnen“ (Gespür für die richtige Tür, photoNames): 3 Fotos, jedem geheim einen anderen Namen (Chips aller
-      bekannten Spieler, `knownNames`); Raten: Fotos links fest, Namen rechts per Ziehen/Pfeilen gemeinsam sortieren
-      (`sortList` sync, Aktion `arrange`, `guessOrder` gemischt) → „Festschreiben“ → je Foto grün/rot („richtig: …“).
+    - „Türen zuordnen“ (Gespür für die richtige Tür, photoNames): 3 Fotos, jedem geheim einen anderen Namen (Chips der
+      3 Mitspieler, `teamNames`); Raten: Fotos links fest, Namen rechts per Ziehen/Pfeilen gemeinsam sortieren
+      (`sortList` sync, Aktion `arrange`, `guessOrder` gemischt) → „Bestätigen“ → je Foto grün/rot („richtig: …“).
     - „Adler-Stein raten“ (Steinadler, photoPick): 3 Fotos, einen geheim als Adler antippen; Raten: Stein antippen →
-      „Festschreiben“ → grün/rot, der Adler wird grün umrandet gezeigt.
+      „Bestätigen“ → grün/rot, der Adler wird grün umrandet gezeigt.
   - „Zwei Kriterien wählen“ (Mit Lorbeeren und UNESCO gekrönt): 10 UNESCO-Kriterien (i)–(x) mit deutscher Kurzfassung
-    (`UNESCO_CRITERIA`), genau 2 wählen und festschreiben; Lösung (ix)+(x) in tools.js, vorher nie gezeigt. Danach wird jedes
+    (`UNESCO_CRITERIA`), genau 2 wählen und bestätigen; Lösung (ix)+(x) in tools.js, vorher nie gezeigt. Danach wird jedes
     gewählte Kriterium einzeln bewertet („(x) richtig“, „(ii) falsch“, grün/rot); nicht gewählte werden nie verraten;
     nicht beide richtig → automatisch 10 min Strafzeit.
   - Links (`LINKS` in tools.js, eigene Zeilen): „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
@@ -268,12 +284,12 @@ Vertrauensbasis, keine Beweisfotos.
   Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett.
 - **Navigation (Regel):** Bereiche Shop / Erfolge / Aktivitäten / Einstellungen (Views `shop`, `stats`, `log`, `settings`) haben
   oben „← Zu den Quests“ (direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
-  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `backup`, `errors`, `end`, `reset`) haben stattdessen zwei Knöpfe:
+  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `team`, `backup`, `errors`, `end`, `reset`) haben stattdessen zwei Knöpfe:
   „← Einstellungen“ und „Zu den Quests“. Wird eine Unterseite durch **Abbrechen einer Sicherheitsabfrage** verlassen
   (Reset, RESET-Eingabe, Urlaub beenden, Belohnungs-Fenster schließen, Wiederherstellen), landet man in den Einstellungen
   (`backToSettings(view)`). Neue Unterseiten der Einstellungen in `SETTINGS_PAGES` eintragen.
 - **Einstellungen** = Menü aus antippbaren Zeilen (Reihenfolge): Spielanleitung · Spieler (angemeldeter Name, „Name ändern“,
-  „Abmelden“) · Spielstand sichern (sichern/wiederherstellen) · Fehlerprotokoll · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
+  „Abmelden“) · Mitspieler (3 Namen für die Hilfsmittel) · Spielstand sichern (sichern/wiederherstellen) · Fehlerprotokoll · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
   „Belohnungen & Zertifikat ansehen“ → Erfolge) · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
   Unterseite; alle Sicherheitsabfragen bleiben.
 - Erfolge (früher „Statistik“): Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);

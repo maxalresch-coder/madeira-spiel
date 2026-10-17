@@ -10,6 +10,7 @@ Aufgaben:
     Spielstand nicht mehr verweist, werden automatisch gelöscht – z. B. nach „Geschafft“, „Neue Runde“ oder Reset)
   * führt ein Fehlerprotokoll für den Foto-Upload (data/client-errors.log, eine JSON-Zeile je Fehler),
     das die Handys automatisch füllen – anzusehen in der App unter Einstellungen → Fehlerprotokoll
+  * speichert die 3 Mitspieler-Namen für die Hilfsmittel (data/team.json, Einstellungen → Mitspieler)
   * merkt sich alle Namen, mit denen sich jemand angemeldet hat (data/players.json),
     z. B. für die Spielerauswahl beim Tic-Tac-Toe (bleibt auch nach einem Reset)
 
@@ -41,7 +42,7 @@ PHOTO_ID = re.compile(r"p[0-9a-f]{24}")
 PHOTO_GRACE = 120               # Sekunden: frisch hochgeladene Fotos nicht sofort wieder löschen
 ERRLOG_KEEP = 500               # so viele Einträge behält das Fehlerprotokoll höchstens
 ERRLOG_FIELDS = ("stage", "name", "message", "fileName", "fileType", "fileSize", "attempts", "player", "detail",
-                 "pick", "readDelayMs", "sync")
+                 "pick", "readDelayMs", "sync", "readWays", "lastModified")
 _lock = threading.Lock()
 
 
@@ -107,6 +108,41 @@ def _add_player(conf, name):
                 json.dump(names, f, ensure_ascii=False)
             os.replace(tmp, _players_path(conf))
         return names
+
+
+def _team_path(conf):
+    return os.path.join(conf["data_dir"], "team.json")
+
+
+def _load_team(conf):
+    """Die 3 Mitspieler-Namen (Einstellungen → Mitspieler), die alle Hilfsmittel verwenden. Noch nie gespeichert:
+    vorausgefüllt mit den ersten bekannten Anmelde-Namen (fehlende Plätze leer)."""
+    try:
+        with open(_team_path(conf), encoding="utf-8") as f:
+            names = json.load(f)
+        if isinstance(names, list) and len(names) == 3 and all(isinstance(n, str) for n in names):
+            return {"names": names, "saved": True}
+    except (FileNotFoundError, ValueError):
+        pass
+    known = _load_players(conf)[:3]
+    return {"names": known + [""] * (3 - len(known)), "saved": False}
+
+
+def _save_team(conf, names):
+    if not isinstance(names, list) or len(names) != 3:
+        return "Bitte genau 3 Namen."
+    clean = [" ".join(str(n or "").split())[:24] for n in names]
+    if any(not n for n in clean):
+        return "Bitte alle 3 Namen eintragen."
+    if len(set(n.lower() for n in clean)) != 3:
+        return "Bitte 3 verschiedene Namen."
+    with _lock:
+        os.makedirs(conf["data_dir"], exist_ok=True)
+        tmp = _team_path(conf) + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(clean, f, ensure_ascii=False)
+        os.replace(tmp, _team_path(conf))
+    return None
 
 
 def _photo_dir(conf):
@@ -293,6 +329,14 @@ def _api(path, environ, start_response, conf):
                 pass
         return _json(start_response, "200 OK", {"ok": True})
 
+    # Mitspieler (3 Namen für alle Hilfsmittel) speichern – gilt für alle Handys, bleibt auch nach einem Reset
+    if path == "team" and method == "POST":
+        body = _read_body(environ) or {}
+        err = _save_team(conf, body.get("names"))
+        if err:
+            return _json(start_response, "400 Bad Request", {"error": err})
+        return _json(start_response, "200 OK", {"team": _load_team(conf)})
+
     # Name melden (beim App-Start und nach „Name ändern“) – auch für schon Angemeldete
     if path == "player" and method == "POST":
         body = _read_body(environ) or {}
@@ -310,8 +354,8 @@ def _api(path, environ, start_response, conf):
                     pass
         if since is not None and since == doc["version"]:
             return _json(start_response, "200 OK", {"version": doc["version"], "unchanged": True, "now": _now_ms(),
-                                                    "players": _load_players(conf)})
-        return _json(start_response, "200 OK", dict(doc, now=_now_ms(), players=_load_players(conf)))
+                                                    "players": _load_players(conf), "team": _load_team(conf)})
+        return _json(start_response, "200 OK", dict(doc, now=_now_ms(), players=_load_players(conf), team=_load_team(conf)))
 
     if path == "state" and method == "POST":
         body = _read_body(environ)

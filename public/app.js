@@ -56,6 +56,7 @@
     const t1 = Date.now();
     if (data && typeof data.now === "number" && t1 - t0 < 3000) app.clockOffset = data.now - (t0 + t1) / 2;
     if (data && Array.isArray(data.players)) app.players = data.players;
+    if (data && data.team && Array.isArray(data.team.names)) app.team = data.team;
     if (res.status === 401 && path !== "login") { logout(); throw new Error("Bitte neu anmelden."); }
     return { status: res.status, data };
   }
@@ -278,7 +279,7 @@
     $("#hdr-rank").textContent = s.rankName;
     $("#rb-fig").innerHTML = rankFigure(s.rank, "fig-sm");
     const views = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats, settings: viewSettings,
-      help: viewHelp, player: viewPlayer, backup: viewBackup, errors: viewErrors, end: viewEnd, reset: viewReset };
+      help: viewHelp, player: viewPlayer, team: viewTeam, backup: viewBackup, errors: viewErrors, end: viewEnd, reset: viewReset };
     const view = views[app.view] ? app.view : "home";
     $$(".hdr-btn[data-go]").forEach((b) => b.classList.toggle("active", b.dataset.go === view || (SETTINGS_PAGES.indexOf(view) >= 0 && b.dataset.go === "settings")));
     const body = app.state.ended && view === "stats" ? viewEnded(s) : views[view](s);
@@ -288,7 +289,9 @@
         ? '<div class="back-row"><button class="back-btn" data-go="settings">' + icon("arrow-left") + ' Einstellungen</button>' +
           '<button class="back-btn back-home" data-go="home">' + icon("map-pinned") + " Zu den Quests</button></div>"
         : '<button class="back-btn" data-go="home">' + icon("arrow-left") + " Zu den Quests</button>";
-    $("#view").innerHTML = back + body;
+    // Mitspieler: Feld, in dem gerade getippt wird, nicht ersetzen (Tastatur bleibt offen)
+    const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("team-input");
+    if (!(typing && app.view === "team")) $("#view").innerHTML = back + body;
     if (view === "home") mountMap();
     app.modals.forEach((m) => m.refresh());
   }
@@ -306,7 +309,7 @@
   }
 
   // Unterseiten der Einstellungen (Abbrechen einer Sicherheitsabfrage führt dorthin zurück)
-  const SETTINGS_PAGES = ["help", "player", "backup", "errors", "end", "reset"];
+  const SETTINGS_PAGES = ["help", "player", "team", "backup", "errors", "end", "reset"];
   const backToSettings = (view) => { if (app.view === view) go("settings"); };
 
   // Bereiche (Shop, Erfolge, Aktivitäten, Einstellungen und ihre Unterseiten) öffnen sich als eigene Seite; die Zurück-Taste
@@ -645,7 +648,7 @@
   // in einem eigenen Fenster. Der Zustand liegt in state.tools und wird über den Server geteilt.
   // Änderungen laufen über eine Warteschlange, damit schnelles Antippen (z. B. „+1 Auto“) nichts
   // verliert. Hilfsmittel haken nie ab und geben keine Punkte.
-  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, sel: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false };
+  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, sel: {}, handoff: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false };
   const compass = { on: false, failed: "", samples: [], last: 0 };
   const tcfg = (qid) => T.config(qid, C);
   function serverNow() { return Date.now() + app.clockOffset; }
@@ -751,6 +754,10 @@
         '<div class="tool-big" data-tick="down" data-end="' + ts.penaltyUntil + '">' + mmss(left) + "</div>" +
         '<div class="small">Nur dieses Hilfsmittel wartet – alles andere könnt ihr weiter nutzen. Danach ist es automatisch wieder frei.</div></div></div>';
     }
+    if (toolUI.handoff[qid]) {
+      if (T.isSecret(cfg) && T.phase(cfg, ts) === 2) return handoffScreen();
+      delete toolUI.handoff[qid]; // inzwischen weiter (z. B. anderes Handy) – nicht mehr nötig
+    }
     const res = T.result(cfg, ts, now);
     switch (cfg.kind) {
       case "countdown": {
@@ -773,8 +780,8 @@
       case "cablecar": {
         if (ts.guess == null) {
           return '<label class="tool-label">Eure Schätzung: Wie viele Sekunden braucht die Seilbahn?</label>' +
-            '<div class="tool-row">' + tInput(qid, "guess", "z. B. 90") + '<span class="tool-unit">s</span>' + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary") + "</div>" +
-            '<p class="muted small">Festgeschrieben ist festgeschrieben – bis zur Auflösung nicht mehr änderbar.</p>';
+            '<div class="tool-row">' + tInput(qid, "guess", "z. B. 90") + '<span class="tool-unit">s</span>' + tBtn("fix", icon("lock") + " Bestätigen", "btn-primary") + "</div>" +
+            '<p class="muted small">Bestätigt ist bestätigt – bis zur Auflösung nicht mehr änderbar.</p>';
         }
         let h = tFixed("Schätzung", ts.guess + " Sekunden", ts.guessBy);
         if (ts.startedAt == null) return h + tBtn("start", icon("play") + " Stoppuhr starten", "btn-primary btn-block tool-tap");
@@ -789,7 +796,7 @@
       case "traffic": {
         if (ts.guess == null) {
           return '<label class="tool-label">Eure gemeinsame Schätzung: Wie viele Autos fahren in einer Minute über die Brücke?</label>' +
-            '<div class="tool-row">' + tInput(qid, "guess", "z. B. 8") + '<span class="tool-unit">Autos</span>' + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary") + "</div>";
+            '<div class="tool-row">' + tInput(qid, "guess", "z. B. 8") + '<span class="tool-unit">Autos</span>' + tBtn("fix", icon("lock") + " Bestätigen", "btn-primary") + "</div>";
         }
         let h = tFixed("Schätzung", ts.guess + (ts.guess === 1 ? " Auto" : " Autos"), ts.guessBy);
         if (ts.startedAt == null) return h + tBtn("start", icon("play") + " 1-Minuten-Countdown starten", "btn-primary btn-block tool-tap");
@@ -808,7 +815,7 @@
         if (ts.guess == null) {
           return (ts.lastMiss ? '<p class="muted small">Letzter Versuch: ' + nf(ts.lastMiss.guess) + " m – daneben.</p>" : "") +
             '<label class="tool-label">Die beiden Ratenden: eure gemeinsame Schätzung, wie hoch ihr hier oben seid</label>' +
-            '<div class="tool-row">' + tInput(qid, "guess", "z. B. 500", "decimal") + '<span class="tool-unit">m</span>' + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary") + "</div>" +
+            '<div class="tool-row">' + tInput(qid, "guess", "z. B. 500", "decimal") + '<span class="tool-unit">m</span>' + tBtn("fix", icon("lock") + " Bestätigen", "btn-primary") + "</div>" +
             '<p class="muted small">Die App sagt sofort, ob ihr höchstens ' + cfg.tolerancePct + " % daneben liegt. Wenn nicht, startet automatisch die Strafzeit (" + cfg.penalty + " Minuten).</p>";
         }
         return tFixed("Schätzung", nf(ts.guess) + " m", ts.guessBy) +
@@ -855,11 +862,11 @@
       case "tictactoe": {
         if (!ts.players) {
           const sel = toolUI.ttt.sel;
-          const chips = knownNames().map((n) => {
+          const chips = teamNames().map((n) => {
             const i = sel.indexOf(n);
             return '<button class="chip' + (i >= 0 ? " on" : "") + '" data-tool-ui="ttt-pick" data-name="' + esc(n) + '">' + (i >= 0 ? (i === 0 ? "X · " : "O · ") : "") + esc(n) + "</button>";
           }).join("");
-          return '<p class="tool-label">Wer spielt? Zwei Personen antippen – die erste spielt X, die zweite O. Die dritte Person ist Schiedsrichter.</p>' +
+          return (teamNames().length < 2 ? teamHint(3) : "") + '<p class="tool-label">Wer spielt? Zwei Personen antippen – die erste spielt X, die zweite O. Die dritte Person ist Schiedsrichter.</p>' +
             '<div class="chips">' + chips + "</div>" +
             tBtn("players", icon("play") + " Spiel starten", "btn-primary btn-block", sel.length < 2 ? " disabled" : "");
         }
@@ -882,7 +889,7 @@
 
   // ---- Geheime Eingaben (Was Churchill sah, Früchteschweiger, Baumstaben)
   // Rollen hängen nie an einem Handy: Handys werden herumgereicht, jeder Schritt geht auf jedem Handy. Der Ablauf
-  // folgt nur der gemeinsamen Phase (T.phase): 1 Geheim eingeben → 2 Raten → 3 Ergebnis. Nach dem Festschreiben ist
+  // folgt nur der gemeinsamen Phase (T.phase): 1 Geheim eingeben → 2 Raten → 3 Ergebnis. Nach dem Bestätigen ist
   // das Geheimnis überall verdeckt; „Anzeigen“ (lange drücken, 5 s, nur auf diesem Handy) ist für die Person gedacht,
   // die eingegeben hat – wir vertrauen uns. „Auflösen“ deckt alles für alle auf.
   const peeking = (qid) => (toolUI.peek[qid] || 0) > serverNow();
@@ -903,7 +910,7 @@
   const lookAway = '<p class="tool-wait">' + icon("eye-off") + " Wer eingibt, tippt hier – die anderen schauen weg. Das geht auf jedem Handy.</p>";
 
   // Sortierbare Liste: Ziehen am Griff oder Pfeile hoch/runter. Ohne sync bleibt die Reihenfolge bis zum
-  // Festschreiben nur auf diesem Handy (toolUI.order[key]); mit sync wird sie geteilt (Aktion „arrange“).
+  // Bestätigen nur auf diesem Handy (toolUI.order[key]); mit sync wird sie geteilt (Aktion „arrange“).
   function sortList(key, items, sync) {
     let order = sync ? items.slice() : toolUI.order[key];
     if (!order || order.length !== items.length || items.some((x) => order.indexOf(x) < 0)) order = toolUI.order[key] = items.slice();
@@ -964,7 +971,7 @@
     if (ph === 1) {
       let h = phaseBar(1) + lookAway + '<p class="tool-label">' + cfg.count + " Begriffe: Was findest du an der Bucht besonders schön?</p>";
       for (let i = 0; i < cfg.count; i++) h += tInput(qid, "t" + i, "Begriff " + (i + 1), "text");
-      return h + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary btn-block") + '<p class="muted small">Begriffe aus früheren Runden zählen nicht noch einmal.</p>';
+      return h + tBtn("fix", icon("lock") + " Bestätigen", "btn-primary btn-block") + '<p class="muted small">Begriffe aus früheren Runden zählen nicht noch einmal.</p>';
     }
     const terms = T.unhide(ts.secret) || [], res = T.result(cfg, ts, now), guessed = ts.guessed || [];
     const show = ts.revealed || peeking(qid);
@@ -1002,7 +1009,7 @@
     if (ph === 1) {
       const key = qid + ":set:" + round;
       return h + lookAway + '<p class="tool-label">Geheime Rangfolge – oben die beste. Am Griff ziehen oder mit den Pfeilen verschieben.</p>' +
-        sortList(key, ts.fruits) + tBtn("fix", icon("lock") + " Festschreiben", "btn-primary btn-block", ' data-key="' + esc(key) + '"') +
+        sortList(key, ts.fruits) + tBtn("fix", icon("lock") + " Bestätigen", "btn-primary btn-block", ' data-key="' + esc(key) + '"') +
         tBtn("editFruits", "Früchte ändern", "btn-ghost btn-block");
     }
     const order = T.unhide(ts.secret) || [];
@@ -1017,13 +1024,13 @@
     if (ts.revealed) return h + '<p class="tool-label">Aufgelöst – die geheime Rangfolge (oben die beste):</p>' + orderList() + newRoundBtn(true, "Neue Runde – mit anderen Früchten");
     h += '<p class="tool-label">Ratet die Rangfolge – oben die beste. Ihr sortiert gemeinsam: alle Handys zeigen dieselbe Reihenfolge.</p>' +
       sortList(qid + ":guess:" + round, ts.guessOrder || ts.fruits, true) +
-      tBtn("guess", icon("lock") + " Festschreiben und vergleichen", "btn-primary btn-block");
+      tBtn("guess", icon("lock") + " Bestätigen und vergleichen", "btn-primary btn-block");
     if (peeking(qid)) h += '<p class="tool-label">Geheime Rangfolge:</p>' + orderList();
     return h + peekBtn(qid) + revealBtn(ts) + newRoundBtn(false, "Neue Runde");
   }
 
   // ---- Foto-Rätsel (Bananenversteck, Türen, Steinadler) auf der Foto-Grundlage. Phase 1: Fotos + geheime Festlegung
-  // (Auswahl nur auf diesem Handy bis „Festschreiben“), Phase 2: raten, Phase 3: Ergebnis. Jedes Handy kann alles.
+  // (Auswahl nur auf diesem Handy bis „Bestätigen“), Phase 2: raten, Phase 3: Ergebnis. Jedes Handy kann alles.
   const puzzleSel = (qid, ts) => { const k = qid + ":" + (ts.round || 1) + ":" + T.phase(tcfg(qid), ts); return (toolUI.sel[k] = toolUI.sel[k] || { names: {} }); };
   function gridPhoto(cfg, photo, marks, tappable) {
     let cells = "";
@@ -1035,10 +1042,16 @@
     return '<div class="grid-photo">' + photoImg(photo, "gp-img") + '<div class="gp-cells" style="--n:' + cfg.grid + '">' + cells + "</div></div>";
   }
   const trashBtn = (i) => '<button class="sort-btn" data-tool-act="removePhoto" data-i="' + i + '" aria-label="Foto löschen">' + icon("trash-2") + "</button>";
+  // Nach dem Bestätigen von Geheimem (nur auf dem Handy, auf dem bestätigt wurde): erst weitergeben, dann raten
+  function handoffScreen() {
+    return '<div class="handoff">' + icon("smartphone") + "<strong>Handy weitergeben</strong>" +
+      '<p class="muted">Bestätigt und verdeckt. Jetzt sind die Ratenden dran.</p></div>' +
+      '<button class="btn btn-primary btn-block" data-tool-ui="handoff-ok">' + icon("arrow-right") + " Weiter</button>";
+  }
   function photoPuzzleBody(qid, cfg, ts, now) {
     const ph = T.phase(cfg, ts), sel = puzzleSel(qid, ts), draft = T.draftEntries(ts.draft);
-    const fixBtn = (ok, label) => tBtn("fix", icon("lock") + " " + (label || "Festschreiben"), "btn-primary btn-block", ok ? "" : " disabled");
-    const guessBtn = (ok) => tBtn("guess", icon("lock") + " Festschreiben", "btn-primary btn-block", ok ? "" : " disabled");
+    const fixBtn = (ok, label) => tBtn("fix", icon("lock") + " " + (label || "Bestätigen"), "btn-primary btn-block", ok ? "" : " disabled");
+    const guessBtn = (ok) => tBtn("guess", icon("lock") + " Bestätigen", "btn-primary btn-block", ok ? "" : " disabled");
     if (ph === 1) {
       let h = phaseBar(1) + lookAway;
       const need = cfg.photos - draft.length;
@@ -1056,9 +1069,9 @@
           fixBtn(!need && draft.some((d) => d.key === sel.key));
       }
       // photoNames
-      const names = knownNames(), used = sel.names;
+      const names = teamNames(), used = sel.names;
       h += '<p class="tool-label">3 Türen fotografieren, jeder Tür geheim einen Namen geben.</p>' + (need > 0 ? photoPicker(qid, true) : "");
-      if (names.length < cfg.photos) h += '<p class="tool-warn">' + icon("users") + " Erst " + names.length + " Namen bekannt – alle müssen sich einmal anmelden.</p>";
+      if (names.length < cfg.photos) h += teamHint(cfg.photos);
       h += '<ol class="photo-rows">' + draft.map((d, i) => '<li class="pr-item"><span class="pr-no">' + (i + 1) + "</span>" + photoImg(d.photo, "pr-photo") +
         '<span class="pr-side"><span class="chips name-chips">' + names.map((n) => '<button class="chip' + (used[d.key] === n ? " on" : "") + '" data-tool-ui="name" data-key="' + esc(d.key) +
           '" data-name="' + esc(n) + '" aria-pressed="' + (used[d.key] === n) + '">' + esc(n) + "</button>").join("") + "</span>" + trashBtn(i) + "</span></li>").join("") + "</ol>";
@@ -1126,8 +1139,8 @@
             '<span class="ps-move">' + pbtn("movePhoto", "chevron-up", i, -1, "nach vorne", i === 0) + pbtn("movePhoto", "chevron-down", i, 1, "nach hinten", i === draft.length - 1) + "</span>" +
             '<span class="ps-move">' + pbtn("duplicate", "copy", i, 0, "Duplizieren (Kopie darunter, z. B. für doppelte Buchstaben)", draft.length >= 20) +
             pbtn("removePhoto", "trash-2", i, 0, "Foto löschen") + "</span></li>").join("") + "</ol>" : "") +
-        tBtn("fix", icon("lock") + " Festschreiben" + (draft.length ? " (" + draft.length + " Buchstaben)" : ""), "btn-primary btn-block", ready ? "" : " disabled") +
-        '<p class="muted small">' + (draft.length < cfg.minLetters ? "Noch " + (cfg.minLetters - draft.length) + " Foto" + (cfg.minLetters - draft.length === 1 ? "" : "s") + " bis zum Festschreiben. " : "") +
+        tBtn("fix", icon("lock") + " Bestätigen" + (draft.length ? " (" + draft.length + " Buchstaben)" : ""), "btn-primary btn-block", ready ? "" : " disabled") +
+        '<p class="muted small">' + (draft.length < cfg.minLetters ? "Noch " + (cfg.minLetters - draft.length) + " Foto" + (cfg.minLetters - draft.length === 1 ? "" : "s") + " bis zum Bestätigen. " : "") +
           "Fotos bleiben auch beim Neuladen der Seite erhalten. Wörter aus früheren Runden zählen nicht noch einmal.</p>" +
         (draft.length ? newRoundBtn(false, "Neu beginnen (alle Fotos verwerfen)") : "");
     }
@@ -1158,7 +1171,7 @@
     h += '<p class="tool-label">Tragt neben jedes Foto einen Buchstaben ein (von oben nach unten). Es gibt nur einen Versuch – danach wird verglichen.</p>' +
       photoRows((ts.photos || []).map((pid, i) => ({ photo: pid,
         html: letterInput('data-keep="' + qid + ":g" + i + '"', "", i) + (peeking(qid) ? '<span class="pr-letter">' + esc(word[i]) + "</span>" : "") }))) +
-      tBtn("guess", icon("lock") + " Festschreiben und vergleichen", "btn-primary btn-block");
+      tBtn("guess", icon("lock") + " Bestätigen und vergleichen", "btn-primary btn-block");
     return h + peekBtn(qid) + revealBtn(ts) + newRoundBtn(false, "Neue Runde – neues Wort, neue Fotos");
   }
 
@@ -1298,8 +1311,13 @@
   // Neuzeichnen, jeder Synchronisierung und jedem Zurücksetzen des Feldes (startRead). Bis 15 MB wird die Datei sofort
   // vollständig in den Speicher gelesen; größere werden später direkt aus der Datei verkleinert dekodiert.
   const MEM_READ = 15 * 1024 * 1024;
-  const READ_HINT = "Bild konnte nicht gelesen werden. Bitte noch einmal auswählen oder die Kamera nutzen.";
+  const READ_HINT = "Dieses Bild gibt dein Handy nicht frei. Bitte ein anderes wählen oder die Kamera nutzen.";
+  // Manche Bilder (z. B. aus App-Ordnern oder der Cloud) gibt Android nicht per arrayBuffer heraus. Dann werden
+  // nacheinander weitere Lesewege probiert: createImageBitmap(file), dann Objekt-URL + <img> – beide zeichnen das Bild
+  // gleich verkleinert (≤ 1.000 px) in ein Canvas. Erst wenn alle scheitern, gilt das Bild als nicht lesbar.
+  // ways = welche Wege versucht wurden und mit welchem Ergebnis (fürs Fehlerprotokoll).
   function startRead(f) {
+    const ways = [];
     let p;
     try {
       if (!f.size) p = Promise.reject(Object.assign(new Error("Die Datei ist leer (0 Byte)"), { name: "EmptyFile" }));
@@ -1310,7 +1328,40 @@
         });
       } else p = f.slice(0, 256 * 1024).arrayBuffer().then(() => f); // groß: Zugriff sofort sichern, später direkt aus der Datei
     } catch (e) { p = Promise.reject(e); }
-    return p.then((data) => ({ data }), (e) => ({ e }));
+    return p.then((data) => { ways.push("arrayBuffer: ok"); return { data, ways }; }, async (e) => {
+      ways.push("arrayBuffer: " + errText(e));
+      if (e && e.name === "EmptyFile") return { e, ways };
+      for (const [way, fn] of [["createImageBitmap", readViaBitmap], ["Objekt-URL + img", readViaImg]]) {
+        try { const small = await fn(f); ways.push(way + ": ok"); return { data: small, small: true, ways }; } catch (e2) { ways.push(way + ": " + errText(e2)); }
+      }
+      return { e, ways };
+    });
+  }
+  // Bild-Quelle verkleinert (lange Seite ≤ 1.000 px) als JPEG ins Canvas zeichnen; Ergebnis prüfen
+  async function drawSmall(src, w, h) {
+    const sc = Math.min(1, PHOTO_SIDE / Math.max(w, h)), c = document.createElement("canvas");
+    try {
+      c.width = Math.max(1, Math.round(w * sc)); c.height = Math.max(1, Math.round(h * sc));
+      c.getContext("2d").drawImage(src, 0, 0, c.width, c.height);
+      const out = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.82));
+      if (!out || out.size < 200 || !(await isJpeg(out))) throw Object.assign(new Error("kein gültiges Bild"), { name: "LeeresBild" });
+      return out;
+    } finally { c.width = 0; c.height = 0; }
+  }
+  async function readViaBitmap(f) {
+    if (!window.createImageBitmap) throw Object.assign(new Error("fehlt"), { name: "NichtUnterstützt" });
+    let bm;
+    try { bm = await createImageBitmap(f, { resizeWidth: PHOTO_SIDE, resizeQuality: "high" }); } catch (e) { if (e && e.name === "TypeError") bm = await createImageBitmap(f); else throw e; }
+    try { return await drawSmall(bm, bm.width, bm.height); } finally { bm.close(); }
+  }
+  async function readViaImg(f) {
+    const url = URL.createObjectURL(f), img = new Image();
+    try {
+      img.src = url;
+      await img.decode();
+      if (!img.naturalWidth) throw Object.assign(new Error("Bild hat keine Größe"), { name: "DecodeError" });
+      return await drawSmall(img, img.naturalWidth, img.naturalHeight);
+    } finally { img.removeAttribute("src"); URL.revokeObjectURL(url); }
   }
   function onPhotosChosen(el, ev) {
     const qid = toolUI.photoTarget, replace = toolUI.photoReplace, picking = toolUI.picking;
@@ -1324,7 +1375,7 @@
     const pick = toolUI.pickNo = (toolUI.pickNo || 0) + 1; // die wievielte Auswahl in dieser Sitzung
     const jobs = files.map((f) => {
       const delay = Math.max(0, Math.round(performance.now() - evT));
-      const job = { lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, err: null, notes: [], pick, readDelayMs: delay };
+      const job = { lid: newKey(), file: f, name: f.name, type: f.type, size: f.size, lastModified: f.lastModified, err: null, notes: [], pick, readDelayMs: delay };
       job.read = startRead(f).then((r) => {
         job.sync = "Galerie offen: " + (picking && picking.sync ? syncSince(picking.sync) : "?") + "; beim Lesen: " + syncSince(atChange);
         return r;
@@ -1371,6 +1422,8 @@
     if (!job.data && job.read) {
       const r = await job.read;
       job.read = null;
+      job.readWays = r.ways;
+      if (r.small) job.small = true;
       if (r.e) throw new PhotoError("read", r.e.name || "Lesefehler", r.e.message || "",
         r.e.name === "EmptyFile" ? "Liegt das Bild nur in der Cloud? Bitte erst auf dem Handy öffnen (herunterladen) und neu auswählen." : READ_HINT);
       job.data = r.data;
@@ -1380,7 +1433,7 @@
     const id = await uploadPhoto(small);
     const op = { type: "addPhoto", photo: id, key: newKey() };
     if (job.at != null) op.at = job.at;
-    if (!toolDo(qid, op, true)) throw new PhotoError("add", "Nicht eingetragen", "Das Foto passt gerade nicht in die Runde (z. B. schon festgeschrieben oder 20 Fotos).");
+    if (!toolDo(qid, op, true)) throw new PhotoError("add", "Nicht eingetragen", "Das Foto passt gerade nicht in die Runde (z. B. schon bestätigt oder 20 Fotos).");
     job.data = null; job.file = null; // Speicher freigeben
   }
   function failPhotoJob(qid, job, e) {
@@ -1543,6 +1596,7 @@
     const entry = { stage: STAGE_LOG[e.stage] || e.stage, name: e.name || "", message: e.message || "", fileName: job.name || "",
       fileType: job.type || "", fileSize: job.size || 0, attempts: (job.notes || []).join("; "), player: app.name || "",
       pick: job.pick || "", readDelayMs: job.readDelayMs != null ? job.readDelayMs : "", sync: job.sync || "",
+      readWays: (job.readWays || []).join("; "), lastModified: job.lastModified ? new Date(job.lastModified).toISOString() : "",
       detail: [navigator.deviceMemory ? "RAM ~" + navigator.deviceMemory + " GB" : "", screen.width + "×" + screen.height, new Date().toISOString()].filter(Boolean).join(" · ") };
     let q = [];
     try { q = JSON.parse(store.get("errQueue") || "[]"); } catch (x) { q = []; }
@@ -1769,7 +1823,7 @@
       '<p class="tool-label">Welche ' + cfg.pick + " Kriterien erfüllt der Lorbeerwald? Genau " + cfg.pick + " antippen. Ist die Auswahl falsch, startet automatisch die Strafzeit (" + cfg.penalty + " Minuten).</p>" +
       '<div class="crit-list">' + T.UNESCO_CRITERIA.map((c) => '<button class="crit' + (sel.indexOf(c.id) >= 0 ? " on" : "") + '" data-tool-ui="crit" data-id="' + c.id + '" aria-pressed="' + (sel.indexOf(c.id) >= 0) + '">' +
         '<span class="crit-id">(' + c.id + ")</span><span>" + esc(c.text) + "</span></button>").join("") + "</div>" +
-      tBtn("fix", icon("lock") + " Auswahl festschreiben (" + sel.length + " von " + cfg.pick + ")", "btn-primary btn-block", sel.length === cfg.pick ? "" : " disabled");
+      tBtn("fix", icon("lock") + " Auswahl bestätigen (" + sel.length + " von " + cfg.pick + ")", "btn-primary btn-block", sel.length === cfg.pick ? "" : " disabled");
   }
 
   // „(x) richtig, (ii) falsch“ – bewertet nur die gewählten Kriterien
@@ -1780,15 +1834,14 @@
     }).join(" ");
   }
 
-  // Alle Spieler, die sich je angemeldet haben (merkt sich der Server), dazu Namen aus den Aktivitäten
-  function knownNames() {
-    const m = new Map();
-    const add = (n) => { n = String(n || "").trim(); if (n && !m.has(n.toLowerCase())) m.set(n.toLowerCase(), n); };
-    (app.players || []).forEach(add);
-    add(app.name);
-    (app.state.log || []).forEach((e) => add(e.by));
-    return Array.from(m.values());
+  // Die 3 Mitspieler (Einstellungen → Mitspieler, für alle Handys gleich) – alle Hilfsmittel nehmen diese Namen.
+  // So geht alles auch mit nur einem Handy; niemand muss sich extra anmelden.
+  function teamNames() {
+    return ((app.team && app.team.names) || []).map((n) => String(n || "").trim()).filter(Boolean);
   }
+  // Hinweis im Hilfsmittel, wenn noch Namen fehlen
+  const teamHint = (need) => '<p class="tool-warn">' + icon("users") + " Es fehlen noch Namen – bitte " + need + " Mitspieler eintragen.</p>" +
+    '<button class="btn btn-ghost btn-block" data-tool-ui="team-open">' + icon("users") + " Mitspieler eintragen</button>";
 
   // Hilfsmittel und ihre Zeilen neu zeichnen, ohne halb getippte Eingaben zu verlieren
   function rerenderTools(qid) {
@@ -1857,7 +1910,7 @@
 
   // ---- Eingabefelder (Regel für alle Hilfsmittel): Während getippt wird, wird kein Feld ersetzt – sonst schließt sich
   // die Tastatur. Gespeichert wird verzögert (500 ms nach der letzten Eingabe), beim Verlassen der Felder oder beim
-  // Festschreiben; aufgeschobenes Neuzeichnen wird danach nachgeholt (focusout in openTool).
+  // Bestätigen; aufgeschobenes Neuzeichnen wird danach nachgeholt (focusout in openTool).
   const typingIn = (el) => {
     const a = document.activeElement;
     return !!(a && el && el.contains(a) && a.matches("input, textarea") && a.type !== "file");
@@ -1919,6 +1972,8 @@
     const input = (key) => $('[data-keep="' + qid + ":" + key + '"]', t);
     const ui = b.dataset.toolUi;
     if (ui === "compass-on") return enableCompass();
+    if (ui === "team-open") { closeAll(); return go("team"); }
+    if (ui === "handoff-ok") { delete toolUI.handoff[qid]; return rerenderTools(qid); }
     if (ui === "peek-off") { toolUI.peek[qid] = 0; return rerenderTools(qid); }
     if (ui === "cam-open") return openCamera(qid);
     if (ui === "photo-camera") return choosePhotos(qid, "camera");
@@ -1938,7 +1993,7 @@
       if (i >= 0) sel.splice(i, 1); else if (sel.length < tcfg(qid).pick) sel.push(b.dataset.id); else toast("Genau " + tcfg(qid).pick + " – erst eines abwählen.", true);
       return rerenderTools(qid);
     }
-    if (ui === "cell" || ui === "pick" || ui === "name") { // Foto-Rätsel: Auswahl nur auf diesem Handy bis „Festschreiben“
+    if (ui === "cell" || ui === "pick" || ui === "name") { // Foto-Rätsel: Auswahl nur auf diesem Handy bis „Bestätigen“
       const sel = puzzleSel(qid, toolState(qid));
       if (ui === "cell") sel.cell = +b.dataset.cell;
       else if (ui === "pick") { if (b.dataset.key) sel.key = b.dataset.key; else sel.i = +b.dataset.i; }
@@ -1958,7 +2013,7 @@
     const act = b.dataset.toolAct;
     const op = { type: act };
     const kind = tcfg(qid).kind;
-    flushLetters(qid); // gemerkte Buchstaben zuerst speichern (Festschreiben, Verschieben, Löschen …)
+    flushLetters(qid); // gemerkte Buchstaben zuerst speichern (Bestätigen, Verschieben, Löschen …)
     let clear = null;
     // Eingaben der geheimen Hilfsmittel und der Auswahl
     const texts = (prefix, n) => { const v = [], els = []; for (let i = 0; i < n; i++) { const el = input(prefix + i); els.push(el); v.push(el ? el.value.trim() : ""); } return { v, els }; };
@@ -1987,7 +2042,13 @@
       clearAll = (clearAll || []).filter(Boolean);
       const typed = clearAll.map((el) => el.value);
       clearAll.forEach((el) => { el.value = ""; });
-      if (toolDo(qid, op)) { if (kind === "choice" && act === "fix") toolUI.pick[qid] = []; if (act === "reveal" || act === "newRound") toolUI.peek[qid] = 0; rerenderTools(qid); }
+      if (toolDo(qid, op)) {
+        if (kind === "choice" && act === "fix") toolUI.pick[qid] = [];
+        if (act === "reveal" || act === "newRound") toolUI.peek[qid] = 0;
+        // Geheimes bestätigt: auf DIESEM Handy erst „Handy weitergeben“ zeigen (ein Handy für alle); andere Handys wie bisher
+        if (act === "fix" && T.isSecret(tcfg(qid)) && T.phase(tcfg(qid), toolState(qid)) === 2) toolUI.handoff[qid] = true;
+        rerenderTools(qid);
+      }
       else clearAll.forEach((el, i) => { el.value = typed[i]; });
       return;
     }
@@ -2385,6 +2446,7 @@
       '<div class="set-menu">' +
         setRow("help", "circle-help", "Spielanleitung", "Ziel, Quests, Shop, Hilfsmittel, Ränge") +
         setRow("player", "user", "Spieler", "Angemeldet als " + esc(app.name) + " · Name ändern, Abmelden") +
+        setRow("team", "users", "Mitspieler", teamNames().length ? teamNames().map(esc).join(" · ") : "3 Namen für die Hilfsmittel") +
         setRow("backup", "download", "Spielstand sichern", "Sichern und wiederherstellen") +
         setRow("errors", "bug", "Fehlerprotokoll", "Fehler beim Foto-Upload – zum Weiterschicken") +
         setRow("end", "flag", "Urlaub beenden & Belohnungen", app.state.ended ? "Urlaub beendet – Belohnungen & Zertifikat" : "Restpunkte umtauschen, Zertifikat", "set-end") +
@@ -2392,6 +2454,26 @@
       '<div class="set-danger">' + setRow("reset", "rotate-ccw", "Kompletter Reset", "Alles auf null – für alle Handys", "set-reset") + "</div>";
   }
   const pageHead = (ic, title) => '<h2>' + icon(ic) + " " + title + "</h2>";
+  // Mitspieler: 3 frei bearbeitbare Namen für alle Hilfsmittel (Tic-Tac-Toe, Türen …), synchron auf allen Handys
+  function viewTeam() {
+    const names = (app.team && app.team.names) || ["", "", ""], draft = app.teamDraft || {};
+    return pageHead("users", "Mitspieler") +
+      '<div class="panel set-panel">' +
+        '<p class="muted small" style="margin:0">Diese 3 Namen nutzen alle Hilfsmittel – auch wenn ihr nur ein Handy habt. Gilt für alle Handys.</p>' +
+        [0, 1, 2].map((i) => '<label class="tool-label" for="team-' + i + '">Mitspieler ' + (i + 1) + "</label>" +
+          '<input class="tool-input team-input" id="team-' + i + '" data-team="' + i + '" maxlength="24" autocomplete="off" value="' + esc(draft[i] != null ? draft[i] : names[i] || "") + '">').join("") +
+        '<button class="btn btn-primary btn-block" id="team-save">' + icon("check") + " Speichern</button>" +
+        (app.team && !app.team.saved ? '<p class="muted small" style="margin:0">Vorausgefüllt mit bekannten Namen – bitte prüfen und speichern.</p>' : "") +
+      "</div>";
+  }
+  async function saveTeam() {
+    const names = [0, 1, 2].map((i) => ($("#team-" + i) || {}).value || "");
+    const r = await api("team", { method: "POST", body: { names } }).catch(() => null);
+    if (!r || r.status !== 200) { toast((r && r.data && r.data.error) || "Speichern ging nicht (offline?).", true); return; }
+    app.team = r.data.team; app.teamDraft = null;
+    toast("Mitspieler gespeichert.");
+    render();
+  }
   function viewPlayer() {
     return pageHead("user", "Spieler") +
       '<div class="panel set-panel"><p class="set-line">' + icon("user") + " Angemeldet als <strong>" + esc(app.name) + "</strong></p>" +
@@ -2429,6 +2511,7 @@
     return [short ? "" : (e.time || "") + " · " + (e.stage || "?") + ": " + (e.name || "") + (e.message ? " – " + e.message : ""),
       e.fileName || e.fileSize ? "Datei: " + (e.fileName || "?") + " · " + (e.fileType || "?") + " · " + fmtSize(e.fileSize || 0) : "",
       e.attempts ? "Versuche: " + e.attempts : "",
+      e.readWays ? "Lesewege: " + e.readWays : "", e.lastModified ? "Datei geändert: " + e.lastModified : "",
       e.pick ? "Auswahl Nr. " + e.pick + " in dieser Sitzung · Lesebeginn " + e.readDelayMs + " ms nach dem change-Event · Synchronisierung: " + (e.sync || "?") : "", e.player ? "Spieler: " + e.player : "", e.detail || "", e.ua ? "Gerät: " + e.ua : ""].filter(Boolean).join(short ? " · " : "\n  ");
   }
   async function loadErrorLog() {
@@ -2862,6 +2945,10 @@
     return (today && !full ? "heute " : d.toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "numeric" }) + ", ") + time;
   }
 
+  // Mitspieler-Felder: Getipptes merken (übersteht Neuzeichnen durch die Synchronisierung)
+  document.addEventListener("input", (ev) => {
+    if (ev.target.classList && ev.target.classList.contains("team-input")) (app.teamDraft = app.teamDraft || {})[ev.target.dataset.team] = ev.target.value;
+  });
   // ------------------------------------------------------------------ Events
   document.addEventListener("click", (ev) => {
     const t = ev.target.closest("button, [data-region]");
@@ -2892,6 +2979,7 @@
       case "end-btn": return startEnd();
       case "reset-btn": return doReset();
       case "backup-btn": return downloadBackup();
+      case "team-save": return saveTeam();
       case "errlog-copy": return copyErrorLog();
       case "errlog-clear": return confirmBox("Protokoll leeren?", "Alle Einträge im Fehlerprotokoll werden gelöscht – für alle Handys.", "Leeren", true).then(async (ok) => {
         if (!ok) return backToSettings("errors");
