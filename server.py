@@ -156,7 +156,8 @@ def _static(rel, start_response):
     start_response("200 OK", [
         ("Content-Type", ctype),
         ("Content-Length", str(len(body))),
-        ("Cache-Control", "no-cache"),
+        # Bilder dürfen kurz zwischengespeichert werden, alles andere immer frisch
+        ("Cache-Control", "public, max-age=600" if rel.startswith("images/") else "no-cache"),
         ("X-Robots-Tag", "noindex, nofollow"),
         ("Referrer-Policy", "no-referrer"),
     ])

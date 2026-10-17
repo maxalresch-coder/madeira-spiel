@@ -437,13 +437,34 @@
     if (q.link) html = html.replace(esc(q.link.text), '<a href="' + esc(q.link.href) + '" target="_blank" rel="noopener noreferrer">' + esc(q.link.text) + "</a>");
     return '<p class="task"><strong>' + PRE + "</strong> " + html + "</p>";
   }
+  // Google-Maps-Link: über den Namen des Eintrags oder, falls keiner, über die Pin-Koordinaten
+  function mapsUrl(q) {
+    const query = q.maps || (q.pin[0] + "," + q.pin[1]);
+    return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(query);
+  }
+  // Bild zur Quest (public/images/quests/<ID>.jpg). Das <img> wird erst eingefügt, wenn das
+  // Quest-Fenster geöffnet wird – beim Seitenstart wird also kein Bild geladen. Fehlt es,
+  // verschwindet es still. Bekannte fehlende Bilder werden nicht erneut angefragt.
+  const missingImages = new Set();
+  function questImageHTML(q) {
+    if (missingImages.has(q.id)) return "";
+    return '<img class="quest-img" data-qimg="' + q.id + '" alt="' + esc(q.title) + '" decoding="async" hidden>';
+  }
+  function bindQuestImages(el) {
+    $$("img[data-qimg]", el).forEach((img) => {
+      const id = img.dataset.qimg;
+      img.onload = () => { img.hidden = false; };
+      img.onerror = () => { missingImages.add(id); img.remove(); };
+      img.src = "images/quests/" + id + ".jpg";
+    });
+  }
   function regionQuestHTML(q, interactive) {
     const done = app.state.quests[q.id];
-    return '<div class="quest">' +
+    return (interactive ? questImageHTML(q) : "") + '<div class="quest">' +
       (interactive ? '<button class="check ' + (done ? "on" : "") + '" data-quest="' + q.id + '" aria-label="' + (done ? "Erledigt – rückgängig machen" : "Als erledigt abhaken") + '">' + (done ? "✓" : "") + "</button>"
         : '<span class="status ' + (done ? "on" : "") + '" aria-label="' + (done ? "erledigt" : "offen") + '">' + (done ? "✓" : "") + "</span>") +
       '<div class="quest-body"><h4>' + esc(q.title) + "</h4>" +
-      '<div class="loc">📍 ' + esc(q.location) + "</div>" +
+      '<a class="loc" href="' + esc(mapsUrl(q)) + '" target="_blank" rel="noopener noreferrer" title="In Google Maps öffnen">📍 ' + esc(q.location) + ' <span class="loc-ext" aria-hidden="true">↗</span></a>' +
       '<p class="desc">' + esc(q.desc) + "</p>" + taskHTML(q) +
       (done ? '<div class="by">✓ erledigt von ' + esc(done.by) + " · " + when(done.t) + "</div>" : "") + "</div></div>";
   }
@@ -451,6 +472,7 @@
     return '<span class="pill" style="background:' + L.LEVELS[lvl].color + ";color:" + (lvl <= 1 ? "#1d2a30" : "#fff") + '">' + L.LEVELS[lvl].name + "</span>";
   }
   function bindQuestChecks(el) {
+    bindQuestImages(el);
     $$("[data-quest]", el).forEach((b) => b.addEventListener("click", () => toggleQuest(b.dataset.quest, b)));
   }
 

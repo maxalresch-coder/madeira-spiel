@@ -112,6 +112,7 @@ assert.strictEqual(new Set(ids).size, 56);
 C.regions.forEach(r => r.quests.forEach(q => {
   assert(q.title && q.location && q.desc && q.task.startsWith("Eure Aufgabe: "), q.id);
   assert(Array.isArray(q.pin) && q.pin.length === 2, q.id);
+  assert(q.maps === null || (typeof q.maps === "string" && q.maps.length > 3), q.id + ": maps");
 }));
 
 // Kompatibilität alter Spielstände
