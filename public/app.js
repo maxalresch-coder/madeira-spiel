@@ -280,23 +280,118 @@
     $("#hdr-points").classList.toggle("neg", s.balance < 0);
     $("#hdr-rank").textContent = s.rankName;
     $("#rb-fig").innerHTML = rankFigure(s.rank, "fig-sm");
-    const views = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats, settings: viewSettings,
-      help: viewHelp, player: viewPlayer, team: viewTeam, backup: viewBackup, errors: viewErrors, end: viewEnd, reset: viewReset };
-    const view = views[app.view] ? app.view : "home";
+    const view = VIEWS[app.view] ? app.view : "home";
     $$(".hdr-btn[data-go]").forEach((b) => b.classList.toggle("active", b.dataset.go === view || (SETTINGS_PAGES.indexOf(view) >= 0 && b.dataset.go === "settings")));
-    const body = app.state.ended && view === "stats" ? viewEnded(s) : views[view](s);
+    // Punkte-Band unter der Kopfzeile: aktuelle Hauptseite (nur auf den 5 Hauptseiten)
+    const pi = MAIN_PAGES.indexOf(view), dots = $("#page-dots");
+    if (dots) { dots.hidden = pi < 0; $$("i", dots).forEach((d, i) => d.classList.toggle("on", i === pi)); }
+    // Mitspieler: Feld, in dem gerade getippt wird, nicht ersetzen (Tastatur bleibt offen)
+    const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("team-input");
+    if (!(typing && app.view === "team")) $("#view").innerHTML = pageHTML(view, s);
+    if (view === "home") mountMap();
+    app.modals.forEach((m) => m.refresh());
+  }
+
+  const VIEWS = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats, settings: viewSettings,
+    help: viewHelp, player: viewPlayer, team: viewTeam, backup: viewBackup, errors: viewErrors, end: viewEnd, reset: viewReset };
+  // Inhalt einer Seite (auch für die Vorschau beim Wischen)
+  function pageHTML(view, s) {
+    const body = app.state.ended && view === "stats" ? viewEnded(s) : VIEWS[view](s);
     // Unterseiten der Einstellungen: „← Einstellungen“ und „Zu den Quests“; alle anderen Bereiche: „← Zu den Quests“
     const back = view === "home" ? ""
       : SETTINGS_PAGES.indexOf(view) >= 0
         ? '<div class="back-row"><button class="back-btn" data-go="settings">' + icon("arrow-left") + ' Einstellungen</button>' +
           '<button class="back-btn back-home" data-go="home">' + icon("map-pinned") + " Zu den Quests</button></div>"
         : '<button class="back-btn" data-go="home">' + icon("arrow-left") + " Zu den Quests</button>";
-    // Mitspieler: Feld, in dem gerade getippt wird, nicht ersetzen (Tastatur bleibt offen)
-    const typing = document.activeElement && document.activeElement.classList && document.activeElement.classList.contains("team-input");
-    if (!(typing && app.view === "team")) $("#view").innerHTML = back + body;
-    if (view === "home") mountMap();
-    app.modals.forEach((m) => m.refresh());
+    return back + body;
   }
+
+  // ---- Wischen zwischen den Hauptseiten (wie Fotos durchwischen)
+  // Startseite – Shop – Erfolge – Aktivitäten – Einstellungen; nach links = weiter, nach rechts = zurück, nicht im Kreis.
+  // Die Seite gleitet mit dem Finger, die Nachbarseite schiebt sich als Vorschau herein; losgelassen rastet sie ein.
+  // Nur ein deutlich waagerechter, langer oder schneller Wisch wechselt; senkrechtes Scrollen bleibt beim Browser
+  // (touch-action: pan-y). Kein Wischen an den Bildschirmrändern (Zurück-Geste von Android/Safari), auf Karte,
+  // Zeichenfläche, Ziehen-Listen, Eingabefeldern, in offenen Fenstern und auf Unterseiten der Einstellungen.
+  const MAIN_PAGES = ["home", "shop", "stats", "log", "settings"];
+  const SWIPE_NO = "#map-wrap, .bay-map-wrap, .draw-pad, canvas, .sort-list, .sort-item, input, textarea, select, [contenteditable], .modal, .no-swipe";
+  const EDGE = 28; // px am Bildschirmrand gehören der Zurück-Geste des Systems
+  const sw = { g: null, busy: false };
+  function swipeStart(e) {
+    if (sw.busy || e.touches.length !== 1 || app.modals.length || MAIN_PAGES.indexOf(app.view) < 0 || !app.state || !L.isCompatible(app.state, C)) return;
+    const t = e.touches[0];
+    if (t.clientX < EDGE || t.clientX > window.innerWidth - EDGE) return;
+    if (!e.target.closest || !e.target.closest("#view") || e.target.closest(SWIPE_NO)) return;
+    sw.g = { x0: t.clientX, y0: t.clientY, t0: performance.now(), dx: 0, mode: "?", hist: [] };
+  }
+  function swipeMove(e) {
+    const g = sw.g;
+    if (!g) return;
+    if (e.touches.length !== 1) { swipeAbort(); return; }
+    const t = e.touches[0], dx = t.clientX - g.x0, dy = t.clientY - g.y0;
+    if (g.mode === "?") {
+      if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx) * 0.6) { sw.g = null; return; } // senkrecht: normal scrollen
+      if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 2) return;                      // noch nicht eindeutig
+      g.mode = "h";
+      swipeBegin(g);
+    }
+    if (e.cancelable) e.preventDefault();
+    const i = MAIN_PAGES.indexOf(app.view), hasNext = dx < 0 ? i < MAIN_PAGES.length - 1 : i > 0;
+    g.dx = hasNext ? dx : dx * 0.25; // am Anfang/Ende nur ein kleiner federnder Ausschlag
+    g.hist.push([performance.now(), t.clientX]); if (g.hist.length > 6) g.hist.shift();
+    swipeSet(g.dx, false);
+  }
+  function swipeBegin(g) {
+    const view = $("#view"), W = window.innerWidth, i = MAIN_PAGES.indexOf(app.view);
+    const top = Math.max(0, ($(".topbar") || view).getBoundingClientRect().bottom, view.getBoundingClientRect().top);
+    g.W = W;
+    g.peeks = {};
+    [-1, 1].forEach((d) => {
+      const name = MAIN_PAGES[i + d];
+      if (!name) return;
+      const el = document.createElement("div");
+      el.className = "swipe-peek";
+      el.style.top = top + "px";
+      el.innerHTML = '<div class="view">' + pageHTML(name, sum()).replace(/\sid="[^"]*"/g, "") + "</div>"; // ohne IDs: keine Doppelten
+      el.style.transform = "translate3d(" + d * W + "px,0,0)";
+      document.body.appendChild(el);
+      g.peeks[d] = el;
+    });
+    view.classList.add("swiping");
+  }
+  function swipeSet(dx, anim) {
+    const g = sw.g, view = $("#view");
+    if (!g || !view) return;
+    [view].concat(Object.values(g.peeks)).forEach((el) => { el.style.transition = anim ? "transform .24s cubic-bezier(.2,.8,.2,1)" : "none"; });
+    view.style.transform = "translate3d(" + dx + "px,0,0)";
+    Object.keys(g.peeks).forEach((d) => { g.peeks[d].style.transform = "translate3d(" + (d * g.W + dx) + "px,0,0)"; });
+  }
+  function swipeEnd() {
+    const g = sw.g;
+    sw.g = null;
+    if (!g || g.mode !== "h") return;
+    const i = MAIN_PAGES.indexOf(app.view), dir = g.dx < 0 ? 1 : -1, target = MAIN_PAGES[i + dir];
+    const h = g.hist, v = h.length > 1 ? (h[h.length - 1][1] - h[0][1]) / Math.max(1, h[h.length - 1][0] - h[0][0]) : 0; // px/ms
+    const go2 = target && (Math.abs(g.dx) > g.W * 0.33 || (Math.abs(g.dx) > 50 && Math.abs(v) > 0.35 && Math.sign(v) === -dir));
+    sw.g = g; sw.busy = true;
+    swipeSet(go2 ? -dir * g.W : 0, true);
+    setTimeout(() => {
+      const view = $("#view");
+      Object.values(g.peeks).forEach((el) => el.remove());
+      view.classList.remove("swiping");
+      view.style.transition = "none"; view.style.transform = "";
+      sw.g = null; sw.busy = false;
+      if (go2) go(target);
+    }, 250);
+  }
+  function swipeAbort() {
+    const g = sw.g;
+    if (!g) return;
+    if (g.mode === "h") { g.dx = 0; swipeEnd(); } else sw.g = null;
+  }
+  document.addEventListener("touchstart", swipeStart, { passive: true });
+  document.addEventListener("touchmove", swipeMove, { passive: false });
+  document.addEventListener("touchend", swipeEnd);
+  document.addEventListener("touchcancel", swipeAbort);
 
   // Alter Spielstand (vor den finalen Inhalten) -> einmal neu starten
   function renderUpgrade() {
@@ -401,7 +496,9 @@
 
   // Regionsfortschritt (Meilensteine, Regionen mit Sternen) – wird bei den Erfolgen angezeigt
   function regionsSection(s) {
-    const list = C.regions.map((r) => {
+    // Rangliste: Erschlossen → Erobert → Erkundet → Unbesucht; gleiche Stufe in Karten-Reihenfolge (zeilenweise, links zuerst)
+    const ranked = C.regions.map((r, i) => ({ r, i })).sort((a, b) => (s.levels[b.r.id] - s.levels[a.r.id]) || (a.i - b.i)).map((x) => x.r);
+    const list = ranked.map((r) => {
       const lvl = s.levels[r.id];
       return '<button class="region-btn" data-region="' + r.id + '"><span class="dot" style="background:' + L.LEVELS[lvl].color + '"></span><span class="region-name">' + esc(r.name) + "</span>" + stars(lvl) + "</button>";
     }).join("");

@@ -371,6 +371,14 @@ Vertrauensbasis, keine Beweisfotos.
   Standort; verweigerte Erlaubnis → kurze Meldung. Nur lokal (`mapUI.here`).
 - Quest-Fenster: Bild oben (`public/images/quests/<ID>.jpg`, erst beim Öffnen geladen, fehlend = nichts), Titel,
   Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett.
+- **Wischen zwischen den Hauptseiten** (`MAIN_PAGES`: Startseite – Shop – Erfolge – Aktivitäten – Einstellungen; links =
+  weiter, rechts = zurück, nicht im Kreis): Seite gleitet mit dem Finger, Nachbarseite schiebt sich als Vorschau herein
+  (`.swipe-peek`, ohne IDs), rastet ein (> ⅓ Breite oder schnell > 0,35 px/ms bei > 50 px), sonst federt zurück; am
+  Anfang/Ende nur kleiner federnder Ausschlag. Erst ab 14 px und deutlich waagerecht (|dx| ≥ 2·|dy|); senkrecht bleibt
+  normales Scrollen (`#view { touch-action: pan-y pinch-zoom }`). Nicht: 28 px an den Bildschirmrändern (Zurück-Geste
+  Android/Safari), auf `SWIPE_NO` (Karte, Buchten-Karte, Zeichenfläche, Ziehen-Listen, Eingabefelder, Fenster), bei offenen
+  Fenstern und auf Unterseiten der Einstellungen. Nur CSS-Transform. Punkte-Band (`#page-dots`, 5 Punkte) unter der
+  Kopfzeile zeigt die aktuelle Hauptseite (auf Unterseiten ausgeblendet). Seiteninhalt kommt aus `pageHTML(view)`.
 - **Navigation (Regel):** Bereiche Shop / Erfolge / Aktivitäten / Einstellungen (Views `shop`, `stats`, `log`, `settings`) haben
   oben „← Zu den Quests“ (direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
   **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `team`, `backup`, `errors`, `end`, `reset`) haben stattdessen zwei Knöpfe:
@@ -382,7 +390,9 @@ Vertrauensbasis, keine Beweisfotos.
   „Belohnungen & Zertifikat ansehen“ → Erfolge) · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
   Unterseite; alle Sicherheitsabfragen bleiben.
 - Erfolge (früher „Statistik“): Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);
-  Regionen-Block (Meilenstein-Abzeichen, Liste mit Sternen: voll gold/Umriss); Kacheln Punkte verdient | Kontostand,
+  Regionen-Block (Meilenstein-Abzeichen, Liste mit Sternen: voll gold/Umriss; **sortiert** Erschlossen → Erobert → Erkundet →
+  Unbesucht, gleiche Stufe in Karten-Reihenfolge, zeilenweise links/rechts; gleiches Raster wie die Kacheln:
+  `repeat(2, minmax(0, 1fr))`, Abstand 10 px – zwei Boxen zusammen exakt so breit wie eine breite Box; Sterne dort 17 px); Kacheln Punkte verdient | Kontostand,
   Regionale Quests | Stapel-Quests, % vom Maximum | bester Multiplikator; Maximum-Zeile; Punkte pro Tag + Durchschnitt;
   Tortendiagramme „Woher die Punkte kommen“ (Farben einfach/mittel/schwer, Legende % fett + Punkte klein, rechtsbündig)
   und „Stufen der Regionen“ (Anzahlen); „Joker genutzt:“ eingerückt, „Insgesamt ausgegeben“. Erfolge sind **nur zum Anschauen**
