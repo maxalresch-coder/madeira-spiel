@@ -67,6 +67,11 @@ def _save(conf, doc):
     os.replace(tmp, path)
 
 
+def _now_ms():
+    """Serverzeit in ms – alle Handys rechnen Timer damit, damit sie synchron laufen."""
+    return int(time.time() * 1000)
+
+
 def _json(start_response, status, payload):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     start_response(status, [
@@ -125,8 +130,8 @@ def _api(path, environ, start_response, conf):
                 except ValueError:
                     pass
         if since is not None and since == doc["version"]:
-            return _json(start_response, "200 OK", {"version": doc["version"], "unchanged": True})
-        return _json(start_response, "200 OK", doc)
+            return _json(start_response, "200 OK", {"version": doc["version"], "unchanged": True, "now": _now_ms()})
+        return _json(start_response, "200 OK", dict(doc, now=_now_ms()))
 
     if path == "state" and method == "POST":
         body = _read_body(environ)
@@ -138,7 +143,7 @@ def _api(path, environ, start_response, conf):
                 return _json(start_response, "409 Conflict", doc)
             doc = {"version": doc["version"] + 1, "state": body["state"]}
             _save(conf, doc)
-        return _json(start_response, "200 OK", {"version": doc["version"]})
+        return _json(start_response, "200 OK", {"version": doc["version"], "now": _now_ms()})
 
     return _not_found(start_response)
 

@@ -61,12 +61,25 @@ Vertrauensbasis, keine Beweisfotos.
 - **Spielstand sichern/wiederherstellen** (Statistik, Abschnitt „Spielstand sichern“): lädt `operacao-madeira-JJJJ-MM-TT.json`
   herunter (`{app, savedAt, savedBy, version, state}`); Wiederherstellen prüft die Datei (`isCompatible`), fragt deutlich nach
   (überschreibt für alle Handys) und speichert sie als neuen Stand (nur online).
+- **Werkzeuge (Tools)** für einzelne regionale Quests (`public/tools.js` = Konfiguration `TOOLS` + reine Logik, getestet;
+  Oberfläche in app.js): optional, aufklappbar „Werkzeug: …“ unter der Aufgabe (auch in der Regionsansicht), **haken nie ab,
+  keine Punkte**, „Geschafft!“/„Daneben“ nur als Anzeige. Zustand in `state.tools[questId]` (gleicher Server-Speicher wie der
+  Spielstand, Warteschlange + Konflikt-Wiederholung, offline gesperrt); Reset löscht die Tools (newGame hat kein `tools`).
+  Zeiten in **Serverzeit** (`now` in den API-Antworten → `app.clockOffset`), daher synchron auf allen Handys, auch nach Neuladen.
+  - Countdown: Light Show 10 s, Dreieck auf Dreieck 10 s, Werdet brava … 30 s, Treibgutkreuz 30 s (Start/Abbrechen/Neustart, Ende: Anzeige + Vibration).
+  - Strafsperre (Werkzeug gesperrt, Countdown, danach frei): Angsthase oder Augenmaß? 5 min, Grüße nach Rio 5 min, Lorbeeren/UNESCO 10 min.
+  - Schätz-Prüfung (Schätzung festschreiben, bis zur Auflösung unveränderbar): Seilbahn (Stoppuhr, ≤ 15 s daneben), Höllen-Verkehr
+    (1-Minuten-Countdown, „+1 Auto“/−1, ≤ 1 daneben, sonst neue Runde), Angsthase (Spoiler-Schutz gibt Infotafel-Wert ein, ≤ 10 %, sonst Strafsperre).
+  - Kompass Grüße nach Rio: DeviceOrientation (iPhone: Erlaubnis per Knopf), Wert erst beim Tippen „Hier ist Rio!“, Ziel 208° ± 20°,
+    2 Messungen, eine Treffer reicht; ohne Kompass Hinweis auf Kompass-App + Wert eintragen.
+  - Tic-Tac-Toe Tic-Tac-São-Bento: 2 Spielende wählen (Namen aus dem Logbuch oder eintippen), Sieg/Unentschieden, Zug zurück, neue Runde.
+  - Halb gelandet: Link „Aktuelle Ankünfte am Flughafen Madeira“ → https://www.madeiraairport.pt/en/fnc/arrivals (offizielle Seite, ANA).
 - Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann Zertifikat (PDF).
 
 ## Aufbau und Gestaltung
 - Dateien: `server.py` (stdlib-WSGI), `public/logic.js` (Regeln), `public/app.js` (UI), `public/content.js` (Quests, Pins
   `pin:[lat,lon]`, `maps` = Google-Maps-Suchname oder null = Koordinaten, optional `mapsUrl` fester Link, `link` für UNESCO),
-  `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `tests/logic.test.js`.
+  `public/tools.js` (Quest-Werkzeuge), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `tests/logic.test.js`.
 - Kopfzeile: links Schriftzug „Operação Madeira“ (Bebas Neue + goldener Kompass, einzeilig, Größe passt sich an),
   rechts Icons Shop / Logbuch / Statistik / Hilfe (beschriftet, aria-label). Darunter Abzeichen: Rang-Figur · Rang · Kontostand.
   Eigenes Logo: `public/images/logo.svg` oder `logo.png` ersetzt den Schriftzug.

@@ -232,4 +232,92 @@ assert.strictEqual(L.formatReward(C.rewards[1], 2000), "20 Bilder");
 // Reset
 g = L.apply(g, C, { type: "reset", seed: 99 }, "X", t);
 assert.strictEqual(L.summary(g, C).earned, 0);
+
+// ---------------------------------------------------------------- Werkzeuge (Tools)
+const T = require("../public/tools.js");
+const IXT = L.index(C);
+Object.keys(T.TOOLS).forEach((id) => assert(IXT.quests[id], "Tool für unbekannte Quest " + id));
+const tu = (id, ts, op, now) => T.update(T.config(id), ts, op, now, "Tester");
+const tf = (id, ts, op, now) => assert.throws(() => tu(id, ts, op, now), T.ToolError);
+// Countdown
+let ts = tu("q-cal-2", null, { type: "start" }, 1000);
+tf("q-cal-2", ts, { type: "start" }, 5000);
+ts = tu("q-cal-2", ts, { type: "start" }, 11001);
+assert.strictEqual(ts.startedAt, 11001);
+assert.strictEqual(tu("q-cal-2", ts, { type: "cancel" }, 12000).startedAt, null);
+assert.strictEqual(T.config("q-rbr-1").seconds, 30);
+// Seilbahn: Schätzung festschreiben, Stoppuhr, höchstens 15 s daneben
+ts = tu("q-rbr-2", null, { type: "fix", value: "100" }, 0);
+tf("q-rbr-2", ts, { type: "fix", value: 50 }, 0);
+tf("q-rbr-2", ts, { type: "newRound" }, 0);
+ts = tu("q-rbr-2", ts, { type: "start" }, 1000);
+assert.strictEqual(T.result(T.config("q-rbr-2"), ts, 5000), null);
+ts = tu("q-rbr-2", ts, { type: "stop" }, 1000 + 115000);
+assert.deepStrictEqual(T.result(T.config("q-rbr-2"), ts, 0), { ok: true, measured: 115, diff: 15 });
+ts.stoppedAt = 1000 + 116000;
+assert.strictEqual(T.result(T.config("q-rbr-2"), ts, 0).ok, false);
+assert.strictEqual(tu("q-rbr-2", ts, { type: "newRound" }, 0).guess, null);
+// Verkehr: 1 Minute zählen, höchstens 1 Auto daneben
+tf("q-svi-2", null, { type: "start" }, 0);
+ts = tu("q-svi-2", null, { type: "fix", value: 5 }, 0);
+tf("q-svi-2", ts, { type: "inc", d: 1 }, 0);
+ts = tu("q-svi-2", ts, { type: "start" }, 0);
+for (let i = 0; i < 7; i++) ts = tu("q-svi-2", ts, { type: "inc", d: 1 }, 1000 * i);
+ts = tu("q-svi-2", ts, { type: "inc", d: -1 }, 59000);
+assert.strictEqual(ts.count, 6);
+assert.strictEqual(T.result(T.config("q-svi-2"), ts, 59999), null);
+assert.deepStrictEqual(T.result(T.config("q-svi-2"), ts, 60000), { ok: true, count: 6, diff: 1 });
+tf("q-svi-2", ts, { type: "inc", d: 1 }, 62000);
+ts.count = 7;
+assert.strictEqual(T.result(T.config("q-svi-2"), ts, 60000).ok, false);
+// Höhe: höchstens 10 % daneben, Strafsperre 5 Minuten
+ts = tu("q-cdl-3", null, { type: "fix", value: "550" }, 0);
+tf("q-cdl-3", ts, { type: "fix", value: "600" }, 0);
+assert.strictEqual(T.result(T.config("q-cdl-3"), tu("q-cdl-3", ts, { type: "answer", value: 500 }, 0), 0).ok, true);
+ts = tu("q-cdl-3", ts, { type: "answer", value: "499" }, 0);
+assert.strictEqual(T.result(T.config("q-cdl-3"), ts, 0).ok, false);
+ts = tu("q-cdl-3", ts, { type: "penalty" }, 1000);
+assert.strictEqual(ts.guess, null);
+assert.strictEqual(T.penaltyLeft(ts, 1000 + 4 * 60000), 60000);
+tf("q-cdl-3", ts, { type: "fix", value: 1 }, 1000 + 299999);
+assert.strictEqual(tu("q-cdl-3", ts, { type: "fix", value: 1 }, 1000 + 300000).guess, 1);
+// Lorbeerwald: 10 Minuten Strafzeit; Seilbahn hat keine
+assert.strictEqual(tu("q-san-3", null, { type: "penalty" }, 0).penaltyUntil, 600000);
+tf("q-rbr-2", null, { type: "penalty" }, 0);
+// Kompass: 208° ± 20°, eine von zwei Messungen reicht
+assert.strictEqual(T.angleDiff(350, 10), 20);
+assert.strictEqual(T.angleDiff(208, 28), 180);
+ts = tu("q-scr-2", null, { type: "measure", deg: 170 }, 0);
+assert.strictEqual(T.result(T.config("q-scr-2"), ts, 0), null);
+ts = tu("q-scr-2", ts, { type: "measure", deg: 228.4 }, 0);
+assert.strictEqual(T.result(T.config("q-scr-2"), ts, 0).ok, true);
+tf("q-scr-2", ts, { type: "measure", deg: 200 }, 0);
+ts = tu("q-scr-2", tu("q-scr-2", null, { type: "measure", deg: 100 }, 0), { type: "measure", deg: 229 }, 0);
+assert.strictEqual(T.result(T.config("q-scr-2"), ts, 0).ok, false);
+// Tic-Tac-Toe: Sieg, Unentschieden, Rückgängig
+tf("q-rbr-3", null, { type: "move", cell: 0 }, 0);
+tf("q-rbr-3", null, { type: "players", x: "Anna", o: "anna" }, 0);
+ts = tu("q-rbr-3", null, { type: "players", x: "Anna", o: "Ben" }, 0);
+[0, 3, 1, 4].forEach((c) => { ts = tu("q-rbr-3", ts, { type: "move", cell: c }, 0); });
+tf("q-rbr-3", ts, { type: "move", cell: 4 }, 0);
+tf("q-rbr-3", ts, { type: "newRound" }, 0);
+ts = tu("q-rbr-3", ts, { type: "move", cell: 2 }, 0);
+assert.deepStrictEqual(T.tttStatus(ts.moves).line, [0, 1, 2]);
+assert.strictEqual(T.result(T.config("q-rbr-3"), ts, 0).winner, "X");
+tf("q-rbr-3", ts, { type: "move", cell: 8 }, 0);
+ts = tu("q-rbr-3", ts, { type: "undoMove" }, 0);
+assert.strictEqual(T.tttStatus(ts.moves).winner, null);
+const draw = [0, 1, 2, 4, 3, 5, 7, 6, 8];
+assert.strictEqual(T.tttStatus(draw).draw, true);
+assert.strictEqual(T.tttStatus(draw).winner, null);
+ts = tu("q-rbr-3", Object.assign(ts, { moves: draw }), { type: "newRound" }, 0);
+assert.deepStrictEqual([ts.moves, ts.round, ts.players], [[], 2, ["Anna", "Ben"]]);
+// Tools liegen im Spielstand, Aktionen behalten sie, Reset löscht sie
+g = L.newGame(C, 7, t);
+g.tools = { "q-cal-2": { startedAt: 1 } };
+g = act(g, { type: "quest", questId: "q-fun-1" });
+assert.deepStrictEqual(g.tools, { "q-cal-2": { startedAt: 1 } });
+assert.strictEqual(L.summary(g, C).earned, 100);
+assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, undefined);
+
 console.log("Alle Logik-Tests bestanden ✓");
