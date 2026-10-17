@@ -418,20 +418,28 @@ ts = tb("q-pmz-3", ts, { type: "movePhoto", i: 2, d: 1 }, "Ben");          // LO
 ts = tb("q-pmz-3", ts, { type: "removePhoto", i: 5 }, "Ben");               // → LORBE
 ts = tb("q-pmz-3", ts, { type: "addPhoto", photo: pid(9), letter: "r" }, "Ben"); // → LORBER
 assert.deepStrictEqual(T.unhide(ts.draftLetters), ["L", "O", "R", "B", "E", "R"]);
+const arr = tb("q-pmz-3", ts, { type: "arrange", order: [pid(9), pid(0), pid(1), pid(3), pid(2), pid(4)] }, "Anna");
+assert.deepStrictEqual([arr.draft.map((d) => d.photo)[0], T.unhide(arr.draftLetters).join("")], [pid(9), "RLORBE"]);
+tbf("q-pmz-3", ts, { type: "arrange", order: [pid(9), pid(0)] }, "Anna");
 ts = tb("q-pmz-3", ts, { type: "fix" }, "Ben");
 assert.deepStrictEqual([ts.letters, ts.photos.length, ts.draft, T.phase(PW, ts)], [6, 6, null, 2]);
 assert.deepStrictEqual(ts.photos, [pid(0), pid(1), pid(3), pid(2), pid(4), pid(9)]);
 tbf("q-pmz-3", ts, { type: "addPhoto", photo: pid(30), letter: "X" }, "Ben");
 tbf("q-pmz-3", ts, { type: "guess", letters: ["L", "O"] }, "Anna");
-ts = tb("q-pmz-3", ts, { type: "guess", letters: "lorbar".split("") }, "Ben"); // auch das eingebende Handy darf raten
-assert.deepStrictEqual(ts.attempts[0].marks, [true, true, true, true, false, true]);
-assert.deepStrictEqual([T.result(PW, ts, 0), T.phase(PW, ts), ts.photos.length], [null, 2, 6]);
-const acc = tb("q-pmz-3", ts, { type: "accept" }, "Anna");
+const fail1 = tb("q-pmz-3", ts, { type: "guess", letters: "lorbar".split("") }, "Ben"); // auch das eingebende Handy darf raten
+assert.deepStrictEqual(fail1.attempts[0].marks, [true, true, true, true, false, true]);
+// Fehlversuch beendet die Runde: „Daneben“ (Phase 3, Wort aufgedeckt), kein zweites Festschreiben – nur Neue Runde oder „Trotzdem richtig“
+assert.deepStrictEqual([T.result(PW, fail1, 0), T.phase(PW, fail1), fail1.failed, fail1.photos.length], [null, 3, true, 6]);
+tbf("q-pmz-3", fail1, { type: "guess", letters: "LORBER".split("") }, "Anna");
+tbf("q-pmz-3", ts, { type: "accept" }, "Anna"); // ohne Fehlversuch nichts zu akzeptieren
+const acc = tb("q-pmz-3", fail1, { type: "accept" }, "Anna");
 assert.deepStrictEqual([T.result(PW, acc, 0).ok, acc.photos, T.phase(PW, acc)], [true, [], 3]);
+tbf("q-pmz-3", acc, { type: "accept" }, "Anna");
 const hit = tb("q-pmz-3", ts, { type: "guess", letters: "LORBER".split("") }, "Carla");
-assert.deepStrictEqual([T.result(PW, hit, 0).ok, hit.photos], [true, []]);
+assert.deepStrictEqual([T.result(PW, hit, 0).ok, hit.photos, T.phase(PW, hit)], [true, [], 3]);
 const rv = tb("q-pmz-3", ts, { type: "reveal" }, "Anna");
 assert.deepStrictEqual([T.phase(PW, rv), rv.photos.length], [3, 6]);
+assert.strictEqual(T.phase(PW, tb("q-pmz-3", fail1, { type: "newRound" }, "Anna")), 1);
 ts = tb("q-pmz-3", rv, { type: "newRound" }, "Anna");
 assert.deepStrictEqual([ts.photos, ts.secret, T.phase(PW, ts)], [null, null, 1]);
 "lorber".split("").forEach((l, i) => { ts = tb("q-pmz-3", ts, { type: "addPhoto", photo: pid(20 + i), letter: l }, "Ben"); });

@@ -100,10 +100,19 @@ Vertrauensbasis, keine Beweisfotos.
     auch die richtige Lösung; nichts ausschließen oder bevorzugen. Dafür `T.shuffle` (Fisher-Yates) mit `T.randomInt`
     (unverzerrt durch Verwerfen) und `rand32()` aus `crypto.getRandomValues`. Der Zufall wird beim Auslösen im Browser
     gezogen und als Teil der Aktion gespeichert (damit Warteschlange/Wiederholung dasselbe Ergebnis bringen). Test prüft Gleichverteilung.
-  - **Fotos (wiederverwendbare Komponente):** `photoPicker(qid, hinweis)` zeigt „Foto aufnehmen“ (`capture="environment"`)
-    und „Aus Galerie“; offline stattdessen ein Hinweis. Das Foto wird im Browser verkleinert (`shrinkPhoto`: lange Seite
-    ≤ 1.000 px, JPEG < 200 KB), per `POST api/photo` (roh, image/jpeg, Bearer-Token) hochgeladen → Antwort `{id}` (`p` + 24 Hex),
-    dann `toolDo(qid, {type: "addPhoto", photo: id})`. Anzeigen mit `photoImg(id)` (`GET api/photo/<id>?t=<token>`, weil `<img>`
+  - **Fotos (wiederverwendbare Foto-Grundlage):** `photoPicker(qid, mehrere)` zeigt „Foto aufnehmen“ (`capture="environment"`)
+    und „Aus Galerie wählen“ (`multiple`: mehrere Bilder auf einmal); offline stattdessen ein Hinweis. `handlePhotos` verarbeitet
+    die Bilder **nacheinander** (nie mehrere gleichzeitig im Speicher) mit Fortschrittsanzeige „Foto X von Y“, in der Reihenfolge,
+    in der das Handy sie liefert. **Speichersparend verkleinern** (`shrinkPhoto`, wichtig gegen „Zu wenig Speicher“ auf iPhones):
+    Abmessungen + EXIF-Ausrichtung aus dem Dateianfang lesen (`readImageInfo`, ohne zu dekodieren), dann
+    `createImageBitmap(file, {resizeWidth})` – dekodiert direkt in Zielgröße (nur die Breite vorgeben, damit nichts verzerrt);
+    hat der Browser nicht selbst gedreht (Seitenverhältnis), dreht das Canvas nach EXIF; Rückfall ohne createImageBitmap: `<img>`.
+    **Nie ein Canvas in voller Kameraauflösung**, ein einziges kleines Canvas wird wiederverwendet und danach auf 0×0 gesetzt;
+    Bitmaps (`close()`) und Objekt-URLs sofort freigeben. Ergebnis: lange Seite ≤ 1.000 px, JPEG < 200 KB. Jedes Foto wird
+    **sofort** per `POST api/photo` (roh, image/jpeg, Bearer-Token) hochgeladen → Antwort `{id}` (`p` + 24 Hex),
+    dann `toolDo(qid, {type: "addPhoto", photo: id})` – so liegt es auf dem Server, falls das Handy den Browser beim Öffnen
+    der Kamera aus dem Speicher wirft. Das offene Hilfsmittel wird gemerkt (`openTool` in localStorage, 1 h) und nach dem
+    Neuladen automatisch wieder geöffnet (`restoreOpenTool`). Anzeigen mit `photoImg(id)` (`GET api/photo/<id>?t=<token>`, weil `<img>`
     keinen Header schickt). Gespeichert in `data/photos/` (nicht in git). **Nur temporär:** Nach jedem Speichern des Spielstands
     löscht der Server alle Fotos, auf die der Spielstand nicht mehr verweist (nach 2 min Schonfrist für frische Uploads;
     nach Reset sofort). Ein Hilfsmittel beendet eine Runde also, indem es die Foto-IDs aus seinem Zustand entfernt
@@ -126,12 +135,14 @@ Vertrauensbasis, keine Beweisfotos.
     gleich wahrscheinlich, auch die richtige). Geraten wird **gemeinsam** (synchron auf allen Handys, `guessOrder`)
     und schreiben fest → jede Position grün/rot („richtig wäre: …“); alle richtig = „Geschafft!“, sonst „Daneben“ + „Neue Runde – mit anderen Früchten“.
   - „Buchstaben-Fotos“ (Baumstaben, `kind: "photoWord"`): Phase 1 zeigt oben gut sichtbar „Foto aufnehmen“ (Kamera) und
-    „Aus Galerie“; ≥ 5 Fotos (Foto-Komponente), unter jedem Foto ein Feld für genau einen Buchstaben (A–Z, Ä, Ö, Ü, ß;
-    `T.letter`), Fotos verschieben (◀ ▶) und löschen; Entwurf `draft` + verschleierte `draftLetters`, synchron, übersteht
-    Neuladen. „Festschreiben“ (ab 5 Fotos mit Buchstaben) setzt das geheime Wort zusammen (keine Wörter früherer Runden).
-    Phase 2: Fotos in Reihenfolge ohne Buchstaben, darunter je ein Feld → „Festschreiben und vergleichen“ → Buchstabe für
-    Buchstabe grün/rot (Groß/klein egal); alle richtig = „Geschafft!“ mit Wort (Phase 3, Fotos werden gelöscht), sonst
-    korrigieren und erneut festschreiben; „Trotzdem richtig“ (für knappe Fälle; entscheidet, wer das Wort ausgedacht hat).
+    „Aus Galerie wählen“ (mehrere); ≥ 5 Fotos als sortierbare Liste (Ziehen am Griff mit Animation wie Früchteschweiger,
+    Aktion `arrange` mit Foto-IDs, plus Pfeile ▲▼, Löschen), je Foto ein Feld für genau einen Buchstaben (A–Z, Ä, Ö, Ü, ß;
+    `T.letter`); Entwurf `draft` + verschleierte `draftLetters`, synchron, übersteht Neuladen. „Festschreiben“ (ab 5 Fotos
+    mit Buchstaben) setzt das geheime Wort zusammen (keine Wörter früherer Runden). Phase 2: Fotos in Reihenfolge ohne
+    Buchstaben, darunter je ein Feld → „Festschreiben und vergleichen“ (**nur ein Versuch**) → Buchstabe für Buchstabe
+    grün/rot, „X von Y Buchstaben richtig“ (Groß/klein egal). Alle richtig = „Geschafft!“ mit Wort (Fotos werden gelöscht);
+    sonst „Daneben“ (`failed`, Phase 3): Wort wird aufgedeckt, **kein** erneutes Festschreiben – nur „Neue Runde“ (neues Wort,
+    neue Fotos) oder „Trotzdem richtig“ (knappe Fälle; entscheidet, wer das Wort ausgedacht hat).
   - „Zwei Kriterien wählen“ (Mit Lorbeeren und UNESCO gekrönt): 10 UNESCO-Kriterien (i)–(x) mit deutscher Kurzfassung
     (`UNESCO_CRITERIA`), genau 2 wählen und festschreiben; Lösung (ix)+(x) in tools.js, vorher nie gezeigt. Danach wird jedes
     gewählte Kriterium einzeln bewertet („(x) richtig“, „(ii) falsch“, grün/rot); nicht gewählte werden nie verraten;

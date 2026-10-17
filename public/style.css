@@ -679,3 +679,18 @@ button.term { cursor: pointer; }
 .photo-grid.edit { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 .photo-grid .photo-btns { display: flex; gap: 4px; justify-content: center; }
 .photo-grid .photo-btns .sort-btn { width: 44px; height: 44px; background: var(--surface); }
+
+/* ---------- Foto-Liste (Phase 1): Ziehen/Pfeile, Buchstabe je Foto; Fortschritt beim Hochladen ---------- */
+.photo-sort-item { gap: 6px; padding: 6px; min-height: 92px; }
+.photo-sort-item .sort-grip { width: 36px; }
+.ps-photo { position: relative; flex: 0 0 auto; }
+.ps-thumb { display: block; width: 80px; height: 80px; object-fit: cover; border-radius: 10px; background: var(--line); }
+.ps-photo .sort-place { position: absolute; top: 4px; left: 4px; min-width: 0; background: rgba(7, 59, 76, .8); color: #fff; font-size: .75rem; border-radius: 999px; padding: 1px 7px; }
+.photo-sort-item .letter-input { width: 50px; }
+.ps-move { display: grid; gap: 4px; margin-left: auto; }
+.photo-sort-item > .sort-btn { align-self: center; }
+.photo-sort-item .sort-btn { background: var(--sea); }
+.photo-progress { align-items: center; }
+.photo-progress > div { flex: 1 1 auto; }
+.photo-progress .progress { margin-top: 6px; height: 8px; }
+img.gone { visibility: hidden; }

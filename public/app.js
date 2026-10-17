@@ -107,6 +107,7 @@
       if (!own) announceRemote(prev, state);
     }
     render();
+    if (!prev && L.isCompatible(state, C)) restoreOpenTool(); // erster Stand nach dem (Neu-)Laden
   }
 
   // Aktion ausführen: lokal anwenden, an Server senden, bei Konflikt neu versuchen.
@@ -696,6 +697,18 @@
     const refresh = m.refresh;
     m.refresh = () => { if (toolUI.dragging) toolUI.refreshPending = true; else refresh(); };
     m.el.addEventListener("click", (ev) => { if (ev.target === m.el && app.modals[app.modals.length - 1] === m) closeModal(); });
+    // Offenes Hilfsmittel merken: Wirft das Handy den Browser beim Öffnen der Kamera aus dem Speicher, öffnet es
+    // sich nach dem Neuladen wieder (die Fotos liegen ohnehin schon auf dem Server)
+    store.set("openTool", JSON.stringify({ qid, t: Date.now() }));
+    m.onClose = () => store.set("openTool", null);
+  }
+  function restoreOpenTool() {
+    let saved = null;
+    try { saved = JSON.parse(store.get("openTool") || "null"); } catch (e) { /* egal */ }
+    store.set("openTool", null);
+    if (!saved || !tcfg(saved.qid) || !IX.quests[saved.qid] || Date.now() - saved.t > 60 * 60000) return;
+    openQuest(saved.qid);
+    openTool(saved.qid);
   }
 
   const tBtn = (op, label, cls, extra) => '<button class="btn ' + cls + '" data-tool-act="' + op + '"' + (extra || "") + ">" + label + "</button>";
@@ -995,7 +1008,7 @@
     return h + peekBtn(qid) + revealBtn(ts) + newRoundBtn(false, "Neue Runde");
   }
 
-  // ---- Buchstaben-Fotos (Baumstaben): Fotos mit je einem Buchstaben → geheimes Wort; beim Raten Buchstaben eintragen
+  // ---- Buchstaben-Fotos (Baumstaben): Fotos mit je einem Buchstaben → geheimes Wort; ein Rateversuch pro Runde
   function photoWordBody(qid, cfg, ts, now) {
     const ph = T.phase(cfg, ts);
     const pbtn = (act, ic, i, d, label, off) => '<button class="sort-btn" data-tool-act="' + act + '" data-i="' + i + '"' + (d ? ' data-d="' + d + '"' : "") + ' aria-label="' + label + '"' + (off ? " disabled" : "") + ">" + icon(ic) + "</button>";
@@ -1005,15 +1018,18 @@
       const draft = ts.draft || [], letters = T.unhide(ts.draftLetters) || [];
       const ready = draft.length >= cfg.minLetters && letters.length === draft.length && letters.every(Boolean);
       return phaseBar(1) + lookAway +
-        '<p class="tool-label">Für jeden Buchstaben einen Baum oder Ast fotografieren, dessen Form ihn darstellt – in der richtigen Reihenfolge, mindestens ' + cfg.minLetters + ". Unter jedes Foto genau einen Buchstaben eintragen.</p>" +
-        photoPicker(qid, "") +
-        (draft.length ? '<div class="photo-grid edit">' + draft.map((d, i) => '<div class="pg-item"><span class="pg-no">' + (i + 1) + "</span>" + photoImg(d.photo, "pg-photo") +
-          letterInput('data-letter="' + i + '"', letters[i], i) +
-          '<div class="photo-btns">' + pbtn("movePhoto", "chevron-left", i, -1, "nach vorne", i === 0) + pbtn("movePhoto", "chevron-right", i, 1, "nach hinten", i === draft.length - 1) +
-          pbtn("removePhoto", "trash-2", i, 0, "Foto löschen") + "</div></div>").join("") + "</div>" : "") +
+        '<p class="tool-label">Für jeden Buchstaben einen Baum oder Ast fotografieren, dessen Form ihn darstellt – in der richtigen Reihenfolge, mindestens ' + cfg.minLetters + ". Zu jedem Foto genau einen Buchstaben eintragen.</p>" +
+        photoPicker(qid, true) +
+        (draft.length ? '<p class="muted small">Reihenfolge ändern: am Griff ziehen oder mit den Pfeilen.</p>' +
+          '<ol class="sort-list photo-sort" data-sort="' + qid + ':photos" data-sync>' + draft.map((d, i) =>
+            '<li class="sort-item photo-sort-item" data-val="' + esc(d.photo) + '"><span class="sort-grip" data-grip aria-hidden="true">' + icon("grip-vertical") + "</span>" +
+            '<span class="ps-photo">' + photoImg(d.photo, "ps-thumb") + '<span class="sort-place">' + (i + 1) + "</span></span>" +
+            letterInput('data-letter="' + i + '"', letters[i], i) +
+            '<span class="ps-move">' + pbtn("movePhoto", "chevron-up", i, -1, "nach vorne", i === 0) + pbtn("movePhoto", "chevron-down", i, 1, "nach hinten", i === draft.length - 1) + "</span>" +
+            pbtn("removePhoto", "trash-2", i, 0, "Foto löschen") + "</li>").join("") + "</ol>" : "") +
         tBtn("fix", icon("lock") + " Festschreiben" + (draft.length ? " (" + draft.length + " Buchstaben)" : ""), "btn-primary btn-block", ready ? "" : " disabled") +
         '<p class="muted small">' + (draft.length < cfg.minLetters ? "Noch " + (cfg.minLetters - draft.length) + " Foto" + (cfg.minLetters - draft.length === 1 ? "" : "s") + " bis zum Festschreiben. " : "") +
-          "Wörter aus früheren Runden zählen nicht noch einmal.</p>" +
+          "Fotos bleiben auch beim Neuladen der Seite erhalten. Wörter aus früheren Runden zählen nicht noch einmal.</p>" +
         (draft.length ? newRoundBtn(false, "Neu beginnen (alle Fotos verwerfen)") : "");
     }
     const word = T.unhide(ts.secret) || [], attempts = ts.attempts || [], last = attempts[attempts.length - 1];
@@ -1022,81 +1038,163 @@
       (show ? ': <strong class="tool-secret">' + esc(word.join("")) + "</strong>" : "") + "</div>";
     const row = (letters, marks) => '<div class="letter-row">' + letters.map((l, i) => '<span class="letter-box ' + (marks[i] ? "ok" : "miss") + '">' + esc(l) + "</span>").join("") + "</div>";
     if (ph === 3) {
+      const n = last ? last.marks.filter(Boolean).length : 0;
       if (ts.solved) {
-        h += tResult(true, "Das Wort: <strong>" + esc(word.join("")) + "</strong>" + (ts.accepted && last ? " – euer Versuch „" + esc(last.letters.join("")) + "“ zählt trotzdem." : "")) +
-          (last ? row(last.letters, ts.accepted ? last.marks : last.marks.map(() => true)) : "");
+        h += tResult(true, (last ? n + " von " + word.length + " Buchstaben richtig. " : "") + "Das Wort: <strong>" + esc(word.join("")) + "</strong>" + (ts.accepted && last ? " – euer Versuch „" + esc(last.letters.join("")) + "“ zählt trotzdem." : "")) +
+          (last ? row(last.letters, last.marks) : "");
+      } else if (ts.failed && last) {
+        h += tResult(false, n + " von " + word.length + " Buchstaben richtig. Das Wort war: <strong>" + esc(word.join("")) + "</strong>") +
+          '<p class="small">Euer Versuch' + byTxt(last.by) + ":</p>" + row(last.letters, last.marks) +
+          (ts.photos && ts.photos.length ? '<div class="photo-grid">' + ts.photos.map((pid, i) => '<div class="pg-item ' + (last.marks[i] ? "ok" : "miss") + '"><span class="pg-no">' + (i + 1) + "</span>" +
+            photoImg(pid, "pg-photo") + '<span class="pg-letter">' + esc(word[i]) + "</span></div>").join("") + "</div>" : "") +
+          tBtn("accept", icon("check") + " Trotzdem richtig", "btn-good btn-block") + '<p class="muted small">„Trotzdem richtig“ für knappe Fälle – entscheidet, wer das Wort ausgedacht hat.</p>';
       } else {
         h += '<p class="tool-label">Aufgelöst – das Wort war: <strong>' + esc(word.join("")) + "</strong></p>" + row(word, word.map(() => true));
       }
       return h + newRoundBtn(!ts.solved, "Neue Runde – neues Wort, neue Fotos");
     }
-    if (last) {
-      const n = last.marks.filter(Boolean).length;
-      h += tResult(false, n + " von " + word.length + " Buchstaben richtig (Versuch von " + esc(last.by) + "). Korrigiert die roten und schreibt erneut fest.");
-    }
-    h += '<div class="photo-grid">' + (ts.photos || []).map((pid, i) => {
-      const mark = last ? (last.marks[i] ? " ok" : " miss") : "";
-      return '<div class="pg-item' + mark + '"><span class="pg-no">' + (i + 1) + "</span>" + photoImg(pid, "pg-photo") +
-        letterInput('data-keep="' + qid + ":g" + i + '"', last ? last.letters[i] : "", i) +
-        (peeking(qid) ? '<span class="pg-letter">' + esc(word[i]) + "</span>" : "") + "</div>";
-    }).join("") + "</div>" +
+    h += '<p class="tool-label">Tragt unter jedes Foto einen Buchstaben ein. Es gibt nur einen Versuch – danach wird verglichen.</p>' +
+      '<div class="photo-grid">' + (ts.photos || []).map((pid, i) => '<div class="pg-item"><span class="pg-no">' + (i + 1) + "</span>" + photoImg(pid, "pg-photo") +
+        letterInput('data-keep="' + qid + ":g" + i + '"', "", i) + (peeking(qid) ? '<span class="pg-letter">' + esc(word[i]) + "</span>" : "") + "</div>").join("") + "</div>" +
       tBtn("guess", icon("lock") + " Festschreiben und vergleichen", "btn-primary btn-block");
-    if (last) h += tBtn("accept", icon("check") + " Trotzdem richtig", "btn-good btn-block") + '<p class="muted small">„Trotzdem richtig“ für knappe Fälle – entscheidet, wer das Wort ausgedacht hat.</p>';
     return h + peekBtn(qid) + revealBtn(ts) + newRoundBtn(false, "Neue Runde – neues Wort, neue Fotos");
   }
 
-  // ---- Fotos für Hilfsmittel (wiederverwendbar)
-  // photoPicker(qid, hinweis) zeigt „Foto aufnehmen“ (Kamera) und „Aus Galerie“. Das gewählte Foto wird im Browser
-  // verkleinert (lange Seite ≤ 1.000 px, JPEG < 200 KB), per POST api/photo hochgeladen und dann mit
-  // toolDo(qid, { type: "addPhoto", photo: id }) im Hilfsmittel eingetragen. Anzeigen mit photoImg(id).
+  // ---- Fotos für Hilfsmittel (wiederverwendbare Foto-Grundlage)
+  // photoPicker(qid, mehrere) zeigt „Foto aufnehmen“ (Kamera) und „Aus Galerie wählen“ (mehrere Bilder auf einmal).
+  // Jedes Bild wird einzeln und speichersparend verkleinert (shrinkPhoto), sofort hochgeladen (POST api/photo) und mit
+  // toolDo(qid, { type: "addPhoto", photo: id }) eingetragen – damit liegt es auf dem Server und übersteht ein Neuladen
+  // (z. B. wenn das Handy den Browser beim Öffnen der Kamera aus dem Speicher wirft). Anzeigen mit photoImg(id).
   // Der Server löscht Fotos selbst, sobald der Spielstand nicht mehr auf sie verweist (Geschafft, Neue Runde, Reset).
-  function photoPicker(qid, hint) {
+  const PHOTO_SIDE = 1000, PHOTO_BYTES = 200 * 1024;
+  function photoPicker(qid, multiple) {
     if (!app.online) return '<div class="tool-warn">' + icon("wifi-off") + " Offline – Fotos aufnehmen geht erst wieder mit Netz.</div>";
-    if (toolUI.uploading[qid]) return '<p class="tool-wait">' + icon("camera") + " Foto wird verkleinert und hochgeladen …</p>";
+    const up = toolUI.uploading[qid];
+    if (up) {
+      return '<div class="tool-wait photo-progress">' + icon("camera") + "<div><strong>Foto " + Math.min(up.done + 1, up.total) + " von " + up.total + "</strong> wird verkleinert und hochgeladen …" +
+        '<div class="progress"><div style="width:' + Math.round(up.done / up.total * 100) + '%"></div></div></div></div>';
+    }
     return '<div class="grid2 photo-pick">' +
       '<label class="btn btn-primary">' + icon("camera") + ' Foto aufnehmen<input type="file" accept="image/*" capture="environment" data-photo-input hidden></label>' +
-      '<label class="btn btn-ghost">' + icon("image") + ' Aus Galerie<input type="file" accept="image/*" data-photo-input hidden></label></div>' +
-      (hint ? '<p class="muted small">' + esc(hint) + "</p>" : "");
+      '<label class="btn btn-ghost">' + icon("image") + ' Aus Galerie wählen<input type="file" accept="image/*"' + (multiple ? " multiple" : "") + ' data-photo-input hidden></label></div>';
   }
   const photoUrl = (id) => "api/photo/" + encodeURIComponent(id) + "?t=" + encodeURIComponent(app.token || "");
-  const photoImg = (id, cls) => '<img class="' + (cls || "tool-photo") + '" src="' + photoUrl(id) + '" alt="Foto" decoding="async">';
-  async function handlePhoto(qid, file) {
+  const photoImg = (id, cls) => '<img class="' + (cls || "tool-photo") + '" src="' + photoUrl(id) + '" alt="Foto" decoding="async" onerror="this.classList.add(\'gone\')">';
+  // Bilder nacheinander verarbeiten (nie mehrere gleichzeitig im Speicher), mit Fortschrittsanzeige
+  async function handlePhotos(qid, files) {
+    files = Array.from(files || []);
+    if (!files.length) return;
     if (!app.online) { toast(OFFLINE_MSG, true); return; }
-    toolUI.uploading[qid] = true;
+    if (toolUI.uploading[qid]) { toast("Bitte warten, bis die Fotos hochgeladen sind.", true); return; }
+    const up = toolUI.uploading[qid] = { done: 0, total: files.length };
     rerenderTools(qid);
-    try {
-      const id = await uploadPhoto(await shrinkPhoto(file));
-      toolDo(qid, { type: "addPhoto", photo: id });
-    } catch (e) {
-      toast("Foto konnte nicht hochgeladen werden" + (e && e.message ? " (" + e.message + ")" : "") + ". Bitte nochmal versuchen.", true);
-    } finally {
-      toolUI.uploading[qid] = false;
+    let failed = 0, lastErr = null;
+    for (const f of files) {
+      try {
+        const id = await uploadPhoto(await shrinkPhoto(f));
+        if (!toolDo(qid, { type: "addPhoto", photo: id })) failed++;
+      } catch (e) {
+        failed++; lastErr = e;
+        if (!app.online) { failed += files.length - up.done - 1; break; }
+      }
+      up.done++;
       rerenderTools(qid);
     }
+    delete toolUI.uploading[qid];
+    rerenderTools(qid);
+    if (failed) toast((failed === 1 ? "Ein Foto" : failed + " Fotos") + " konnte" + (failed === 1 ? "" : "n") + " nicht hochgeladen werden" +
+      (lastErr && lastErr.message ? " (" + lastErr.message + ")" : "") + ". Bitte nochmal versuchen.", true);
   }
-  function loadImage(file) {
-    return new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file), img = new Image();
-      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
-      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("kein lesbares Bild")); };
-      img.src = url;
-    });
-  }
-  async function shrinkPhoto(file) {
-    const img = await loadImage(file);
-    let side = 1000, q = 0.82, blob = null;
-    for (let k = 0; k < 8; k++) {
-      const sc = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
-      const c = document.createElement("canvas");
-      c.width = Math.max(1, Math.round(img.naturalWidth * sc));
-      c.height = Math.max(1, Math.round(img.naturalHeight * sc));
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      blob = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
-      if (blob && blob.size < 200 * 1024) return blob;
-      if (q > 0.55) q -= 0.12; else side = Math.round(side * 0.8);
+
+  // Abmessungen + EXIF-Ausrichtung aus dem Dateianfang lesen (ohne das Bild zu dekodieren)
+  async function readImageInfo(file) {
+    const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    const n = v.byteLength;
+    if (n > 24 && v.getUint32(0) === 0x89504e47) return { w: v.getUint32(16), h: v.getUint32(20), o: 1 }; // PNG
+    if (n < 4 || v.getUint16(0) !== 0xffd8) return null; // kein JPEG
+    let off = 2, o = 1;
+    while (off + 4 <= n) {
+      if (v.getUint8(off) !== 0xff) { off++; continue; }
+      const m = v.getUint8(off + 1);
+      if (m === 0xff || m === 0x01 || (m >= 0xd0 && m <= 0xd8)) { off += m === 0xff ? 1 : 2; continue; }
+      const len = v.getUint16(off + 2);
+      if (m === 0xe1) o = exifOrientation(v, off + 4) || o;
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) {
+        return off + 9 <= n ? { w: v.getUint16(off + 7), h: v.getUint16(off + 5), o } : null;
+      }
+      if (m === 0xda) break;
+      off += 2 + len;
     }
-    if (!blob) throw new Error("Umwandeln fehlgeschlagen");
-    return blob;
+    return null;
+  }
+  function exifOrientation(v, start) {
+    if (start + 14 > v.byteLength || v.getUint32(start) !== 0x45786966) return 0; // "Exif"
+    const t = start + 6, le = v.getUint16(t) === 0x4949;
+    const ifd = t + v.getUint32(t + 4, le);
+    if (ifd + 2 > v.byteLength) return 0;
+    for (let i = 0, cnt = v.getUint16(ifd, le); i < cnt; i++) {
+      const e = ifd + 2 + i * 12;
+      if (e + 12 > v.byteLength) break;
+      if (v.getUint16(e, le) === 0x0112) { const val = v.getUint16(e + 8, le); return val >= 1 && val <= 8 ? val : 0; }
+    }
+    return 0;
+  }
+  // Speichersparend verkleinern: Das Kamerafoto (12–50 Megapixel) wird nie in voller Größe in ein Canvas gezeichnet.
+  // createImageBitmap dekodiert direkt in Zielgröße; ein einziges kleines Canvas wird wiederverwendet und danach
+  // freigegeben; Bitmaps und Objekt-URLs werden sofort geschlossen. EXIF-Ausrichtung: Dreht der Browser nicht selbst,
+  // drehen wir (Hochkant-Fotos kommen aufrecht an).
+  let photoCanvas = null;
+  async function shrinkPhoto(file) {
+    const info = await readImageInfo(file).catch(() => null);
+    let src = null, url = null, o = 1;
+    try {
+      if (info && window.createImageBitmap) {
+        const ow = info.o >= 5 ? info.h : info.w; // Breite nach der Ausrichtung
+        const s = Math.min(1, PHOTO_SIDE / Math.max(info.w, info.h));
+        // nur die Breite vorgeben: die Höhe folgt dem Seitenverhältnis – so wird nichts verzerrt, egal ob der Browser
+        // die EXIF-Ausrichtung schon anwendet oder nicht
+        try { src = await createImageBitmap(file, { resizeWidth: Math.max(1, Math.round(ow * s)), resizeQuality: "high" }); } catch (e) { src = null; }
+        if (src) {
+          const turned = info.w !== info.h && (src.width > src.height) !== (info.w > info.h); // Browser hat 90° gedreht
+          o = info.o >= 5 ? (turned ? 1 : info.o) : 1; // Spiegeln/180° wendet jeder aktuelle Browser selbst an
+        }
+      }
+      if (!src) { // Rückfall: <img> (Browser dreht selbst)
+        url = URL.createObjectURL(file);
+        src = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error("kein lesbares Bild"));
+          img.src = url;
+        });
+      }
+      const sw = src.width || src.naturalWidth, sh = src.height || src.naturalHeight;
+      const ow = o >= 5 ? sh : sw, oh = o >= 5 ? sw : sh;
+      let side = PHOTO_SIDE, q = 0.82, blob = null;
+      const c = photoCanvas || (photoCanvas = document.createElement("canvas"));
+      for (let k = 0; k < 8; k++) {
+        const sc = Math.min(1, side / Math.max(ow, oh));
+        const dw = Math.max(1, Math.round(ow * sc)), dh = Math.max(1, Math.round(oh * sc));
+        c.width = dw; c.height = dh;
+        const ctx = c.getContext("2d");
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        if (o === 5) ctx.transform(0, 1, 1, 0, 0, 0);
+        else if (o === 6) ctx.transform(0, 1, -1, 0, dw, 0);
+        else if (o === 7) ctx.transform(0, -1, -1, 0, dw, dh);
+        else if (o === 8) ctx.transform(0, -1, 1, 0, 0, dh);
+        ctx.drawImage(src, 0, 0, o >= 5 ? dh : dw, o >= 5 ? dw : dh);
+        blob = await new Promise((r) => c.toBlob(r, "image/jpeg", q));
+        if (blob && blob.size < PHOTO_BYTES) break;
+        if (q > 0.55) q -= 0.12; else side = Math.round(side * 0.8);
+      }
+      if (!blob) throw new Error("Umwandeln fehlgeschlagen");
+      return blob;
+    } finally {
+      if (src && src.close) src.close();
+      if (src && src.removeAttribute) src.removeAttribute("src");
+      if (url) URL.revokeObjectURL(url);
+      if (photoCanvas) { photoCanvas.width = 0; photoCanvas.height = 0; } // Speicher sofort freigeben (wichtig für iPhones)
+    }
   }
   async function uploadPhoto(blob) {
     let res;
@@ -1167,10 +1265,10 @@
       bindPeekHold(t);
       t.addEventListener("change", (ev) => {
         const inp = ev.target.closest("[data-photo-input]");
-        if (!inp || !inp.files || !inp.files[0]) return;
-        const f = inp.files[0];
+        if (!inp || !inp.files || !inp.files.length) return;
+        const files = Array.from(inp.files); // Reihenfolge so, wie das Handy sie liefert
         inp.value = "";
-        handlePhoto(t.dataset.tool, f);
+        handlePhotos(t.dataset.tool, files);
       });
     });
     $$(".sort-list", el).forEach(bindSort);

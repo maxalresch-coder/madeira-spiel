@@ -204,7 +204,7 @@
     const distinct = (words) => { if (new Set(words.map(norm)).size !== words.length) fail("Bitte keine doppelten Einträge."); };
     const round0s = {
       secret: null, fruits: null, guess: null, guessed: null, tips: 0, revealed: false, guessOrder: null,
-      photos: null, draft: null, draftLetters: null, attempts: [], solved: false, accepted: false, letters: null
+      photos: null, draft: null, draftLetters: null, attempts: [], solved: false, failed: false, accepted: false, letters: null
     };
     const ph = phase(cfg, ts);
 
@@ -297,6 +297,14 @@
           draft.splice(i, 1); letters.splice(i, 1);
           return saveDraft();
         }
+        case "arrange": { // neue Reihenfolge per Ziehen (Foto-IDs); Buchstaben wandern mit
+          inPhase1();
+          const order = (op.order || []).map(String);
+          if (order.length !== draft.length || draft.some((d) => order.indexOf(d.photo) < 0)) fail("Bitte alle Fotos in eine Reihenfolge bringen.");
+          const pairs = draft.map((d, i) => [d, letters[i]]);
+          const sorted = order.map((id) => pairs.find((p) => p[0].photo === id));
+          return Object.assign(ts, { draft: sorted.map((p) => p[0]), draftLetters: hide(sorted.map((p) => p[1] || "")) });
+        }
         case "movePhoto": {
           inPhase1();
           const i = at(op.i), j = i + (op.d < 0 ? -1 : 1);
@@ -313,22 +321,24 @@
           return Object.assign(ts, round0s, { photos: draft.map((d) => d.photo), secret: hide(letters), letters: letters.length, by });
         }
       }
-      if (ph !== 2) fail("Gerade wird nicht geraten.");
       const word = unhide(ts.secret) || [];
       if (op.type === "guess") {
+        if (ph !== 2) fail("Gerade wird nicht geraten.");
         const g = (op.letters || []).map(letter);
         if (g.length !== word.length || g.some((l) => !l)) fail("Bitte unter jedes Foto genau einen Buchstaben eintragen.");
         const marks = word.map((l, i) => sameLetter(l, g[i]));
         ts.attempts = (ts.attempts || []).concat({ letters: g, marks, by, t: now });
-        // geschafft → Runde beendet, die Fotos werden nicht mehr gebraucht (Server löscht sie)
+        // Ein Versuch: alles richtig → geschafft (Fotos werden nicht mehr gebraucht, der Server löscht sie);
+        // sonst „Daneben“ – das Wort wird aufgedeckt, weiter geht es nur mit „Neue Runde“ (oder „Trotzdem richtig“)
         if (marks.every(Boolean)) Object.assign(ts, { solved: true, photos: [] });
+        else ts.failed = true;
         return ts;
       }
       if (op.type === "accept") {
-        const last = (ts.attempts || [])[(ts.attempts || []).length - 1];
-        if (!last) fail("Es gibt noch keinen Versuch, der zählen könnte.");
-        return Object.assign(ts, { solved: true, accepted: true, photos: [] });
+        if (!ts.failed || ts.solved) fail("Es gibt keinen falschen Versuch, der zählen könnte.");
+        return Object.assign(ts, { solved: true, failed: false, accepted: true, photos: [] });
       }
+      if (ph !== 2) fail("Gerade wird nicht geraten.");
     }
     fail("Das geht hier nicht.");
   }
@@ -339,7 +349,7 @@
     if (!ts.secret) return 1;
     if (ts.revealed) return 3;
     if (cfg.kind === "secretRank") return ts.guess ? 3 : 2;
-    if (cfg.kind === "photoWord") return ts.solved ? 3 : 2;
+    if (cfg.kind === "photoWord") return ts.solved || ts.failed ? 3 : 2;
     // Churchill: auch nach dem 6. Tipp darf noch markiert werden (der letzte Tipp kann richtig gewesen sein)
     if (cfg.kind === "secretTerms") { const r = result(cfg, ts, 0); return r && r.ok ? 3 : 2; }
     return 2;
