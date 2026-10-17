@@ -297,7 +297,9 @@ Vertrauensbasis, keine Beweisfotos.
     Buchten, `used`; sind alle durch, alle außer der letzten) → nur das auslosende Handy (`here` im lokalen Entwurf) sieht den
     Küstenausschnitt (ohne Nummer/Name, ein-/ausblendbar) und zeichnet; andere Handys sehen „Auf einem anderen Handy wird
     gerade gezeichnet“ + „Hier zeichnen“ (Rückfrage, Ein-Handy-Fall nach Neuladen). „Bestätigen“ (Aktion `fix` mit `drawing`)
-    → Handy weitergeben → Phase 2: Zeichnung + Karte mit allen Nummern (`bayMap`, „Karte größer“, Chips) → „Bestätigen“ (`guess`) → Phase 3: Richtig/Falsch, Zeichnung und gedrehter Ausschnitt nebeneinander,
+    → Handy weitergeben → Phase 2: Zeichnung + Karte mit allen Nummern (`bayMap`, zoombar mit `panZoom` wie die Inselkarte,
+    Nummern bleiben gleich groß – `bayMarkScale`; „Ganze Karte“ unter der Karte, damit gezoomt keine Nummer verdeckt wird;
+    Zoom in `toolUI.bayZoom`; Chips) → „Bestätigen“ (`guess`) → Phase 3: Richtig/Falsch, Zeichnung und gedrehter Ausschnitt nebeneinander,
     dazu die Bucht auf der Karte (nach Norden, ungedreht) grün hervorgehoben (`bm-hl` = `poly`); „Neue Runde“ (löscht
     Zeichnung), bei Falsch zusätzlich „Trotzdem richtig“ (`accept`).
     **Zeichenfläche** (`buildDrawEl`, einmal gebaut, nach jedem Neuzeichnen mit `mountDraw` in `[data-draw-slot]` zurückgehängt
@@ -339,15 +341,28 @@ Vertrauensbasis, keine Beweisfotos.
   Bei ≤ 380 px: Knöpfe 44 px, lange Beschriftungen („Aktivitäten“, „Einstellungen“) kleiner (`.hdr-wide`, `.hdr-set`),
   Schriftzug passt sich an (fitLogo, bei 360 px ca. 16 px) – nach Änderungen an der Kopfzeile bei 360/390 px nachmessen.
   Eigenes Logo: `public/images/logo.svg` oder `logo.png` ersetzt den Schriftzug.
-- Startseite (keine untere Leiste): Block „Regionale Quests“ (Überschrift auf Karten-Hintergrund) mit Inselkarte, Zoom (+/−/⤢),
+- Startseite (keine untere Leiste): Block „Regionale Quests“ (Überschrift auf Karten-Hintergrund) mit Inselkarte,
   Legende nur 4 Stufen; darunter der kräftig blaue Block „Stapel-Quests“ (3 offene, Tausch/Multiplikator,
   Zeile „… · Joker genutzt: Tausch X von 5 · Multiplikator X von 3“); dann Knopf „Alle Quests anzeigen“.
 - Pins: einzelne = Punkt-Symbol, Farbe offen = unbesucht-Grau, erledigt = erkundet-Hellgrün, deutlicher Rand;
   nahe Pins → Gruppe mit Anzahl (Antippen = Auswahl). Pin → einzelne Quest; Region → alle 3 Quests.
   Größe `PIN` (r 11 px, Tippfläche `hit` 22 px Radius = 44 px). **Regionsnamen bleiben lesbar:** `avoidLabels` rückt
   Pin-Köpfe, die auf einem Namen oder einem anderen Kopf liegen, höchstens ~44 px weiter (zuerst nach oben); geht das nicht,
-  werden sie zur Gruppe zusammengelegt. Die Namen liegen über den Stielen (`#labels` nach `#pins`). Nach Änderungen bei
-  384×854 prüfen (alle 10 Namen frei).
+  werden sie zur Gruppe zusammengelegt (auch der Knopf „Zurücksetzen“ bleibt frei). Nach Änderungen bei 384×854 prüfen
+  (alle 10 Namen frei, ungezoomt und gezoomt).
+- **Zoomen/Verschieben wie eine Karten-App** (`panZoom(wrap, stage, st, opts)`, für Inselkarte und Buchten-Karte):
+  zwei Finger = Pinch-Zoom um den Punkt zwischen den Fingern (1×–8×, `ZOOM_MAX`); ein Finger ungezoomt = Seite scrollt
+  (`touch-action: pan-y`), gezoomt = Karte verschieben (`touch-action: none`); Doppeltippen = ×2 (bei 8× zurück);
+  Knopf „Zurücksetzen“ (Icon `scan`, nur gezoomt sichtbar) = ganze Insel; Mausrad/Ziehen am Computer. Die Karte wird **nur per
+  CSS-Transform** des Inhalts (`#map-stage`, `translate3d … scale`) bewegt – kein Neuzeichnen; sie füllt immer den Rahmen
+  (lässt sich nicht hinausschieben). Touch-Ereignisse mit `preventDefault` bei zwei Fingern/gezoomtem Verschieben (Seite
+  zoomt nicht mit, iPhone zusätzlich `gesturestart`). Ein Verschieben gilt nie als Antippen; Antippen (`mapTap`):
+  Pin/Gruppe sofort, Region nach 280 ms (sonst würde Doppeltippen sie öffnen). Zustand `mapUI.st` {s, tx, ty} bleibt beim
+  Neuzeichnen; während einer Geste wird `render()` aufgeschoben (`mapUI.active`/`renderPending`). Grenzlinien werden nach
+  der Geste wieder dünn (`--zs`, `stroke-width: calc(… / var(--zs))`).
+  **Pins, Namen und Standortpunkt** liegen in einer eigenen Ebene darüber (`#map-ov`, Bildschirmpixel): immer gleich groß;
+  während der Geste werden nur ihre Positionen nachgeführt (`moveOverlay`), Gruppen werden höchstens alle 150 ms neu
+  gebildet (`maybeRelayout` → `layoutPins`: lösen sich beim Reinzoomen auf, fassen sich beim Rauszoomen zusammen).
 - **„Wo bin ich?“** (Knopf rechts in der Kopfzeile „Regionale Quests“): Kasten unter der Karte („Ihr seid in …“ bzw.
   „Gerade in keiner Region.“ + Höhe, ×), Region blinkt 3× kurz (`here-hl`), roter pulsierender Punkt (SMIL-`animate`) am
   Standort; verweigerte Erlaubnis → kurze Meldung. Nur lokal (`mapUI.here`).

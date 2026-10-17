@@ -271,6 +271,8 @@
   function sum() { return L.summary(app.state, C); }
 
   function render() {
+    // Während auf der Inselkarte gezoomt/verschoben wird, nicht neu zeichnen – danach nachholen
+    if (mapUI.active && app.view === "home" && $("#map-wrap")) { mapUI.renderPending = true; return; }
     if (!app.state) { $("#view").innerHTML = '<div class="empty">Spielstand wird geladen …</div>'; return; }
     if (!L.isCompatible(app.state, C)) { renderUpgrade(); return; }
     const s = sum();
@@ -348,8 +350,8 @@
   const PINS = [];
   C.regions.forEach((r) => r.quests.forEach((q, i) => PINS.push({ q, region: r, n: i + 1, xy: toMap(q.pin[0], q.pin[1]) })));
 
-  const FULL = { x: 0, y: 0, w: MAP.w, h: MAP.h };
-  const mapUI = { vb: Object.assign({}, FULL), pointers: new Map(), gesture: null };
+  // Zoom-Zustand der Inselkarte: s = Faktor (1–8), tx/ty = Verschiebung in Bildschirmpixeln (bleibt beim Neuzeichnen)
+  const mapUI = { st: { s: 1, tx: 0, ty: 0 }, active: false };
 
   function regionPaths(levels) {
     return C.regions.map((r) => {
@@ -379,21 +381,20 @@
   // Startseite: a) Inselkarte, b) offene Stapel-Quests, c) Regionen mit Sternen
   function viewHome(s) {
     const legend = L.LEVELS.map((l, i) => '<span><i style="background:' + l.color + '"></i>' + (i === 0 ? "Unbesucht" : l.name) + "</span>").join("");
-    const labels = C.regions.map((r) => {
-      const p = MAP.labels[r.name];
-      return p ? '<text class="region-label" x="' + p[0] + '" y="' + p[1] + '">' + esc(r.name) + "</text>" : "";
-    }).join("");
-    const vb = mapUI.vb;
+    const labels = C.regions.map((r) => (MAP.labels[r.name] ? '<text class="region-label" data-label="' + esc(r.name) + '">' + esc(r.name) + "</text>" : "")).join("");
+    const st = mapUI.st;
     return '' +
       (app.state.ended ? '<div class="panel ended-note"><strong>' + icon("flag") + ' Urlaub beendet.</strong> <button class="btn btn-small btn-gold" data-go="stats">Zertifikat & Belohnungen</button></div>' : "") +
       '<section class="home-sec region-zone" aria-label="Regionale Quests">' +
       '<div class="zone-head"><div><h2>' + icon("map-pinned") + ' Regionale Quests</h2>' +
       '<div class="zone-sub">' + s.explored + " von " + C.regions.length + " Regionen erkundet · " + s.questsDone + " von 30 erledigt</div></div>" +
       '<button class="here-btn" data-here aria-label="Wo bin ich? Standort einmalig abfragen">' + icon("locate-fixed") + "<span>Wo bin ich?</span></button></div>" +
-      '<div class="map-wrap"><svg id="island" viewBox="' + [vb.x, vb.y, vb.w, vb.h].join(" ") + '" xmlns="http://www.w3.org/2000/svg">' +
-        '<g id="regions">' + regionPaths(s.levels) + '</g><g id="pins"></g><g id="labels">' + labels + "</g></svg></div>" +
-      '<div class="map-bar"><div class="map-ctrl"><button data-zoom="out" aria-label="Herauszoomen">−</button><button data-zoom="in" aria-label="Hineinzoomen">+</button><button data-zoom="reset" aria-label="Ganze Insel">⤢</button></div>' +
-      '<div class="legend">' + legend + "</div></div>" + hereBox() + "</section>" +
+      // Karte (per CSS-Transform gezoomt) + Ebene darüber mit Pins, Namen und Standortpunkt in Bildschirmgröße
+      '<div class="map-wrap' + (st.s > 1.001 ? " zoomed" : "") + '" id="map-wrap"><div class="map-stage" id="map-stage" style="transform:translate3d(' + st.tx + "px," + st.ty + "px,0) scale(" + st.s + ')">' +
+        '<svg id="island" viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg" style="--zs:' + st.s + '"><g id="regions">' + regionPaths(s.levels) + "</g></svg></div>" +
+        '<svg class="map-ov" id="map-ov"><g id="pins"></g><g id="labels">' + labels + "</g></svg>" +
+        '<button class="map-reset" data-map-reset aria-label="Ganze Insel zeigen">' + icon("scan") + "</button></div>" +
+      '<div class="map-bar"><div class="legend">' + legend + "</div></div>" + hereBox() + "</section>" +
       stackZone(s) +
       '<button class="btn btn-ghost btn-block all-quests-btn" data-all-quests>' + icon("list-checks") + ' Alle Quests anzeigen</button>';
   }
@@ -423,30 +424,89 @@
   const PIN = { r: 11, hit: 22, lift: 17, gap: 28 };
   // Pin-Farbe: offen = wie unbesuchte Region, erledigt = wie erkundete Region
   function pinFill(done) { return L.LEVELS[done ? 1 : 0].color; }
-  const MIN_W = MAP.w / 16;
   function mountMap() {
-    const svg = $("#island");
-    if (!svg) return;
-    applyViewBox(svg);
-    if (!svg.dataset.bound) { bindMap(svg); svg.dataset.bound = "1"; }
+    const wrap = $("#map-wrap");
+    if (!wrap) return;
+    mapUI.pz = panZoom(wrap, $("#map-stage", wrap), mapUI.st, {
+      mouseTap: true,
+      onChange: (live) => { if (live) maybeRelayout(); moveOverlay(); },
+      onEnd: () => {
+        layoutPins();
+        const isl = $("#island"); if (isl) isl.style.setProperty("--zs", mapUI.st.s); // Grenzlinien wieder dünn
+        if (mapUI.renderPending) { mapUI.renderPending = false; render(); }
+      },
+      onActive: (on) => { mapUI.active = on; },
+      onTap: mapTap,
+      onDoubleTap: () => clearTimeout(mapUI.tapTimer)
+    });
+    // Regionsnamen: Größe einmal messen (sie bleiben auf dem Bildschirm immer gleich groß)
+    mapUI.labelBox = {};
+    $$("#map-ov .region-label").forEach((t) => {
+      t.setAttribute("x", 0); t.setAttribute("y", 0);
+      let b = null; try { b = t.getBBox(); } catch (e) { /* nicht sichtbar */ }
+      if (b && b.width) mapUI.labelBox[t.dataset.label] = [b.x, b.y, b.width, b.height];
+    });
+    mapUI.pz.apply(false);
+    layoutPins();
   }
-  function applyViewBox(svg) {
-    const vb = mapUI.vb;
-    svg.setAttribute("viewBox", [vb.x, vb.y, vb.w, vb.h].join(" "));
-    svg.style.touchAction = vb.w < MAP.w - 0.5 ? "none" : "pan-y";
-    layoutPins(svg);
+  // Antippen (kein Verschieben): Pin/Gruppe sofort; Region kurz verzögert, damit Doppeltippen (Zoom) sie nicht öffnet
+  function mapTap(x, y, mouse) {
+    const el = document.elementFromPoint(x, y);
+    if (!el || !el.closest) return;
+    if (el.closest("[data-map-reset]")) { mapUI.pz.reset(); return; }
+    const pin = el.closest("[data-pin]"), grp = el.closest("[data-group]"), reg = el.closest(".region-path[data-region]");
+    // Maus: den Klick nach dem Loslassen abfangen, sonst schließt er das neue Fenster sofort (Finger: kein Klick)
+    if ((pin || grp) && mouse) mapUI.ghostUntil = Date.now() + 500;
+    clearTimeout(mapUI.tapTimer);
+    if (pin) openQuest(pin.dataset.pin);
+    else if (grp) openGroup(+grp.dataset.group);
+    else if (reg) mapUI.tapTimer = setTimeout(() => openRegion(reg.dataset.region), 280);
   }
-  function layoutPins(svg) {
-    const rect = svg.getBoundingClientRect();
-    if (!rect.width) return;
-    const vb = mapUI.vb, k = vb.w / rect.width; // Karteneinheiten pro Bildschirmpixel
-    $$(".region-label", svg).forEach((t) => { t.style.fontSize = (11.5 * k) + "px"; t.style.strokeWidth = (3 * k) + "px"; });
-    const H = vb.h / k;
-    const pts = PINS.map((p) => ({ p, ax: (p.xy[0] - vb.x) / k, ay: (p.xy[1] - vb.y) / k }))
-      .filter((o) => o.ax > -30 && o.ax < rect.width + 30 && o.ay > -10 && o.ay < H + 40);
+  // Kartenpunkt → Bildschirmpunkt in der Kartenfläche (Pixel)
+  function mapScreen(xy) {
+    const wrap = $("#map-wrap"), k = (wrap ? wrap.clientWidth : 0) / MAP.w * mapUI.st.s;
+    return [xy[0] * k + mapUI.st.tx, xy[1] * k + mapUI.st.ty];
+  }
+  // Während des Zoomens: nur die Positionen der Pins, Namen und des Standortpunkts nachführen (kein Neuaufbau)
+  function moveOverlay() {
+    const lay = mapUI.lay;
+    $$("#map-ov .region-label").forEach((t) => {
+      const p = mapScreen(MAP.labels[t.dataset.label]);
+      t.setAttribute("x", p[0].toFixed(1)); t.setAttribute("y", p[1].toFixed(1));
+    });
+    if (!lay) return;
+    lay.groups.forEach((g) => {
+      const pts = g.items.map((o) => mapScreen(o.p.xy));
+      const hx = pts.reduce((a, q) => a + q[0], 0) / pts.length + g.ox, hy = pts.reduce((a, q) => a + q[1], 0) / pts.length + g.oy;
+      if (g.el) g.el.setAttribute("transform", "translate(" + hx.toFixed(1) + " " + hy.toFixed(1) + ")");
+      g.items.forEach((o, i) => {
+        if (!o.line) return;
+        o.line.setAttribute("x1", pts[i][0].toFixed(1)); o.line.setAttribute("y1", pts[i][1].toFixed(1));
+        o.line.setAttribute("x2", hx.toFixed(1)); o.line.setAttribute("y2", hy.toFixed(1));
+        o.dot.setAttribute("cx", pts[i][0].toFixed(1)); o.dot.setAttribute("cy", pts[i][1].toFixed(1));
+      });
+    });
+    if (lay.here && mapUI.here && mapUI.here.xy) {
+      const p = mapScreen(mapUI.here.xy);
+      lay.here.forEach((c) => { c.setAttribute("cx", p[0].toFixed(1)); c.setAttribute("cy", p[1].toFixed(1)); });
+    }
+  }
+  // Gruppen beim Zoomen neu bilden (lösen sich beim Reinzoomen auf), höchstens alle 150 ms
+  function maybeRelayout() {
+    const st = mapUI.st, l = mapUI.lastLay || { s: 1, tx: 0, ty: 0, t: 0 };
+    if (Date.now() - l.t < 150) return;
+    if (Math.abs(Math.log(st.s / l.s)) > 0.22 || Math.hypot(st.tx - l.tx, st.ty - l.ty) > 90) layoutPins();
+  }
+  function layoutPins() {
+    const wrap = $("#map-wrap"), ov = $("#map-ov");
+    if (!wrap || !ov || !wrap.clientWidth) return;
+    const W = wrap.clientWidth, H = wrap.clientHeight, st = mapUI.st;
+    mapUI.lastLay = { s: st.s, tx: st.tx, ty: st.ty, t: Date.now() };
+    const pts = PINS.map((p) => { const q = mapScreen(p.xy); return { p, ax: q[0], ay: q[1] }; })
+      .filter((o) => o.ax > -30 && o.ax < W + 30 && o.ay > -10 && o.ay < H + 40);
     // Gruppen bilden (einfaches Zusammenlegen, bis nichts mehr überlappt)
     // Kopf-Position (über dem Standort, am Kartenrand festgehalten)
-    const headX = (x) => Math.max(PIN.r + 2, Math.min(rect.width - PIN.r - 2, x));
+    const headX = (x) => Math.max(PIN.r + 2, Math.min(W - PIN.r - 2, x));
     const headY = (y) => Math.max(PIN.r + 2, Math.min(H - PIN.r - 2, y - PIN.lift));
     let groups = pts.map((o) => ({ items: [o], x: headX(o.ax), y: headY(o.ay) }));
     for (let merged = true; merged;) {
@@ -463,18 +523,19 @@
         }
       }
     }
-    avoidLabels(svg, groups, rect.width, H, k, headX, headY);
+    avoidLabels(groups, W, H, headX, headY);
+    // Abstand des Kopfes zur Mitte seiner Standorte merken – so wandert er beim Verschieben/Zoomen mit
+    groups.forEach((g) => { g.ox = g.x - g.items.reduce((a, o) => a + o.ax, 0) / g.items.length; g.oy = g.y - g.items.reduce((a, o) => a + o.ay, 0) / g.items.length; });
     mapUI.groups = groups;
-    const U = (px) => +(px * k).toFixed(3);
-    const X = (px) => +(vb.x + px * k).toFixed(2), Y = (py) => +(vb.y + py * k).toFixed(2);
     const stems = [], heads = [];
+    const N = (v) => v.toFixed(1);
     groups.forEach((g, gi) => {
       const hx = g.x, hy = g.y;
       g.items.forEach((o) => {
-        stems.push('<line class="pin-stem" x1="' + X(o.ax) + '" y1="' + Y(o.ay) + '" x2="' + X(hx) + '" y2="' + Y(hy) + '" stroke-width="' + U(1.6) + '"/>' +
-          '<circle class="pin-dot" cx="' + X(o.ax) + '" cy="' + Y(o.ay) + '" r="' + U(3) + '"/>');
+        stems.push('<line class="pin-stem" x1="' + N(o.ax) + '" y1="' + N(o.ay) + '" x2="' + N(hx) + '" y2="' + N(hy) + '" stroke-width="1.6"/>' +
+          '<circle class="pin-dot" cx="' + N(o.ax) + '" cy="' + N(o.ay) + '" r="3"/>');
       });
-      const tr = 'transform="translate(' + X(hx) + " " + Y(hy) + ") scale(" + U(1) + ')"';
+      const tr = 'transform="translate(' + N(hx) + " " + N(hy) + ')"';
       if (g.items.length === 1) {
         const o = g.items[0], q = o.p.q, done = !!app.state.quests[q.id];
         heads.push('<g class="pin' + (done ? " done" : "") + '" data-pin="' + q.id + '" tabindex="0" role="button" aria-label="' + esc(q.title + " (" + o.p.region.name + ")" + (done ? ", erledigt" : ", offen")) + '" ' + tr + ">" +
@@ -490,12 +551,19 @@
       }
     });
     const here = mapUI.here && mapUI.here.xy ? (() => { // roter, pulsierender Punkt am tatsächlichen Standort
-      const [x, y] = mapUI.here.xy;
-      return '<g class="here-mark" pointer-events="none"><circle class="here-pulse" cx="' + x + '" cy="' + y + '" r="' + U(7) + '">' +
-        '<animate attributeName="r" values="' + U(6) + ";" + U(20) + '" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values=".55;0" dur="1.6s" repeatCount="indefinite"/></circle>' +
-        '<circle class="here-dot" cx="' + x + '" cy="' + y + '" r="' + U(6) + '" stroke-width="' + U(2.5) + '"/></g>';
+      const [x, y] = mapScreen(mapUI.here.xy).map(N);
+      return '<g class="here-mark" pointer-events="none"><circle class="here-pulse" cx="' + x + '" cy="' + y + '" r="7">' +
+        '<animate attributeName="r" values="6;20" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values=".55;0" dur="1.6s" repeatCount="indefinite"/></circle>' +
+        '<circle class="here-dot" cx="' + x + '" cy="' + y + '" r="6" stroke-width="2.5"/></g>';
     })() : "";
-    $("#pins", svg).innerHTML = stems.join("") + heads.join("") + here;
+    const pinsEl = $("#pins", ov);
+    pinsEl.innerHTML = stems.join("") + heads.join("") + here;
+    // Elemente merken, damit moveOverlay sie ohne Neuaufbau verschieben kann
+    const lines = $$(".pin-stem", pinsEl), dots = $$(".pin-dot", pinsEl), headEls = $$(".pin", pinsEl);
+    let n = 0;
+    groups.forEach((g, gi) => { g.el = headEls[gi]; g.items.forEach((o) => { o.line = lines[n]; o.dot = dots[n]; n++; }); });
+    mapUI.lay = { groups, here: here ? $$(".here-mark circle", pinsEl) : null };
+    moveOverlay();
   }
   // ---- Standort: nur auf Knopfdruck und einmalig abgefragt; nichts wird gespeichert oder mit anderen Handys geteilt.
   // Region aus den Gemeindegrenzen (map-data.js), Höhe aus GPS (auf Meeresspiegel umgerechnet) und Geländehöhe (Open-Meteo).
@@ -587,13 +655,13 @@
   // Pin-Köpfe dürfen die Namen der 10 Regionen nicht verdecken und sich nicht gegenseitig überlappen: liegt ein Kopf
   // auf einem Namen oder einem anderen Kopf, rückt er ein Stück weiter (zuerst nach oben); der Stiel zeigt weiter auf den
   // echten Standort. Findet sich kein freier Platz, werden die beiden Köpfe zu einer Gruppe (Kreis mit Anzahl).
-  function avoidLabels(svg, groups, W, H, k, headX, headY) {
-    const vb = mapUI.vb, boxes = [];
-    $$(".region-label", svg).forEach((t) => {
-      let b; try { b = t.getBBox(); } catch (e) { return; }
-      if (!b.width) return;
-      boxes.push([(b.x - vb.x) / k - 2, (b.y - vb.y) / k - 1, b.width / k + 4, b.height / k + 2]);
+  function avoidLabels(groups, W, H, headX, headY) {
+    const boxes = [];
+    Object.keys(mapUI.labelBox || {}).forEach((name) => {
+      const b = mapUI.labelBox[name], p = mapScreen(MAP.labels[name]);
+      boxes.push([p[0] + b[0] - 2, p[1] + b[1] - 1, b[2] + 4, b[3] + 2]);
     });
+    if (mapUI.st.s > 1.001) boxes.push([W - 54, 0, 54, 54]); // Knopf „Zurücksetzen“ oben rechts frei lassen
     const rad = (g) => (g.items.length > 1 ? PIN.r + 4 : PIN.r + 3);
     const onLabel = (x, y, R) => boxes.some(([bx, by, bw, bh]) => Math.hypot(x - Math.max(bx, Math.min(x, bx + bw)), y - Math.max(by, Math.min(y, by + bh))) <= R);
     const hitHead = (x, y, R, self) => groups.find((o) => o !== self && Math.hypot(x - o.x, y - o.y) <= R + rad(o) + 1);
@@ -639,94 +707,155 @@
       $("#group-zoom", el).addEventListener("click", () => {
         closeAll();
         const xs = g.items.map((o) => o.p.xy[0]), ys = g.items.map((o) => o.p.xy[1]);
-        const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-        const vb = mapUI.vb;
-        mapUI.vb = clampVB({ x: cx - vb.w / 6, y: cy - vb.h / 6 - vb.h / 30, w: vb.w / 3 });
-        const svg = $("#island"); if (svg) applyViewBox(svg);
+        const c = mapScreen([(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]);
+        if (mapUI.pz) mapUI.pz.zoomTo(mapUI.st.s * 3, c[0], c[1]);
       });
     });
   }
-  function clampVB(vb) {
-    vb.w = Math.max(MIN_W, Math.min(MAP.w, vb.w));
-    vb.h = vb.w * MAP.h / MAP.w;
-    vb.x = Math.max(0, Math.min(MAP.w - vb.w, vb.x));
-    vb.y = Math.max(0, Math.min(MAP.h - vb.h, vb.y));
-    return vb;
-  }
-  function zoomAt(factor, cx, cy) {
-    const vb = mapUI.vb;
-    const nw = Math.max(MIN_W, Math.min(MAP.w, vb.w / factor));
-    const f = nw / vb.w;
-    mapUI.vb = clampVB({ x: cx - (cx - vb.x) * f, y: cy - (cy - vb.y) * f, w: nw });
-    const svg = $("#island");
-    if (svg) applyViewBox(svg);
-  }
-  function svgPoint(svg, clientX, clientY) {
-    const r = svg.getBoundingClientRect(), vb = mapUI.vb;
-    return [vb.x + (clientX - r.left) / r.width * vb.w, vb.y + (clientY - r.top) / r.height * vb.h];
-  }
-  function bindMap(svg) {
-    const P = mapUI.pointers;
-    svg.addEventListener("pointerdown", (ev) => {
-      P.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-      if (P.size === 1) mapUI.gesture = { type: "tap", sx: ev.clientX, sy: ev.clientY, vb: Object.assign({}, mapUI.vb), target: ev.target };
-      else if (P.size === 2) {
-        const [a, b] = Array.from(P.values());
-        const mid = svgPoint(svg, (a.x + b.x) / 2, (a.y + b.y) / 2);
-        mapUI.gesture = { type: "pinch", d: Math.hypot(a.x - b.x, a.y - b.y), vb: Object.assign({}, mapUI.vb), mid };
-      }
-    });
-    svg.addEventListener("pointermove", (ev) => {
-      if (!P.has(ev.pointerId)) return;
-      P.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-      const g = mapUI.gesture;
+  // ---- Zoomen und Verschieben wie in einer Karten-App (Inselkarte und Buchten-Karte)
+  // Zwei Finger: Zoom um den Punkt zwischen den Fingern (1×–8×). Ein Finger: ungezoomt scrollt die Seite normal, gezoomt
+  // wird die Karte verschoben. Doppeltippen zoomt hinein (bei 8× zurück). Bewegt wird nur per CSS-Transform des Inhalts
+  // (kein Neuzeichnen, flüssig auch auf älteren Handys); die Karte füllt immer den Rahmen (lässt sich nicht hinausschieben).
+  // Ein Verschieben gilt nie als Antippen. st = { s, tx, ty } (bleibt beim Neuzeichnen erhalten).
+  const ZOOM_MAX = 8;
+  function panZoom(wrap, stage, st, o) {
+    const clamp = () => {
+      const W = wrap.clientWidth, H = wrap.clientHeight;
+      st.s = Math.min(ZOOM_MAX, Math.max(1, st.s));
+      st.tx = Math.min(0, Math.max(W - W * st.s, st.tx));
+      st.ty = Math.min(0, Math.max(H - H * st.s, st.ty));
+    };
+    const apply = (live) => {
+      clamp();
+      stage.style.transform = "translate3d(" + st.tx + "px," + st.ty + "px,0) scale(" + st.s + ")";
+      const z = st.s > 1.001;
+      wrap.classList.toggle("zoomed", z);
+      wrap.style.touchAction = z ? "none" : "pan-y"; // ungezoomt: ein Finger scrollt die Seite
+      if (o.onChange) o.onChange(live);
+    };
+    let anim = 0;
+    const animate = (to) => {
+      cancelAnimationFrame(anim);
+      const from = { s: st.s, tx: st.tx, ty: st.ty }, t0 = performance.now();
+      if (o.onActive) o.onActive(true);
+      const step = (now) => {
+        const p = Math.min(1, (now - t0) / 240), e = 1 - Math.pow(1 - p, 3);
+        st.s = from.s + (to.s - from.s) * e; st.tx = from.tx + (to.tx - from.tx) * e; st.ty = from.ty + (to.ty - from.ty) * e;
+        apply(p < 1);
+        if (p < 1) { anim = requestAnimationFrame(step); return; }
+        if (o.onActive) o.onActive(false);
+        if (o.onEnd) o.onEnd();
+      };
+      anim = requestAnimationFrame(step);
+    };
+    // Auf Faktor ns zoomen, Punkt (px, py) in der Kartenfläche bleibt an seiner Stelle
+    const zoomTo = (ns, px, py) => {
+      const keep = { s: st.s, tx: st.tx, ty: st.ty };
+      ns = Math.min(ZOOM_MAX, Math.max(1, ns));
+      const f = ns / st.s;
+      st.tx = px - (px - st.tx) * f; st.ty = py - (py - st.ty) * f; st.s = ns;
+      clamp();
+      const to = { s: st.s, tx: st.tx, ty: st.ty };
+      Object.assign(st, keep);
+      animate(to);
+    };
+    const rel = (t) => { const r = wrap.getBoundingClientRect(); return [t.clientX - r.left, t.clientY - r.top]; };
+    let g = null, last = null;
+    const startPinch = (e) => {
+      const a = rel(e.touches[0]), b = rel(e.touches[1]);
+      g = { mode: "pinch", d0: Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, m0: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], s0: st.s, tx0: st.tx, ty0: st.ty };
+    };
+    const startOne = (t, mode) => { const p = rel(t); g = { mode, x0: p[0], y0: p[1], cx: t.clientX, cy: t.clientY, tx0: st.tx, ty0: st.ty, t0: Date.now() }; };
+    const finish = () => {
+      const moved = g && (g.mode === "pinch" || g.mode === "pan");
+      g = null;
+      if (!moved) return;
+      apply(false);
+      if (o.onActive) o.onActive(false);
+      if (o.onEnd) o.onEnd();
+    };
+    wrap.addEventListener("touchstart", (e) => {
+      cancelAnimationFrame(anim);
+      if (e.touches.length >= 2) { e.preventDefault(); startPinch(e); if (o.onActive) o.onActive(true); } // Seite zoomt nicht mit
+      else if (e.touches.length === 1) startOne(e.touches[0], "tap");
+    }, { passive: false });
+    wrap.addEventListener("touchmove", (e) => {
       if (!g) return;
-      const rect = svg.getBoundingClientRect();
-      if (g.type === "pinch" && P.size === 2) {
-        const [a, b] = Array.from(P.values());
-        const d = Math.hypot(a.x - b.x, a.y - b.y);
-        const nw = Math.max(MIN_W, Math.min(MAP.w, g.vb.w * g.d / Math.max(d, 1)));
-        const f = nw / g.vb.w;
-        mapUI.vb = clampVB({ x: g.mid[0] - (g.mid[0] - g.vb.x) * f, y: g.mid[1] - (g.mid[1] - g.vb.y) * f, w: nw });
-        applyViewBox(svg);
-      } else if (g.type === "tap" || g.type === "pan") {
-        const dx = ev.clientX - g.sx, dy = ev.clientY - g.sy;
-        if (g.type === "tap" && Math.hypot(dx, dy) > 8) g.type = "pan";
-        if (g.type === "pan" && g.vb.w < MAP.w - 0.5) {
-          const k = g.vb.w / rect.width;
-          mapUI.vb = clampVB({ x: g.vb.x - dx * k, y: g.vb.y - dy * k, w: g.vb.w });
-          applyViewBox(svg);
+      if (g.mode === "pinch") {
+        if (e.touches.length < 2) return;
+        e.preventDefault();
+        const a = rel(e.touches[0]), b = rel(e.touches[1]);
+        const d = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1, m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        const ns = Math.min(ZOOM_MAX, Math.max(1, g.s0 * d / g.d0)), f = ns / g.s0;
+        st.s = ns; st.tx = m[0] - (g.m0[0] - g.tx0) * f; st.ty = m[1] - (g.m0[1] - g.ty0) * f;
+        apply(true);
+        return;
+      }
+      const p = rel(e.touches[0]), dx = p[0] - g.x0, dy = p[1] - g.y0;
+      if (g.mode === "tap" && Math.hypot(dx, dy) > 8) {
+        g.mode = st.s > 1.001 ? "pan" : "scroll"; // ungezoomt: die Seite scrollt (Browser), sonst Karte verschieben
+        if (g.mode === "pan" && o.onActive) o.onActive(true);
+      }
+      if (g.mode === "pan") { e.preventDefault(); st.tx = g.tx0 + dx; st.ty = g.ty0 + dy; apply(true); }
+    }, { passive: false });
+    wrap.addEventListener("touchend", (e) => {
+      if (!g) return;
+      if (g.mode === "pinch") {
+        if (e.touches.length === 1) { startOne(e.touches[0], "pan"); return; } // ein Finger bleibt liegen: weiter verschieben
+        if (!e.touches.length) finish();
+        return;
+      }
+      if (e.touches.length) return;
+      if (g.mode === "tap" && Date.now() - g.t0 < 600) {
+        e.preventDefault(); // kein zusätzlicher Klick, kein Zoom der ganzen Seite
+        const now = Date.now(), x = g.cx, y = g.cy, px = g.x0, py = g.y0;
+        if (last && now - last.t < 320 && Math.hypot(x - last.x, y - last.y) < 30) {
+          last = null;
+          if (o.onDoubleTap) o.onDoubleTap();
+          zoomTo(st.s >= ZOOM_MAX - 0.01 ? 1 : st.s * 2, px, py);
+        } else {
+          last = { t: now, x, y };
+          if (o.onTap) o.onTap(x, y);
         }
       }
-    });
-    const end = (ev) => {
-      const g = mapUI.gesture;
-      P.delete(ev.pointerId);
-      if (ev.type === "pointerup" && g && g.type === "tap" && P.size === 0) {
-        const el = document.elementFromPoint(ev.clientX, ev.clientY) || g.target;
-        const pin = el.closest && el.closest("[data-pin]");
-        const grp = el.closest && el.closest("[data-group]");
-        const reg = el.closest && el.closest("[data-region]");
-        // Den "Geister-Klick" nach dem Antippen abfangen, sonst schließt er das neue Fenster sofort
-        if (pin || grp || reg) mapUI.ghostUntil = Date.now() + 500;
-        if (pin) openQuest(pin.dataset.pin);
-        else if (grp) openGroup(+grp.dataset.group);
-        else if (reg) openRegion(reg.dataset.region);
-      }
-      if (P.size === 0) mapUI.gesture = null;
-    };
-    svg.addEventListener("pointerup", end);
-    svg.addEventListener("pointercancel", end);
-    svg.addEventListener("wheel", (ev) => {
-      ev.preventDefault();
-      const pt = svgPoint(svg, ev.clientX, ev.clientY);
-      zoomAt(ev.deltaY < 0 ? 1.25 : 0.8, pt[0], pt[1]);
+      finish();
     }, { passive: false });
+    wrap.addEventListener("touchcancel", finish);
+    // iPhone (Safari): eigene Seiten-Zoom-Gesten auf der Karte unterdrücken
+    ["gesturestart", "gesturechange"].forEach((n) => wrap.addEventListener(n, (e) => e.preventDefault()));
+    // Maus (Computer): Rad zoomt, Ziehen verschiebt, Klick tippt
+    wrap.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      const p = rel(e);
+      const f = e.deltaY < 0 ? 1.25 : 0.8, ns = Math.min(ZOOM_MAX, Math.max(1, st.s * f)), k = ns / st.s;
+      st.tx = p[0] - (p[0] - st.tx) * k; st.ty = p[1] - (p[1] - st.ty) * k; st.s = ns;
+      apply(false);
+      if (o.onEnd) o.onEnd();
+    }, { passive: false });
+    let m = null;
+    wrap.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "mouse" || e.button !== 0) return;
+      m = { x: e.clientX, y: e.clientY, tx0: st.tx, ty0: st.ty, moved: false };
+    });
+    wrap.addEventListener("pointermove", (e) => {
+      if (!m || e.pointerType !== "mouse") return;
+      const dx = e.clientX - m.x, dy = e.clientY - m.y;
+      if (!m.moved && Math.hypot(dx, dy) > 4 && st.s > 1.001) { m.moved = true; if (o.onActive) o.onActive(true); }
+      if (m.moved) { if (!wrap.hasPointerCapture(e.pointerId)) wrap.setPointerCapture(e.pointerId); st.tx = m.tx0 + dx; st.ty = m.ty0 + dy; apply(true); }
+    });
+    wrap.addEventListener("pointerup", (e) => {
+      if (!m || e.pointerType !== "mouse") return;
+      const mm = m; m = null;
+      if (mm.moved) { apply(false); if (o.onActive) o.onActive(false); if (o.onEnd) o.onEnd(); mapUI.ghostUntil = Date.now() + 300; }
+      else if (o.mouseTap && o.onTap) o.onTap(e.clientX, e.clientY, true);
+    });
+    return { apply, zoomTo, reset: () => animate({ s: 1, tx: 0, ty: 0 }) };
   }
+
   document.addEventListener("click", (ev) => {
     if (mapUI.ghostUntil && Date.now() < mapUI.ghostUntil) { ev.stopPropagation(); ev.preventDefault(); mapUI.ghostUntil = 0; }
   }, true);
-  window.addEventListener("resize", () => { const svg = $("#island"); if (svg) layoutPins(svg); });
+  window.addEventListener("resize", () => { if (mapUI.pz && $("#map-wrap")) { mapUI.pz.apply(false); layoutPins(); } });
 
   // ---- Quests anzeigen
   function taskHTML(q) {
@@ -1342,8 +1471,13 @@
       '<text x="' + b.x + '" y="' + b.y + '" dy=".36em" font-size="' + r * 1.25 + '">' + b.n + "</text>" +
       (b.name ? '<text class="bm-name" x="' + b.nx + '" y="' + b.ny + '" style="text-anchor:' + b.na + '" font-size="' + r * 1.05 + '">' + esc(b.name) + "</text>" : "") + "</g>").join("");
     const hl = opts.right ? '<path class="bm-hl" d="' + bayById(opts.right).poly + 'Z"/>' : ""; // Wasserfläche der Bucht, nach Norden ausgerichtet
-    return '<div class="bay-map-wrap' + (toolUI.bayBig ? " big" : "") + '"><svg class="bay-map" viewBox="' + v.join(" ") + '"' + (opts.tap ? ' data-tool-ui="baymap"' : "") +
-      ' role="img" aria-label="Karte der Ponta de São Lourenço mit nummerierten Buchten"><rect class="bm-sea" x="' + v[0] + '" y="' + v[1] + '" width="' + v[2] + '" height="' + v[3] + '"/><g class="bm-land">' + bayLand() + "</g>" + hl + leads + marks + "</svg></div>";
+    const z = toolUI.bayZoom;
+    return '<div class="bay-map-wrap' + (z.s > 1.001 ? " zoomed" : "") + '" data-bay-zoom' + (opts.tap ? ' data-bay-tap="1"' : "") + '><div class="bay-stage" style="transform:translate3d(' + z.tx + "px," + z.ty + "px,0) scale(" + z.s + ')">' +
+      '<svg class="bay-map" viewBox="' + v.join(" ") + '"' + (opts.tap ? ' data-tool-ui="baymap"' : "") + ' style="--zs:' + z.s + '"' +
+      ' role="img" aria-label="Karte der Ponta de São Lourenço mit nummerierten Buchten"><rect class="bm-sea" x="' + v[0] + '" y="' + v[1] + '" width="' + v[2] + '" height="' + v[3] + '"/><g class="bm-land">' + bayLand() + "</g>" + hl + leads + marks + "</svg></div>" +
+      "</div>" + // Knopf unter der Karte, damit er gezoomt keine Nummer verdeckt
+      '<div class="bay-zoom-row"><span class="muted small">' + icon("zoom-in") + " Zwei Finger: zoomen</span>" +
+      '<button class="btn btn-small btn-ghost bay-reset" data-tool-ui="bay-reset">' + icon("scan") + " Ganze Karte</button></div>";
   }
   // Antippen auf der Karte: in einer Bucht → diese Bucht, sonst die nächste Nummer oder Buchtmitte
   let bayPolys = null;
@@ -1355,6 +1489,43 @@
     let best = null, bd = Infinity;
     BM().bays.forEach((b) => { const dd = Math.min(Math.hypot(b.x - x, b.y - y), Math.hypot(b.tx - x, b.ty - y)); if (dd < bd) { bd = dd; best = b; } });
     return best;
+  }
+  // Buchten-Karte zoomen/verschieben (wie die Inselkarte, panZoom). Die Nummern bleiben auf dem Bildschirm gleich groß.
+  // Zoom-Zustand bleibt beim Neuzeichnen; während der Geste wird das Hilfsmittel nicht neu gezeichnet.
+  toolUI.bayZoom = { s: 1, tx: 0, ty: 0 };
+  function bayClientToMap(wrap, cx, cy) {
+    if (!wrap) return null;
+    const r = wrap.getBoundingClientRect(), v = BM().view, z = toolUI.bayZoom, k = r.width / v[2] * z.s;
+    return [v[0] + (cx - r.left - z.tx) / k, v[1] + (cy - r.top - z.ty) / k];
+  }
+  function bayMarkScale(wrap) {
+    const z = toolUI.bayZoom, inv = 1 / z.s;
+    $$(".bm-mark", wrap).forEach((g) => {
+      const c = g.querySelector("circle:not(.bm-hit)");
+      const x = +c.getAttribute("cx"), y = +c.getAttribute("cy");
+      g.setAttribute("transform", "translate(" + x + " " + y + ") scale(" + inv + ") translate(" + -x + " " + -y + ")");
+    });
+    $$(".bm-lead circle", wrap).forEach((c) => { c.setAttribute("transform", "translate(" + c.getAttribute("cx") + " " + c.getAttribute("cy") + ") scale(" + inv + ") translate(" + -c.getAttribute("cx") + " " + -c.getAttribute("cy") + ")"); });
+  }
+  function mountBayZoom() {
+    $$("[data-bay-zoom]").forEach((wrap) => {
+      if (wrap._pz) return;
+      const qid = (wrap.closest("[data-tool]") || {}).dataset.tool, svg = $(".bay-map", wrap);
+      wrap._pz = panZoom(wrap, $(".bay-stage", wrap), toolUI.bayZoom, {
+        onChange: () => bayMarkScale(wrap),
+        onActive: (on) => { toolUI.dragging = on; },
+        onEnd: () => {
+          if (svg) svg.style.setProperty("--zs", toolUI.bayZoom.s); // Linien wieder dünn
+          if (toolUI.refreshPending && qid) { toolUI.refreshPending = false; rerenderTools(qid); }
+        },
+        onTap: (x, y) => { // Finger: Bucht unter dem Finger bzw. nächste Nummer wählen
+          if (!wrap.hasAttribute("data-bay-tap") || !qid) return;
+          const q = bayClientToMap(wrap, x, y), best = q && bayAt(q[0], q[1]);
+          if (best) { puzzleSel(qid, toolState(qid)).bay = best.id; rerenderTools(qid); }
+        }
+      });
+      wrap._pz.apply(false);
+    });
   }
   // Zeichnung: Striche { t: p(Stift)/b(Pinsel)/e(Radierer), c: Farbe, w: 1–3, p: [x, y, …] } in 1.000 × 750
   const DRAW_W = 1000, DRAW_H = 750, DRAW_SIZES = { 1: 5, 2: 11, 3: 22 };
@@ -1527,10 +1698,9 @@
         '<div data-draw-slot="' + qid + '"></div>' + tBtn("fix", icon("lock") + " Bestätigen", "btn-primary btn-block") + newRoundBtn(false, "Neue Runde (andere Bucht)");
     }
     const chips = (cls) => '<div class="chips bay-chips">' + BM().bays.map((b) => '<button class="chip' + (sel.bay === b.id ? " on" : "") + '" data-tool-ui="bay" data-bay="' + b.id + '"' + cls + ">" + esc(bayTitle(b).replace("Bucht ", "")) + "</button>").join("") + "</div>";
-    const bigBtn = '<button class="btn btn-small btn-ghost bay-big-btn" data-tool-ui="bay-big">' + icon(toolUI.bayBig ? "zoom-out" : "zoom-in") + (toolUI.bayBig ? " Karte kleiner" : " Karte größer") + "</button>";
     if (ph === 2) {
       return phaseBar(2) + '<p class="tool-label">Welche Bucht ist gezeichnet?</p>' + drawingSvg(ts.drawing) +
-        bayMap({ sel: sel.bay, tap: true }) + bigBtn + chips("") +
+        bayMap({ sel: sel.bay, tap: true }) + chips("") +
         tBtn("guess", icon("lock") + " Bestätigen", "btn-primary btn-block", sel.bay ? "" : " disabled") + newRoundBtn(false);
     }
     const res = T.result(cfg, ts, now), right = res ? bayById(res.bay) : null, guess = bayById(ts.guess);
@@ -2329,7 +2499,7 @@
       $$(".sort-list", body).forEach(bindSort);
       $$("[data-keep]", body).forEach((i) => { if (kept[i.dataset.keep] != null) i.value = kept[i.dataset.keep]; if (focus === i.dataset.keep) i.focus(); });
     });
-    mountCamera(); mountDraw();
+    mountCamera(); mountDraw(); mountBayZoom();
   }
 
   function bindTools(el) {
@@ -2350,6 +2520,7 @@
     $$(".sort-list", el).forEach(bindSort);
     mountCamera(); // Kamera-Vorschau nach dem Neuzeichnen wieder einhängen
     mountDraw();   // Zeichenfläche ebenso
+    mountBayZoom(); // Buchten-Karte: Zoom-Steuerung neu anbinden (Zoom bleibt)
   }
 
   // „Anzeigen“ nur durch langes Drücken (0,6 s) – blendet das Geheimnis 5 s lang auf diesem Handy ein
@@ -2467,16 +2638,14 @@
       const sel = puzzleSel(qid, toolState(qid));
       if (ui === "bay") sel.bay = b.dataset.bay;
       else {
-        const svg = b.ownerSVGElement || b, p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY;
-        const m = svg.getScreenCTM(); if (!m) return;
-        const q = p.matrixTransform(m.inverse());
-        const best = bayAt(q.x, q.y);
+        const q = bayClientToMap(b.closest("[data-bay-zoom]"), ev.clientX, ev.clientY);
+        const best = q && bayAt(q[0], q[1]);
         if (best) sel.bay = best.id;
       }
       return rerenderTools(qid);
     }
     if (ui === "alt-measure") return measureAlt(qid);
-    if (ui === "bay-big") { toolUI.bayBig = !toolUI.bayBig; return rerenderTools(qid); }
+    if (ui === "bay-reset") { const w = b.closest(".bay-zoom-row").previousElementSibling; if (w && w._pz) w._pz.reset(); return; }
     if (ui === "bay-ref") { const d = toolUI.draw; if (d) d.showRef = !d.showRef; return rerenderTools(qid); }
     if (ui === "draw-here") {
       return confirmBox("Hier zeichnen?", "Dann erscheint die geheime Bucht auf diesem Handy. Nur für die Person, die zeichnet.", "Hier zeichnen").then((ok) => {
@@ -3473,12 +3642,8 @@
       .then((ok) => ok && act({ type: "reset", seed: Math.floor(Math.random() * 2 ** 31) }));
     if (!L.isCompatible(app.state, C)) return;
     if (t.closest(".modal")) return; // Modals binden selbst
-    if (t.closest("#island")) return; // Inselkarte: eigene Zeiger-Steuerung
-    if (t.dataset.zoom) {
-      if (t.dataset.zoom === "reset") { mapUI.vb = Object.assign({}, FULL); const svg = $("#island"); if (svg) applyViewBox(svg); return; }
-      const vb = mapUI.vb;
-      return zoomAt(t.dataset.zoom === "in" ? 1.6 : 1 / 1.6, vb.x + vb.w / 2, vb.y + vb.h / 2);
-    }
+    if (t.hasAttribute("data-map-reset")) { if (mapUI.pz) mapUI.pz.reset(); return; } // auch per Tastatur
+    if (t.closest("#map-wrap")) return; // Inselkarte: eigene Steuerung (Antippen, Zoomen, Zurücksetzen über panZoom)
     if (t.hasAttribute("data-all-quests")) return openAllQuests();
     if (t.dataset.openTool) return openTool(t.dataset.openTool); // Hilfsmittel einer offenen Stapel-Quest
     if (t.hasAttribute("data-here")) return whereAmI();

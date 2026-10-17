@@ -133,7 +133,7 @@ body.is-offline :is([data-done], [data-swap], [data-mult], [data-undo], [data-qu
 /* ---------- Karte ---------- */
 .map-wrap { background: var(--sea); border-radius: var(--radius); padding: 8px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
 .map-wrap svg { width: 100%; height: auto; display: block; }
-.region-path { stroke: #fff; stroke-width: 2.2; stroke-linejoin: round; cursor: pointer; transition: fill .6s, filter .2s; }
+.region-path { stroke: #fff; stroke-width: calc(2.2px / var(--zs, 1)); stroke-linejoin: round; cursor: pointer; transition: fill .6s, filter .2s; }
 @media (prefers-color-scheme: dark) { .region-path { stroke: #0c1b21; } }
 .region-path:hover, .region-path:focus { filter: brightness(1.08); outline: none; }
 .region-path.pulse { animation: pulse 1.2s ease-in-out 3; }
@@ -271,14 +271,18 @@ body.is-offline :is([data-done], [data-swap], [data-mult], [data-undo], [data-qu
 @media (prefers-reduced-motion: reduce) { * { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
 /* ---------- Pins auf der Inselkarte ---------- */
-.map-wrap { padding: 0; }
-.map-wrap svg#island { touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.map-wrap { padding: 0; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+/* Zoomen/Verschieben nur per Transform (GPU) – Pins, Namen und Standortpunkt liegen darüber in Bildschirmgröße */
+.map-stage { transform-origin: 0 0; will-change: transform; }
+.map-wrap .map-ov { position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
+.map-ov .pin { pointer-events: auto; }
+.map-ov .region-label { font-size: 11.5px; stroke-width: 3px; }
+.map-reset { position: absolute; top: 8px; right: 8px; width: 40px; height: 40px; border-radius: 12px; border: 0;
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow); display: grid; place-items: center; cursor: pointer;
+  opacity: 0; transform: scale(.8); pointer-events: none; transition: opacity .2s, transform .2s; }
+.map-reset .ic { width: 20px; height: 20px; }
+.map-wrap.zoomed .map-reset, .bay-map-wrap.zoomed .map-reset { opacity: 1; transform: none; pointer-events: auto; }
 .map-bar { display: flex; gap: 12px; align-items: center; margin: 10px 2px 4px; }
-.map-ctrl { display: flex; gap: 6px; flex: 0 0 auto; }
-.map-ctrl button {
-  width: 38px; height: 38px; border-radius: 10px; border: 0; background: var(--surface); color: var(--ink);
-  box-shadow: var(--shadow); font-size: 1.25rem; font-weight: 700; cursor: pointer; line-height: 1;
-}
 .pin { cursor: pointer; outline: none; }
 .pin-hit { fill: transparent; }
 .pin-halo { fill: #fff; }
@@ -784,27 +788,31 @@ span.pt-btn { cursor: default; }
 .team-input { width: 100%; }
 .photo-zone .photo-files { align-self: center; min-height: 44px; }
 /* Bucht gesucht: Karte der Ponta de São Lourenço, Küstenausschnitt, Zeichenfläche */
-.bay-map-wrap { width: 100%; overflow-x: auto; border-radius: 12px; -webkit-overflow-scrolling: touch; }
+.bay-map-wrap { width: 100%; overflow: hidden; border-radius: 12px; position: relative; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.bay-stage { transform-origin: 0 0; will-change: transform; }
 .bay-map { display: block; width: 100%; height: auto; }
-.bay-map-wrap.big .bay-map { width: 220%; }
+.bay-zoom-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 40px; }
+.bay-zoom-row .muted { display: flex; align-items: center; gap: 6px; }
+.bay-zoom-row .muted .ic { width: 16px; height: 16px; flex: none; }
+.bay-map-wrap:not(.zoomed) + .bay-zoom-row .bay-reset { visibility: hidden; }
 .bm-sea { fill: #cfe7f0; }
-.bm-land path { fill: #e8d9b5; stroke: #7a5a2e; stroke-width: 1.2px; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.bm-land path { fill: #e8d9b5; stroke: #7a5a2e; stroke-width: calc(1.2px / var(--zs, 1)); vector-effect: non-scaling-stroke; stroke-linejoin: round; }
 .bm-mark circle { fill: var(--ocean); stroke: #fff; stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
 .bay-map .bm-mark circle.bm-hit { fill: transparent; stroke: none; }
-.bm-lead line { stroke: var(--ocean-deep); stroke-width: 1px; vector-effect: non-scaling-stroke; opacity: .55; }
+.bm-lead line { stroke: var(--ocean-deep); stroke-width: calc(1px / var(--zs, 1)); vector-effect: non-scaling-stroke; opacity: .55; }
 .bm-lead circle { fill: var(--ocean-deep); opacity: .7; }
-.bm-lead.sel line, .bm-lead.right line, .bm-lead.wrong line { stroke-width: 1.6px; opacity: .9; }
+.bm-lead.sel line, .bm-lead.right line, .bm-lead.wrong line { stroke-width: calc(1.6px / var(--zs, 1)); opacity: .9; }
 .bm-lead.sel circle { fill: #e5b53b; } .bm-lead.right circle { fill: var(--laurel); } .bm-lead.wrong circle { fill: var(--hibiscus); }
 .bm-mark text { fill: #fff; font-weight: 800; text-anchor: middle; font-family: var(--sans, Inter, sans-serif); }
 .bm-mark text.bm-name { fill: var(--ocean-deep); font-weight: 700; paint-order: stroke; stroke: rgba(255,255,255,.85); stroke-width: 3px; vector-effect: non-scaling-stroke; }
 .bm-mark.sel circle { fill: #e5b53b; }
 .bm-mark.right circle { fill: var(--laurel); }
 .bm-mark.wrong circle { fill: var(--hibiscus); }
-.bm-hl { fill: rgba(47, 158, 68, .35); stroke: var(--laurel); stroke-width: 3px; vector-effect: non-scaling-stroke; }
+.bm-hl { fill: rgba(47, 158, 68, .35); stroke: var(--laurel); stroke-width: calc(3px / var(--zs, 1)); vector-effect: non-scaling-stroke; }
 svg[data-tool-ui="baymap"] { cursor: pointer; }
 .bay-chips .chip { min-width: 44px; min-height: 40px; background: var(--sea); color: var(--ocean-deep); }
 .bay-chips .chip.on { background: var(--ocean); color: #fff; }
-.bay-big-btn, .bay-ref-btn { align-self: center; min-height: 40px; }
+.bay-ref-btn { align-self: center; min-height: 40px; }
 .bay-ref { border-radius: 12px; overflow: hidden; border: 1.5px solid var(--line); }
 .bay-crop { display: block; width: 100%; height: auto; max-height: 34vh; background: #eceff1; }
 .bc-strip { fill: #e8d9b5; stroke: #e8d9b5; stroke-linejoin: round; }
@@ -862,3 +870,4 @@ svg[data-tool-ui="baymap"] { cursor: pointer; }
 .region-chips .chip.on { background: var(--laurel); color: #fff; }
 .alt-vals { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .alt-val { padding: 10px; border-radius: 12px; background: var(--sea, #eef6f8); text-align: center; }
+.bay-zoom-row .bay-reset { white-space: nowrap; flex: none; }
