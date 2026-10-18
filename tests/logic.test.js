@@ -114,6 +114,32 @@ assert.throws(() => act(s, { type: "quest", questId: "q-cal-1" }));
   assert.strictEqual(L.rewardAmount(byId("massage"), -5, 120), 0);
 }
 
+// Straßennetz für den Rückblick (public/roads.js): alle 45 Regionspaare, Teilstücke hängen lückenlos aneinander
+{
+  const RW = {}; require("vm").runInNewContext(require("fs").readFileSync(__dirname + "/../public/roads.js", "utf8"), { window: RW });
+  const R = RW.MADEIRA_ROADS;
+  assert(R && /OpenStreetMap/.test(R.source), "Quelle genannt");
+  const ids = C.regions.map((r) => r.id).sort();
+  assert.deepStrictEqual(Object.keys(R.regions).sort(), ids);
+  let pairs = 0;
+  ids.forEach((a, i) => ids.slice(i + 1).forEach((b) => {
+    const steps = R.paths[a + "|" + b];
+    assert(Array.isArray(steps) && steps.length, "Verbindung " + a + " – " + b);
+    const pts = [];
+    steps.forEach(([e, d]) => {
+      const f = R.edges[e]; assert(f && f.length >= 4 && f.length % 2 === 0);
+      const seg = []; for (let k = 0; k < f.length; k += 2) seg.push([f[k], f[k + 1]]);
+      if (d < 0) seg.reverse();
+      if (pts.length) assert(L.distanceKm(pts[pts.length - 1], seg[0]) < 0.05, "Teilstücke hängen zusammen");
+      pts.push(...seg);
+    });
+    assert(L.distanceKm(pts[0], R.regions[a]) < 0.05 && L.distanceKm(pts[pts.length - 1], R.regions[b]) < 0.05, "Start/Ziel am Wegpunkt");
+    pts.forEach((p) => assert(p[0] > 32.6 && p[0] < 32.9 && p[1] > -17.3 && p[1] < -16.6, "auf Madeira"));
+    pairs++;
+  }));
+  assert.strictEqual(pairs, 45);
+}
+
 // Shop-Sperre bei zu wenig Punkten
 assert.throws(() => act(s, { type: "joker", regionId: "funchal" }), /Nicht genug/);
 

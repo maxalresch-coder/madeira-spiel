@@ -3726,6 +3726,37 @@
       '<div class="rc-sum-btns"><button class="btn btn-ghost" data-rc="again">' + icon("rotate-ccw") + " Nochmal</button>" +
       '<button class="btn btn-gold" data-rc="close">Fertig</button></div></div></div>';
   }
+  // Straßenverbindung zwischen zwei Regionen für den Rückblick (Kartenkoordinaten): kürzester Weg im Straßennetz aus
+  // public/roads.js (erzeugt von tools/strassen_netz.py aus einer OSRM-Route, © OpenStreetMap-Mitwirkende). Die Linie startet
+  // am Quest-Pin, springt an die nächste Stelle der Straße und endet an der Stelle, die dem Ziel-Pin am nächsten liegt.
+  // null = kein Straßennetz (Datei fehlt/fehlerhaft) → geschwungene Linie.
+  const roadCache = {};
+  function roadPath(r1, r2, fromXY, toXY) {
+    const R = window.MADEIRA_ROADS;
+    if (!R || !R.paths || !R.edges) return null;
+    const key = r1 < r2 ? r1 + "|" + r2 : r2 + "|" + r1;
+    if (!(key in roadCache)) {
+      const steps = R.paths[key];
+      let pts = null;
+      if (Array.isArray(steps) && steps.length) {
+        pts = [];
+        steps.forEach(([ei, dir]) => {
+          const flat = R.edges[ei] || [], seg = [];
+          for (let k = 0; k + 1 < flat.length; k += 2) seg.push(toMap(flat[k], flat[k + 1]));
+          if (dir < 0) seg.reverse();
+          pts.push.apply(pts, pts.length ? seg.slice(1) : seg);
+        });
+        if (pts.length < 2 || pts.some((p) => !isFinite(p[0]) || !isFinite(p[1]))) pts = null;
+      }
+      roadCache[key] = pts;
+    }
+    let pts = roadCache[key];
+    if (!pts) return null;
+    if (r1 > r2) pts = pts.slice().reverse(); // gespeichert alphabetisch – hier in Fahrtrichtung
+    const near = (p, from, to) => { let best = from, bd = Infinity; for (let k = from; k <= to; k++) { const d = Math.hypot(pts[k][0] - p[0], pts[k][1] - p[1]); if (d < bd) { bd = d; best = k; } } return best; };
+    const a = near(fromXY, 0, pts.length - 1), b = near(toXY, a, pts.length - 1);
+    return [fromXY].concat(pts.slice(a, b + 1), [toXY]);
+  }
   function startRecap(onDone) {
     if (recapRun) return;
     const R = L.recap(app.state, C);
@@ -3761,7 +3792,7 @@
       if (im.decode) im.decode().catch(() => {});
       thumbs[e.id] = im.src;
     });
-    let lastPin = null, stackN = 0, segN = 0;
+    let lastPin = null, lastRegion = null, stackN = 0, segN = 0;
     // Winkel der Stapel-Karten: alle ganzen Grad −45 … +45 gemischt (fest je Spiel), jede Karte bekommt den nächsten
     const angles = Array.from({ length: 91 }, (_, k) => k - 45), rnd = L.mulberry32(app.state.seed >>> 0);
     for (let k = angles.length - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [angles[k], angles[j]] = [angles[j], angles[k]]; }
@@ -3775,7 +3806,16 @@
       if (e.kind === "joker") { setLevels(e.levels); return; }
       if (e.kind === "quest") {
         const q = IX.quests[e.id], xy = toMap(q.pin[0], q.pin[1]);
-        if (lastPin) { // sanft geschwungene Verbindung (Straßenrouten waren nicht abrufbar), abwechselnd nach links/rechts
+        const road = lastPin && lastRegion && lastRegion !== q.region ? roadPath(lastRegion, q.region, lastPin, xy) : null;
+        if (road) { // entlang der Straßen (public/roads.js, © OpenStreetMap-Mitwirkende)
+          let len = 0;
+          for (let k = 1; k < road.length; k++) len += Math.hypot(road[k][0] - road[k - 1][0], road[k][1] - road[k - 1][1]);
+          len = Math.max(1, len);
+          const dPath = "M" + road.map((p) => p[0].toFixed(1) + " " + p[1].toFixed(1)).join("L");
+          e.lines = ["rc-halo", "rc-path"].map((cls) => svgEl("path", { d: dPath, class: cls, "stroke-dasharray": len, "stroke-dashoffset": len }));
+          e.len = len;
+          e.lines.forEach((n) => lineG.appendChild(n));
+        } else if (lastPin) { // gleiche Region oder ohne Straßennetz: sanft geschwungene Verbindung, abwechselnd nach links/rechts
           const dx = xy[0] - lastPin[0], dy = xy[1] - lastPin[1], d = Math.hypot(dx, dy) || 1, side = (segN++ % 2 ? 1 : -1) * 0.22;
           const cx = (lastPin[0] + xy[0]) / 2 - dy / d * d * side, cy = (lastPin[1] + xy[1]) / 2 + dx / d * d * side;
           let len = 0, px = lastPin[0], py = lastPin[1];
@@ -3789,7 +3829,7 @@
           e.len = len;
           e.lines.forEach((n) => lineG.appendChild(n));
         }
-        lastPin = xy;
+        lastPin = xy; lastRegion = q.region;
         e.xy = xy;
         const it = thumbs[e.id];
         pop.innerHTML = (it ? '<img src="' + it + '" alt="">' : '<span class="rc-pop-ic">' + icon("map-pin") + "</span>") +
@@ -4185,6 +4225,7 @@
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys, löscht auch alle Erinnerungsfotos und braucht die Eingabe „RESET“.</p>" +
       "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region – dort wechselt Wischen nach links/rechts (oder die Pfeile) zur nächsten Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Bei den Aktivitäten öffnet Antippen eines Eintrags die Quest. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("trophy") + " Erfolge (Rang, Regionen, Punkte und Diagramme), " + icon("history") + " Aktivitäten (alles, was passiert ist, mit Rückgängig) und " + icon("settings") + " Einstellungen (diese Spielanleitung, Spieler, Spielstand sichern, Urlaub beenden, Reset). „← Zu den Quests“ führt zurück zur Startseite; in den Unterseiten der Einstellungen gibt es zusätzlich „← Einstellungen“.</p>" +
       "<h3>" + icon("flag") + " Ende</h3><p>„Urlaub beenden &amp; Belohnungen“ (unter Einstellungen) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
+      '<p class="muted small">Straßen im Urlaubs-Rückblick: Routendaten © OpenStreetMap-Mitwirkende (berechnet mit OSRM).</p>' +
       "</div>";
   }
 

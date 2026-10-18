@@ -386,9 +386,15 @@ Vertrauensbasis, keine Beweisfotos.
   `points` (inkl. Stufen/Insel-Bonus, Summe = verdiente Punkte), `earned`, `levels`, `day` (1 = Spielbeginn), regional `km`
   (Luftlinie `L.distanceKm` zwischen den Pins). **Schnell:** je Ereignis 12,7 s / Anzahl (0,22–0,87 s), Einstieg 0,3 s → ca.
   10–15 s bei vollem Spiel. Bild: Vollbild-Ebene `.recap` (z-index 95): oben Titel, „Tag X · Punkte“ (zählen mit), „Überspringen“;
-  Inselkarte (eigene Pfade ohne `data-region`): **sanft geschwungene Verbindung** (quadratische Kurve, abwechselnd nach links/
-  rechts gebogen) zum Ort der nächsten regionalen Quest – Straßenrouten (OSRM/OpenStreetMap) waren in der Arbeitsumgebung
-  gesperrt, daher keine echten Routen; Linie **dunkles Ozeanblau #073b4c mit weißem Rand** (`.rc-halo` + `.rc-path`, nie Gold –
+  Inselkarte (eigene Pfade ohne `data-region`): Verbindung zum Ort der nächsten regionalen Quest **entlang der Straßen**
+  (`roadPath`): Straßennetz `public/roads.js` (`window.MADEIRA_ROADS`, ~14 KB) – erzeugt mit `tools/strassen_netz.py` aus einer
+  vom Nutzer hochgeladenen OSRM-Route (Rundfahrt der 10 Regionen + Querungen Ribeira Brava–São Vicente und Santana–Funchal,
+  © OpenStreetMap-Mitwirkende; Rohdatei danach aus dem Repository entfernt): Teilstücke zwischen den Wegpunkten, gleiche
+  Wegpunkte = gemeinsame Knoten, jede Region (Mittelpunkt ihrer Quest-Pins) → nächster Wegpunkt, Dijkstra für alle 45 Paare,
+  vereinfacht ~40 m; `paths["a|b"]` (alphabetisch) = Teilstücke mit Richtung. Nie von Hand ändern, Skript neu laufen lassen
+  (`python3 tools/strassen_netz.py <route.json>`). Linie: Quest-Pin → nächste Stelle der Straße → … → Stelle nächst dem
+  Ziel-Pin → Ziel-Pin. Gleiche Region, fehlende/fehlerhafte Datei → **sanft geschwungene Linie** (quadratische Kurve,
+  abwechselnd gebogen). Test prüft alle 45 Verbindungen (lückenlos, auf Madeira). Quellenhinweis in der Spielanleitung. Linie **dunkles Ozeanblau #073b4c mit weißem Rand** (`.rc-halo` + `.rc-path`, nie Gold –
   das ist „Erschlossen“), per stroke-dashoffset nachgezeichnet; Region färbt sich nach Stufe; kurzes Fenster (Titel, Region, Tag,
   +Punkte, Erinnerungsfoto-Vorschau, sonst Pin-Icon). Darunter „Tisch“ `.rc-table` mit Zähler: Stapel-Quest-Karte fliegt heran
   im **Hochformat** wie die Karten der App (124×176 px: Farbstreifen der Schwierigkeit oben, Erinnerungsfoto bzw. Icon, Schwierigkeit,
@@ -425,7 +431,8 @@ Vertrauensbasis, keine Beweisfotos.
 - Dateien: `server.py` (stdlib-WSGI), `public/logic.js` (Regeln), `public/app.js` (UI), `public/content.js` (Quests, Pins
   `pin:[lat,lon]`, `maps` = Google-Maps-Suchname oder null = Koordinaten, optional `mapsUrl` fester Link, optional `link` = Text in der Aufgabe als Link, `height` = Höhe für „Höhe schätzen“),
   `public/tools.js` (Hilfsmittel), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `public/bay-map.js`
-  (Buchten-Karte, erzeugt von `tools/buchten_karte.py`), `tests/logic.test.js`.
+  (Buchten-Karte, erzeugt von `tools/buchten_karte.py`), `public/roads.js` (Straßennetz für den Rückblick, erzeugt von
+  `tools/strassen_netz.py`), `tests/logic.test.js`.
 - Kopfzeile: links Schriftzug „Operação Madeira“ (Bebas Neue + goldener Kompass, einzeilig, Größe passt sich an),
   rechts genau 4 Icons in dieser Reihenfolge: Shop (shopping-bag) / **Erfolge** (trophy, früher „Statistik“) /
   **Aktivitäten** (history, früher „Logbuch“) / Einstellungen (settings, ganz rechts); beschriftet, aria-label; kein Hilfe-„?“.
