@@ -123,7 +123,8 @@ Vertrauensbasis, keine Beweisfotos.
   „Alle Fotos herunterladen (ZIP)“ = Link `GET api/memories.zip?t=<token>&tz=<Zeitzonen-Minuten>` (nur sichtbare Fotos, Namen
   `JJJJ-MM-TT_Region_Quest.jpg` aus Erledigt-Datum + `label`, Stapel-Quests „Stapel_…“), Raster mit Vorschaubildern.
 - **Einführung** (`TOUR`, `startTour` in app.js): einmal pro Handy nach dem ersten Anmelden (localStorage `tourDone`), 5 Schritte
-  mit Hervorhebung (Inselkarte, Stapel-Quests, Shop, Erfolge, Einstellungen), je ein Satz; „Überspringen“, „Weiter“, am Ende
+  mit Hervorhebung (Inselkarte, Kopf des Stapel-Quest-Blocks, Shop, Erfolge, Einstellungen), je ein Satz; Optik in **Gold**
+  (Hervorhebung: goldener Rahmen + Schein; Erklär-Kasten hellgold mit goldenem Rand, „Weiter“ goldener Knopf); „Überspringen“, „Weiter“, am Ende
   „Los geht's“ (Escape = beenden). Wiederholbar: Einstellungen → Spielanleitung → „Einführung noch einmal ansehen“. Ebene `.tour`
   (z-index 75: über Fenstern, unter Toasts/Konfetti), Position wird bei Neuzeichnen/Scrollen/Größe angepasst (`tourPlace`).
 - **Spielstand sichern/wiederherstellen** (Einstellungen, Abschnitt „Spielstand sichern“): lädt `operacao-madeira-JJJJ-MM-TT.json`
@@ -405,7 +406,14 @@ Vertrauensbasis, keine Beweisfotos.
   „Gerade in keiner Region.“ + Höhe, ×), Region blinkt 3× kurz (`here-hl`), roter pulsierender Punkt (SMIL-`animate`) am
   Standort; verweigerte Erlaubnis → kurze Meldung. Nur lokal (`mapUI.here`).
 - Quest-Fenster: Bild oben (`public/images/quests/<ID>.jpg`, erst beim Öffnen geladen, fehlend = nichts), Titel,
-  Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett.
+  Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett. **„Alle Quests anzeigen“** zeigt dieselben Bilder
+  genauso (`regionQuestHTML(q, false, true)`, `loading="lazy"` mit 16:9-Platzhalter `.quest-img-lazy`).
+- **Regionen-Fenster** (`openRegion`): oben Pfeile ‹ › und 10 Punkte in Stufenfarbe (aktuelle Region hervorgehoben);
+  Wischen nach links/rechts im Fenster (waagerecht, ab 14 px, > ¼ Breite oder schnell) bzw. Pfeile wechseln zur
+  nächsten/vorigen Region **im Kreis** (Karten-Reihenfolge), mit Gleit-Animation; senkrecht scrollt normal.
+- **Aktivitäten:** Einträge zu einer Quest (quest/stack/mult) sind antippbar (`.log-open`, `data-open-q`) → regionale Quest
+  öffnet `openQuest`, Stapel-Quest `openStackQuest` (Aufgabe, Status, Hilfsmittel wenn offen, Erinnerungsfoto wenn erledigt).
+  Daneben bleibt das Erinnerungsfoto-Vorschaubild/der Kamera-Knopf (`memChip`).
 - **Wischen zwischen den Hauptseiten** (`MAIN_PAGES`: Startseite – Shop – Erfolge – Aktivitäten – Einstellungen; links =
   weiter, rechts = zurück, nicht im Kreis): Seite gleitet mit dem Finger, Nachbarseite schiebt sich als Vorschau herein
   (`.swipe-peek`, ohne IDs), rastet ein (> ⅓ Breite oder schnell > 0,35 px/ms bei > 50 px), sonst federt zurück; am

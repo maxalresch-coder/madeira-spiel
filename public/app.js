@@ -993,21 +993,22 @@
   // Quest-Fenster geöffnet wird – beim Seitenstart wird also kein Bild geladen. Fehlt es,
   // verschwindet es still. Bekannte fehlende Bilder werden nicht erneut angefragt.
   const missingImages = new Set();
-  function questImageHTML(q) {
+  // lazy (Übersicht „Alle Quests“): erst laden, wenn das Bild in die Nähe kommt; bis dahin Platzhalter in 16:9
+  function questImageHTML(q, lazy) {
     if (missingImages.has(q.id)) return "";
-    return '<img class="quest-img" data-qimg="' + q.id + '" alt="' + esc(q.title) + '" decoding="async" hidden>';
+    return '<img class="quest-img' + (lazy ? " quest-img-lazy" : "") + '" data-qimg="' + q.id + '" alt="' + esc(q.title) + '" decoding="async"' + (lazy ? ' loading="lazy"' : " hidden") + ">";
   }
   function bindQuestImages(el) {
     $$("img[data-qimg]", el).forEach((img) => {
       const id = img.dataset.qimg;
-      img.onload = () => { img.hidden = false; };
+      img.onload = () => { img.hidden = false; img.classList.remove("quest-img-lazy"); };
       img.onerror = () => { missingImages.add(id); img.remove(); };
       img.src = "images/quests/" + id + ".jpg";
     });
   }
-  function regionQuestHTML(q, interactive) {
+  function regionQuestHTML(q, interactive, withImage) {
     const done = app.state.quests[q.id];
-    return (interactive ? questImageHTML(q) : "") + '<div class="quest">' +
+    return (interactive ? questImageHTML(q) : withImage ? questImageHTML(q, true) : "") + '<div class="quest">' +
       (interactive ? '<button class="check ' + (done ? "on" : "") + '" data-quest="' + q.id + '" aria-label="' + (done ? "Erledigt – rückgängig machen" : "Als erledigt abhaken") + '">' + (done ? icon("check") : "") + "</button>"
         : '<span class="status ' + (done ? "on" : "") + '" aria-label="' + (done ? "erledigt" : "offen") + '">' + (done ? icon("check") : "") + "</span>") +
       '<div class="quest-body"><h4>' + esc(q.title) + "</h4>" +
@@ -3072,7 +3073,7 @@
       const regionsHTML = C.regions.map((r) => {
         const lvl = s.levels[r.id];
         return '<div class="ov-group"><div class="row between"><h3>' + esc(r.name) + "</h3>" + levelPill(lvl) + "</div>" +
-          r.quests.map((q) => regionQuestHTML(q, false)).join("") + "</div>";
+          r.quests.map((q) => regionQuestHTML(q, false, true)).join("") + "</div>";
       }).join("");
       const diffs = [["einfach", "Einfach"], ["mittel", "Mittel"], ["schwer", "Schwer"]];
       const stackHTML = diffs.map(([d, label]) => {
@@ -3092,6 +3093,7 @@
         '<h2 id="ov-region" class="ov-title">Regionale Quests</h2>' + regionsHTML +
         '<h2 id="ov-stack" class="ov-title">Stapel-Quests</h2>' + stackHTML;
     }, (el) => {
+      bindQuestImages(el); // Bilder wie im Quest-Fenster
       $$(".ov-jump a", el).forEach((a) => a.addEventListener("click", (ev) => {
         ev.preventDefault();
         const t = $(a.getAttribute("href"), el);
@@ -3100,20 +3102,100 @@
     });
   }
 
+  // Regionen-Fenster: nach links/rechts wischen (oder Pfeile) wechselt zur nächsten/vorigen Region (im Kreis, Karten-Reihenfolge)
   function openRegion(regionId) {
-    const r = IX.regions[regionId];
-    openModal(() => {
+    let r = IX.regions[regionId];
+    const m = openModal(() => {
       const s = sum();
       const lvl = s.levels[r.id];
       const joker = app.state.joker && app.state.joker.region === r.id;
       const next = lvl === 0 ? "Erste Quest: Region erkundet (+100)" : lvl < 3 ? "Nächste Quest: " + L.LEVELS[lvl + 1].name + " (+20)" : "Höchste Stufe erreicht!";
-      return '<div class="modal-head"><div><h2>' + esc(r.name) + "</h2>" + levelPill(lvl) + " " +
+      const i = C.regions.indexOf(r);
+      return '<div class="region-nav"><button class="region-step" data-step="-1" aria-label="Vorige Region">' + icon("chevron-left") + "</button>" +
+        '<span class="region-dots" aria-label="Region ' + (i + 1) + " von " + C.regions.length + '">' + C.regions.map((x, j) => "<i" + (j === i ? ' class="on"' : "") + ' style="background:' + L.LEVELS[s.levels[x.id]].color + '"></i>').join("") + "</span>" +
+        '<button class="region-step" data-step="1" aria-label="Nächste Region">' + icon("chevron-right") + "</button></div>" +
+        '<div class="modal-head"><div><h2>' + esc(r.name) + "</h2>" + levelPill(lvl) + " " +
         stars(lvl) +
         (joker ? ' <span class="pill" style="background:var(--ocean)">Region-Joker</span>' : "") +
         '</div><button class="modal-close" data-close aria-label="Schließen">' + icon("x") + '</button></div>' +
         '<p class="muted small">' + next + " · Punkte hier: " + fmt(L.regionPoints(app.state, C, r.id)) + "</p>" +
         r.quests.map((q) => regionQuestHTML(q, true)).join("");
-    }, bindQuestChecks, { where: "Region: " + r.name });
+    }, (el) => {
+      bindQuestChecks(el);
+      $$("[data-step]", el).forEach((b) => b.addEventListener("click", () => slide(+b.dataset.step)));
+    }, { where: "Region: " + r.name });
+    const box = $(".modal", m.el);
+    const step = (d) => {
+      const n = C.regions.length;
+      r = C.regions[(C.regions.indexOf(r) + d + n) % n];
+      m.where = "Region: " + r.name;
+      if (toolUI.cam) stopCamera();
+      m.refresh();
+      box.scrollTop = 0;
+    };
+    // Fenster gleitet zur Seite hinaus, die neue Region kommt von der anderen Seite herein
+    let sliding = false;
+    function slide(d, fromDx) {
+      if (sliding) return;
+      sliding = true;
+      const W = box.offsetWidth || window.innerWidth;
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { step(d); box.style.transform = ""; sliding = false; return; }
+      box.style.transition = "transform .18s ease-in, opacity .18s";
+      box.style.transform = "translate3d(" + -d * W + "px,0,0)"; box.style.opacity = "0";
+      setTimeout(() => {
+        step(d);
+        box.style.transition = "none";
+        box.style.transform = "translate3d(" + d * W * 0.6 + "px,0,0)";
+        void box.offsetWidth;
+        box.style.transition = "transform .22s cubic-bezier(.2,.8,.2,1), opacity .22s";
+        box.style.transform = ""; box.style.opacity = "";
+        setTimeout(() => { box.style.transition = ""; sliding = false; }, 230);
+      }, fromDx ? 140 : 180);
+    }
+    let g = null;
+    box.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1 || sliding || app.modals[app.modals.length - 1] !== m || e.target.closest("input, textarea, select, canvas, .sort-list")) { g = null; return; }
+      const t = e.touches[0];
+      g = { x0: t.clientX, y0: t.clientY, dx: 0, mode: "?", t0: performance.now() };
+    }, { passive: true });
+    box.addEventListener("touchmove", (e) => {
+      if (!g || e.touches.length !== 1) { g = null; return; }
+      const t = e.touches[0], dx = t.clientX - g.x0, dy = t.clientY - g.y0;
+      if (g.mode === "?") {
+        if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx) * 0.6) { g = null; return; } // senkrecht: normal scrollen
+        if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 2) return;
+        g.mode = "h";
+        box.style.transition = "none";
+      }
+      if (e.cancelable) e.preventDefault();
+      g.dx = dx;
+      box.style.transform = "translate3d(" + dx + "px,0,0)";
+    }, { passive: false });
+    const end = () => {
+      const x = g; g = null;
+      if (!x || x.mode !== "h") return;
+      const W = box.offsetWidth || window.innerWidth, v = Math.abs(x.dx) / Math.max(1, performance.now() - x.t0);
+      if (Math.abs(x.dx) > W * 0.25 || (Math.abs(x.dx) > 50 && v > 0.35)) slide(x.dx < 0 ? 1 : -1, true);
+      else { box.style.transition = "transform .2s ease"; box.style.transform = ""; setTimeout(() => { box.style.transition = ""; }, 210); }
+    };
+    box.addEventListener("touchend", end);
+    box.addEventListener("touchcancel", end);
+  }
+
+  // Stapel-Quest als Fenster (z. B. aus den Aktivitäten): Aufgabe, Status, Hilfsmittel (wenn offen), Erinnerungsfoto (wenn erledigt)
+  function openStackQuest(id) {
+    const q = IX.stack[id];
+    openModal(() => {
+      const done = app.state.done[id], isOpen = app.state.open.indexOf(id) >= 0;
+      const status = done ? '<div class="by">' + icon("check") + " erledigt von " + esc(done.by) + " · " + when(done.t) + " · +" + L.stackPoints(app.state, C, id) + " Punkte</div>"
+        : '<p class="muted small">' + (isOpen ? "Gerade offen – abhaken auf der Startseite bei den Stapel-Quests." : "Liegt verdeckt im Stapel.") + "</p>";
+      return '<div class="modal-head"><div><div class="muted small">Stapel-Quest</div><span class="pill diff-' + q.difficulty + '">' + diffLabel(q.difficulty) + "</span></div>" +
+        '<button class="modal-close" data-close aria-label="Schließen">' + icon("x") + "</button></div>" +
+        "<h2>" + esc(q.title) + "</h2>" + taskHTML(q) + (isOpen && tcfg(id) ? toolHTML(id) : "") + status + (done ? memLine(id) : "");
+    }, (el) => {
+      bindTools(el);
+      $$("[data-mem]", el).forEach((b) => b.addEventListener("click", () => openMemory(b.dataset.mem)));
+    }, { where: "Stapel-Quest: " + q.title });
   }
 
   async function toggleQuest(questId, btn) {
@@ -3233,8 +3315,12 @@
   function viewLog() {
     const items = app.state.log.slice().reverse().map((e) => {
       const d = e.dE - e.dS;
-      return '<div class="list-item ' + (e.undone ? "undone" : "") + '"><div class="grow"><div class="txt">' + esc(e.text) + "</div>" +
-        '<div class="meta">' + when(e.t, true) + " · " + esc(e.by) + (e.undone ? " · rückgängig gemacht" : "") + "</div></div>" +
+      // Einträge zu einer Quest: Antippen öffnet die Quest (regional bzw. Stapel-Quest)
+      const qid = (e.type === "quest" || e.type === "stack" || e.type === "mult") && e.data ? e.data.questId : null;
+      const inner = '<span class="txt">' + esc(e.text) + "</span>" +
+        '<span class="meta">' + when(e.t, true) + " · " + esc(e.by) + (e.undone ? " · rückgängig gemacht" : "") + "</span>";
+      return '<div class="list-item ' + (e.undone ? "undone" : "") + '">' +
+        (qid ? '<button class="grow log-open" data-open-q="' + qid + '" aria-label="Quest öffnen: ' + esc(questTitle(qid)) + '">' + inner + icon("chevron-right", "log-arrow") + "</button>" : '<div class="grow">' + inner + "</div>") +
         (d ? '<span class="delta ' + (d > 0 ? "plus" : "minus") + '">' + signed(d) + "</span>" : "") +
         ((e.type === "quest" || e.type === "stack") && !e.undone && questDone(e.data.questId) ? memChip(e.data.questId) : "") +
         (L.canUndo(e) && !app.state.ended ? '<button class="btn btn-small btn-ghost" data-undo="' + e.id + '" aria-label="Rückgängig">' + icon("undo-2") + '</button>' : "") + "</div>";
@@ -3627,7 +3713,7 @@
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys, löscht auch alle Erinnerungsfotos und braucht die Eingabe „RESET“.</p>" +
-      "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("trophy") + " Erfolge (Rang, Regionen, Punkte und Diagramme), " + icon("history") + " Aktivitäten (alles, was passiert ist, mit Rückgängig) und " + icon("settings") + " Einstellungen (diese Spielanleitung, Spieler, Spielstand sichern, Urlaub beenden, Reset). „← Zu den Quests“ führt zurück zur Startseite; in den Unterseiten der Einstellungen gibt es zusätzlich „← Einstellungen“.</p>" +
+      "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region – dort wechselt Wischen nach links/rechts (oder die Pfeile) zur nächsten Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Bei den Aktivitäten öffnet Antippen eines Eintrags die Quest. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("trophy") + " Erfolge (Rang, Regionen, Punkte und Diagramme), " + icon("history") + " Aktivitäten (alles, was passiert ist, mit Rückgängig) und " + icon("settings") + " Einstellungen (diese Spielanleitung, Spieler, Spielstand sichern, Urlaub beenden, Reset). „← Zu den Quests“ führt zurück zur Startseite; in den Unterseiten der Einstellungen gibt es zusätzlich „← Einstellungen“.</p>" +
       "<h3>" + icon("flag") + " Ende</h3><p>„Urlaub beenden &amp; Belohnungen“ (unter Einstellungen) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
       "</div>";
   }
@@ -4039,6 +4125,7 @@
     if (t.dataset.region) return openRegion(t.dataset.region);
     if (t.dataset.done) { const id = t.dataset.done; return act({ type: "stack", questId: id }, { fxFrom: t }).then((ok) => ok && offerMemory(id)); }
     if (t.dataset.mem) return openMemory(t.dataset.mem);
+    if (t.dataset.openQ) return IX.quests[t.dataset.openQ] ? openQuest(t.dataset.openQ) : openStackQuest(t.dataset.openQ);
     if (t.dataset.swap) return doSwap(t.dataset.swap);
     if (t.dataset.mult) return doMult(t.dataset.mult);
     if (t.dataset.undo) return undo(Number(t.dataset.undo));
