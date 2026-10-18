@@ -1001,7 +1001,7 @@
   function bindQuestImages(el) {
     $$("img[data-qimg]", el).forEach((img) => {
       const id = img.dataset.qimg;
-      img.onload = () => { img.hidden = false; img.classList.remove("quest-img-lazy"); };
+      img.onload = () => { img.hidden = false; img.classList.remove("quest-img-lazy"); if (img.decode) img.decode().catch(() => {}); }; // vorab dekodieren (flüssiges Wischen)
       img.onerror = () => { missingImages.add(id); img.remove(); };
       img.src = "images/quests/" + id + ".jpg";
     });
@@ -3102,84 +3102,123 @@
     });
   }
 
-  // Regionen-Fenster: nach links/rechts wischen (oder Pfeile) wechselt zur nächsten/vorigen Region (im Kreis, Karten-Reihenfolge)
+  // Regionen-Fenster: nach links/rechts wischen (oder Pfeile) wechselt zur nächsten/vorigen Region (im Kreis, Karten-Reihenfolge).
+  // Technik wie beim Wischen zwischen den Hauptseiten: Die Nachbarregionen liegen schon fertig gezeichnet (mit geladenen,
+  // vorab dekodierten Bildern) links und rechts neben der aktuellen (3 Ebenen .rg-pane); beim Wischen werden sie nur per
+  // transform verschoben (requestAnimationFrame), während des Wischens wird nichts neu gezeichnet. Nach dem Einrasten werden
+  // die Ebenen nur umsortiert und die neue, unsichtbare Nachbarregion im Hintergrund gezeichnet.
+  function regionPaneHTML(r) {
+    const s = sum();
+    const lvl = s.levels[r.id];
+    const joker = app.state.joker && app.state.joker.region === r.id;
+    const next = lvl === 0 ? "Erste Quest: Region erkundet (+100)" : lvl < 3 ? "Nächste Quest: " + L.LEVELS[lvl + 1].name + " (+20)" : "Höchste Stufe erreicht!";
+    const i = C.regions.indexOf(r);
+    return '<div class="region-nav"><button class="region-step" data-step="-1" aria-label="Vorige Region">' + icon("chevron-left") + "</button>" +
+      '<span class="region-dots" aria-label="Region ' + (i + 1) + " von " + C.regions.length + '">' + C.regions.map((x, j) => "<i" + (j === i ? ' class="on"' : "") + ' style="background:' + L.LEVELS[s.levels[x.id]].color + '"></i>').join("") + "</span>" +
+      '<button class="region-step" data-step="1" aria-label="Nächste Region">' + icon("chevron-right") + "</button></div>" +
+      '<div class="modal-head"><div><h2>' + esc(r.name) + "</h2>" + levelPill(lvl) + " " +
+      stars(lvl) +
+      (joker ? ' <span class="pill" style="background:var(--ocean)">Region-Joker</span>' : "") +
+      '</div><button class="modal-close" data-close aria-label="Schließen">' + icon("x") + '</button></div>' +
+      '<p class="muted small">' + next + " · Punkte hier: " + fmt(L.regionPoints(app.state, C, r.id)) + "</p>" +
+      r.quests.map((q) => regionQuestHTML(q, true)).join("");
+  }
   function openRegion(regionId) {
-    let r = IX.regions[regionId];
-    const m = openModal(() => {
-      const s = sum();
-      const lvl = s.levels[r.id];
-      const joker = app.state.joker && app.state.joker.region === r.id;
-      const next = lvl === 0 ? "Erste Quest: Region erkundet (+100)" : lvl < 3 ? "Nächste Quest: " + L.LEVELS[lvl + 1].name + " (+20)" : "Höchste Stufe erreicht!";
-      const i = C.regions.indexOf(r);
-      return '<div class="region-nav"><button class="region-step" data-step="-1" aria-label="Vorige Region">' + icon("chevron-left") + "</button>" +
-        '<span class="region-dots" aria-label="Region ' + (i + 1) + " von " + C.regions.length + '">' + C.regions.map((x, j) => "<i" + (j === i ? ' class="on"' : "") + ' style="background:' + L.LEVELS[s.levels[x.id]].color + '"></i>').join("") + "</span>" +
-        '<button class="region-step" data-step="1" aria-label="Nächste Region">' + icon("chevron-right") + "</button></div>" +
-        '<div class="modal-head"><div><h2>' + esc(r.name) + "</h2>" + levelPill(lvl) + " " +
-        stars(lvl) +
-        (joker ? ' <span class="pill" style="background:var(--ocean)">Region-Joker</span>' : "") +
-        '</div><button class="modal-close" data-close aria-label="Schließen">' + icon("x") + '</button></div>' +
-        '<p class="muted small">' + next + " · Punkte hier: " + fmt(L.regionPoints(app.state, C, r.id)) + "</p>" +
-        r.quests.map((q) => regionQuestHTML(q, true)).join("");
-    }, (el) => {
-      bindQuestChecks(el);
-      $$("[data-step]", el).forEach((b) => b.addEventListener("click", () => slide(+b.dataset.step)));
-    }, { where: "Region: " + r.name });
-    const box = $(".modal", m.el);
-    const step = (d) => {
-      const n = C.regions.length;
-      r = C.regions[(C.regions.indexOf(r) + d + n) % n];
-      m.where = "Region: " + r.name;
-      if (toolUI.cam) stopCamera();
-      m.refresh();
-      box.scrollTop = 0;
+    let idx = C.regions.indexOf(IX.regions[regionId]);
+    const N = C.regions.length, at = (d) => C.regions[(idx + d + N) % N];
+    const rg = { panes: {}, dx: 0, raf: 0, sliding: false, g: null, pending: false };
+    const bindPane = (p, withClose) => { // withClose: einzeln neu gezeichnete Ebene (sonst bindet openModal das X)
+      bindQuestChecks(p);
+      if (withClose) $$("[data-close]", p).forEach((b) => b.addEventListener("click", closeModal));
+      $$("[data-step]", p).forEach((b) => b.addEventListener("click", () => slide(+b.dataset.step)));
     };
-    // Fenster gleitet zur Seite hinaus, die neue Region kommt von der anderen Seite herein
-    let sliding = false;
-    function slide(d, fromDx) {
-      if (sliding) return;
-      sliding = true;
-      const W = box.offsetWidth || window.innerWidth;
-      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) { step(d); box.style.transform = ""; sliding = false; return; }
-      box.style.transition = "transform .18s ease-in, opacity .18s";
-      box.style.transform = "translate3d(" + -d * W + "px,0,0)"; box.style.opacity = "0";
-      setTimeout(() => {
-        step(d);
-        box.style.transition = "none";
-        box.style.transform = "translate3d(" + d * W * 0.6 + "px,0,0)";
-        void box.offsetWidth;
-        box.style.transition = "transform .22s cubic-bezier(.2,.8,.2,1), opacity .22s";
-        box.style.transform = ""; box.style.opacity = "";
-        setTimeout(() => { box.style.transition = ""; sliding = false; }, 230);
-      }, fromDx ? 140 : 180);
+    const m = openModal(() => '<div class="rg-view">' + [-1, 0, 1].map((d) => '<div class="rg-pane" data-off="' + d + '">' + regionPaneHTML(at(d)) + "</div>").join("") + "</div>",
+      (el) => {
+        rg.panes = {};
+        $$(".rg-pane", el).forEach((p) => { rg.panes[+p.dataset.off] = p; bindPane(p); });
+        place(0, false);
+      }, { where: "Region: " + at(0).name, sheet: () => rg.panes[0] });
+    const box = rg.box = $(".modal", m.el);
+    box.classList.add("rg-modal");
+    place(0, false);
+    // Neuzeichnen durch die Synchronisierung: nicht während des Wischens; Scrollposition der aktuellen Region bleibt
+    const base = m.refresh;
+    m.refresh = () => {
+      if (rg.g && rg.g.mode === "h" || rg.sliding) { rg.pending = true; return; }
+      const sc = rg.panes[0] ? rg.panes[0].scrollTop : 0;
+      base();
+      if (rg.panes[0]) rg.panes[0].scrollTop = sc;
+    };
+    function place(dx, anim) {
+      const W = (rg.box && rg.box.clientWidth) || window.innerWidth;
+      [-1, 0, 1].forEach((d) => {
+        const p = rg.panes[d];
+        if (!p) return;
+        p.style.transition = anim ? "transform .26s cubic-bezier(.2,.8,.2,1)" : "none";
+        p.style.transform = "translate3d(" + (d * W + dx) + "px,0,0)";
+      });
     }
-    let g = null;
+    const moveTo = (dx) => { rg.dx = dx; if (!rg.raf) rg.raf = requestAnimationFrame(() => { rg.raf = 0; place(rg.dx, false); }); };
+    // Einrasten: nur Ebenen umsortieren; die neue Nachbarregion (unsichtbar) frisch zeichnen
+    function slide(d) {
+      if (rg.sliding) return;
+      rg.sliding = true;
+      if (rg.raf) { cancelAnimationFrame(rg.raf); rg.raf = 0; }
+      const W = box.clientWidth || window.innerWidth;
+      const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      place(-d * W, !reduce);
+      setTimeout(() => {
+        idx = (idx + d + N) % N;
+        const old = rg.panes;
+        rg.panes = { 0: old[d], [-d]: old[0], [d]: old[-d] };
+        const fresh = rg.panes[d];
+        fresh.innerHTML = regionPaneHTML(at(d));
+        bindPane(fresh, true);
+        [-1, 0, 1].forEach((k) => { rg.panes[k].dataset.off = k; if (k) rg.panes[k].scrollTop = 0; });
+        place(0, false);
+        m.where = "Region: " + at(0).name;
+        if (toolUI.cam) stopCamera();
+        rg.sliding = false;
+        if (rg.pending) { rg.pending = false; m.refresh(); }
+      }, reduce ? 0 : 270);
+    }
     box.addEventListener("touchstart", (e) => {
-      if (e.touches.length !== 1 || sliding || app.modals[app.modals.length - 1] !== m || e.target.closest("input, textarea, select, canvas, .sort-list")) { g = null; return; }
+      rg.g = null;
+      if (e.touches.length !== 1 || rg.sliding || app.modals[app.modals.length - 1] !== m || e.target.closest(SHEET_NO)) return;
       const t = e.touches[0];
-      g = { x0: t.clientX, y0: t.clientY, dx: 0, mode: "?", t0: performance.now() };
+      rg.g = { x0: t.clientX, y0: t.clientY, mode: "?", hist: [[performance.now(), t.clientX]] };
     }, { passive: true });
     box.addEventListener("touchmove", (e) => {
-      if (!g || e.touches.length !== 1) { g = null; return; }
+      const g = rg.g;
+      if (!g || e.touches.length !== 1) { if (g && g.mode === "h") end(); rg.g = null; return; }
       const t = e.touches[0], dx = t.clientX - g.x0, dy = t.clientY - g.y0;
       if (g.mode === "?") {
-        if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx) * 0.6) { g = null; return; } // senkrecht: normal scrollen
+        if (m.lock && m.lock !== "h") { rg.g = null; return; }                                   // schon Ziehen nach unten
+        if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx) * 0.6) { rg.g = null; return; }    // senkrecht: scrollen
         if (Math.abs(dx) < 14 || Math.abs(dx) < Math.abs(dy) * 2) return;
-        g.mode = "h";
-        box.style.transition = "none";
+        g.mode = "h"; m.lock = "h";
       }
       if (e.cancelable) e.preventDefault();
-      g.dx = dx;
-      box.style.transform = "translate3d(" + dx + "px,0,0)";
+      g.hist.push([performance.now(), t.clientX]); if (g.hist.length > 6) g.hist.shift();
+      moveTo(dx);
     }, { passive: false });
-    const end = () => {
-      const x = g; g = null;
-      if (!x || x.mode !== "h") return;
-      const W = box.offsetWidth || window.innerWidth, v = Math.abs(x.dx) / Math.max(1, performance.now() - x.t0);
-      if (Math.abs(x.dx) > W * 0.25 || (Math.abs(x.dx) > 50 && v > 0.35)) slide(x.dx < 0 ? 1 : -1, true);
-      else { box.style.transition = "transform .2s ease"; box.style.transform = ""; setTimeout(() => { box.style.transition = ""; }, 210); }
-    };
+    function end() {
+      const g = rg.g; rg.g = null;
+      if (!g || g.mode !== "h") return;
+      const W = box.clientWidth || window.innerWidth, h = g.hist;
+      const v = h.length > 1 ? (h[h.length - 1][1] - h[0][1]) / Math.max(1, h[h.length - 1][0] - h[0][0]) : 0;
+      const dx = rg.dx;
+      if (Math.abs(dx) > W * 0.25 || (Math.abs(dx) > 50 && Math.abs(v) > 0.35 && Math.sign(v) === Math.sign(dx))) slide(dx < 0 ? 1 : -1);
+      else {
+        if (rg.raf) { cancelAnimationFrame(rg.raf); rg.raf = 0; }
+        place(0, true);
+        if (rg.pending) setTimeout(() => { if (!rg.g && !rg.sliding && rg.pending) { rg.pending = false; m.refresh(); } }, 280);
+      }
+    }
     box.addEventListener("touchend", end);
     box.addEventListener("touchcancel", end);
+    const onResize = () => { if (app.modals.indexOf(m) < 0) window.removeEventListener("resize", onResize); else if (!rg.sliding) place(0, false); };
+    window.addEventListener("resize", onResize);
   }
 
   // Stapel-Quest als Fenster (z. B. aus den Aktivitäten): Aufgabe, Status, Hilfsmittel (wenn offen), Erinnerungsfoto (wenn erledigt)
@@ -3943,6 +3982,7 @@
       const kept = {};
       $$("[data-keep]", el).forEach((i) => { kept[i.dataset.keep] = i.value; });
       el.innerHTML = renderFn();
+      el.classList.toggle("sheet", !opts.static && !!$(".modal-close", el)); // größere Fenster mit X: nach unten wegziehen
       $$("[data-keep]", el).forEach((i) => { if (kept[i.dataset.keep] != null) i.value = kept[i.dataset.keep]; });
       $$("[data-close]", el).forEach((b) => b.addEventListener("click", closeModal));
       if (bindFn) bindFn(el, refresh);
@@ -3952,9 +3992,70 @@
     };
     if (!opts.stack) backdrop.addEventListener("click", (ev) => { if (ev.target === backdrop) closeModal(); });
     const m = { refresh: opts.static ? () => {} : refresh, el: backdrop, onClose: null, where: opts.where || "" };
+    if (!opts.static) bindSheet(m, el, opts.sheet);
     app.modals.push(m);
     refresh();
     return m;
+  }
+  // ---- Fenster nach unten wegziehen (größere Fenster mit X-Knopf, Klasse .sheet mit Griff-Strich oben)
+  // Ist der Inhalt ganz oben, folgt das Fenster dem Finger nach unten (nur transform, requestAnimationFrame) und schließt
+  // sich, wenn weit genug (> 30 % der Höhe) oder schnell genug gezogen; sonst federt es zurück. Ist der Inhalt nach unten
+  // gescrollt, scrollt Wischen nach unten zuerst den Inhalt zurück (erst ein neuer Wisch ganz oben schließt). Waagerechtes
+  // Wischen (Regionen-Fenster) und Ziehen in Listen, Karten, Zeichenfläche, Kamera und Feldern bleiben unberührt (m.lock).
+  const SHEET_NO = "input, textarea, select, canvas, .sort-list, .sort-item, .bay-map-wrap, .draw-pad, .cam, [data-cam-slot], .no-swipe";
+  function bindSheet(m, box, getScroller) {
+    let g = null, raf = 0, y = 0;
+    const paint = () => {
+      raf = 0;
+      box.style.transform = y ? "translate3d(0," + y + "px,0)" : "";
+      m.el.style.backgroundColor = y ? "rgba(4, 25, 33, " + (0.55 * Math.max(0, 1 - y / (box.offsetHeight || 1))).toFixed(3) + ")" : "";
+    };
+    box.addEventListener("touchstart", (e) => {
+      g = null; m.lock = null;
+      if (e.touches.length !== 1 || !box.classList.contains("sheet") || app.modals[app.modals.length - 1] !== m || e.target.closest(SHEET_NO)) return;
+      const t = e.touches[0];
+      g = { x0: t.clientX, y0: t.clientY, mode: "?", hist: [] };
+    }, { passive: true });
+    box.addEventListener("touchmove", (e) => {
+      if (!g) return;
+      if (e.touches.length !== 1) { finish(true); return; }
+      const t = e.touches[0], dx = t.clientX - g.x0, dy = t.clientY - g.y0;
+      if (g.mode === "?") {
+        if (m.lock && m.lock !== "v") { g = null; return; }
+        const sc = getScroller ? getScroller() : box;
+        if (!sc || sc.scrollTop > 0) { g = null; return; }                    // nach unten gescrollt: erst zurückscrollen
+        if (dy < -4 || Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) { g = null; return; } // hoch bzw. waagerecht
+        if (dy > 0 && e.cancelable) e.preventDefault();                       // ganz oben: Browser soll nicht erst scrollen
+        if (dy < 8 || dy < Math.abs(dx) * 1.2) return;
+        if (!e.cancelable) { g = null; return; }
+        g.mode = "v"; m.lock = "v";
+        box.style.transition = "none"; m.el.style.transition = "none";
+      }
+      if (e.cancelable) e.preventDefault();
+      g.hist.push([performance.now(), t.clientY]); if (g.hist.length > 6) g.hist.shift();
+      y = Math.max(0, t.clientY - g.y0);
+      if (!raf) raf = requestAnimationFrame(paint);
+    }, { passive: false });
+    function finish(cancel) {
+      const x = g; g = null;
+      if (!x || x.mode !== "v") return;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      const h = x.hist, H = box.offsetHeight || window.innerHeight;
+      const v = h.length > 1 ? (h[h.length - 1][1] - h[0][1]) / Math.max(1, h[h.length - 1][0] - h[0][0]) : 0;
+      const close = !cancel && (y > H * 0.3 || (y > 60 && v > 0.5));
+      box.style.transition = "transform " + (close ? ".22s ease-in" : ".26s cubic-bezier(.2,.8,.2,1)");
+      m.el.style.transition = "background-color .22s";
+      if (close) {
+        y = H + 40; paint();
+        m.el.style.backgroundColor = "rgba(4, 25, 33, 0)";
+        setTimeout(() => { if (app.modals[app.modals.length - 1] === m) closeModal(); }, 220);
+      } else {
+        y = 0; paint();
+        setTimeout(() => { if (!g) { box.style.transition = ""; m.el.style.transition = ""; } }, 280);
+      }
+    }
+    box.addEventListener("touchend", () => finish(false));
+    box.addEventListener("touchcancel", () => finish(true));
   }
   function closeModal() {
     const m = app.modals.pop();

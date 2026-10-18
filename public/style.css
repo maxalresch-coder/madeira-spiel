@@ -947,3 +947,15 @@ a.btn { text-decoration: none; text-align: center; justify-content: center; }
 .log-open .log-arrow { position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; opacity: .5; }
 /* Alle Quests: Bilder wie im Quest-Fenster, Platzhalter bis zum Laden */
 .quest-img-lazy { aspect-ratio: 16 / 9; }
+
+/* ---------- Fenster nach unten wegziehen ---------- */
+.modal { overscroll-behavior: contain; }
+.modal.sheet::before { content: ""; display: block; width: 42px; height: 5px; border-radius: 3px; background: var(--line); margin: -10px auto 10px; flex: 0 0 auto; }
+@media (prefers-color-scheme: dark) { .modal.sheet::before { background: #3b5a64; } }
+
+/* ---------- Regionen-Fenster: 3 Ebenen nebeneinander (aktuelle + Nachbarn), nur per transform verschoben ---------- */
+.modal.rg-modal { height: 92vh; height: 92dvh; display: flex; flex-direction: column; overflow: hidden; padding: 20px 0 0; }
+.rg-view { position: relative; flex: 1 1 auto; overflow: hidden; }
+.rg-pane { position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y;
+  padding: 0 18px calc(20px + env(safe-area-inset-bottom)); background: var(--surface); will-change: transform; backface-visibility: hidden; }
+.rg-pane .region-nav { margin-top: 0; }

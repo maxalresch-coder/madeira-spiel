@@ -408,9 +408,21 @@ Vertrauensbasis, keine Beweisfotos.
 - Quest-Fenster: Bild oben (`public/images/quests/<ID>.jpg`, erst beim Öffnen geladen, fehlend = nichts), Titel,
   Standort als Google-Maps-Link, Beschreibung, **„Eure Aufgabe:“** fett. **„Alle Quests anzeigen“** zeigt dieselben Bilder
   genauso (`regionQuestHTML(q, false, true)`, `loading="lazy"` mit 16:9-Platzhalter `.quest-img-lazy`).
-- **Regionen-Fenster** (`openRegion`): oben Pfeile ‹ › und 10 Punkte in Stufenfarbe (aktuelle Region hervorgehoben);
-  Wischen nach links/rechts im Fenster (waagerecht, ab 14 px, > ¼ Breite oder schnell) bzw. Pfeile wechseln zur
-  nächsten/vorigen Region **im Kreis** (Karten-Reihenfolge), mit Gleit-Animation; senkrecht scrollt normal.
+- **Regionen-Fenster** (`openRegion`, Inhalt `regionPaneHTML`): oben Pfeile ‹ › und 10 Punkte in Stufenfarbe (aktuelle Region
+  hervorgehoben); Wischen nach links/rechts im Fenster (waagerecht, ab 14 px und |dx| ≥ 2·|dy|, > ¼ Breite oder schnell
+  > 0,35 px/ms bei > 50 px) bzw. Pfeile wechseln zur nächsten/vorigen Region **im Kreis** (Karten-Reihenfolge).
+  **Flüssig wie die Hauptseiten:** 3 Ebenen `.rg-pane` (vorige, aktuelle, nächste Region) liegen fertig gezeichnet
+  nebeneinander, Bilder geladen und vorab dekodiert (`img.decode()` in `bindQuestImages`); beim Wischen nur `transform`
+  per `requestAnimationFrame` (`place`/`moveTo`), **kein Neuzeichnen** (Synchronisierung wird aufgeschoben, `rg.pending`);
+  nach dem Einrasten werden die Ebenen nur umsortiert, nur die neue unsichtbare Nachbarregion wird gezeichnet. Jede
+  Ebene scrollt selbst (`touch-action: pan-y`), Fenster feste Höhe 92dvh (`.rg-modal`). Geprüft mit 4-fach gedrosselter CPU.
+- **Fenster nach unten wegziehen** (`bindSheet`, in `openModal` für alle nicht-statischen Fenster mit X-Knopf → Klasse
+  `.sheet` mit Griff-Strich oben): Ist der Inhalt ganz oben (`scrollTop` 0; beim Regionen-Fenster die aktuelle Ebene,
+  `opts.sheet`), folgt das Fenster dem Finger nach unten (transform, rAF, Hintergrund wird heller) und schließt sich bei
+  > 30 % der Höhe oder schnell (> 0,5 px/ms bei > 60 px), sonst federt es zurück. Ist der Inhalt gescrollt, scrollt Wischen
+  nach unten zuerst den Inhalt zurück; erst ein neuer Wisch ganz oben schließt. Richtungssperre `m.lock` ("v"/"h") trennt
+  es vom Links-Rechts-Wischen. Nicht in Feldern, Listen zum Ziehen, Karten, Zeichenfläche, Kamera (`SHEET_NO`).
+  X-Knopf bleibt. Kleine Rückfragen (`confirmBox`, `promptBox`, statische Fenster) haben das nicht.
 - **Aktivitäten:** Einträge zu einer Quest (quest/stack/mult) sind antippbar (`.log-open`, `data-open-q`) → regionale Quest
   öffnet `openQuest`, Stapel-Quest `openStackQuest` (Aufgabe, Status, Hilfsmittel wenn offen, Erinnerungsfoto wenn erledigt).
   Daneben bleibt das Erinnerungsfoto-Vorschaubild/der Kamera-Knopf (`memChip`).
