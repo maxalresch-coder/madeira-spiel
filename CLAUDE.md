@@ -363,7 +363,30 @@ Vertrauensbasis, keine Beweisfotos.
     Hinweis auf GPS-Ungenauigkeit. Region per `T.regionAt` (Punkt-in-Polygon mit den Gemeindegrenzen aus map-data.js).
   - Links (`LINKS` in tools.js, eigene Zeilen): „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
     „Die zehn UNESCO-Kriterien“ (Mit Lorbeeren und UNESCO gekrönt) → https://whc.unesco.org/en/criteria/.
-- Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann Zertifikat (PDF).
+- Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann
+  **Urlaubs-Rückblick**, danach Belohnungen + Zertifikat (PDF) bei den Erfolgen.
+- **Urlaubs-Rückblick** (`startRecap` in app.js, Daten `L.recap(state, content)` in logic.js, getestet): startet nach
+  „Abschließen“ der Punkteverteilung; erneut über „Urlaubs-Rückblick abspielen“ in den Erfolgen (nach Urlaubsende,
+  `#recap-btn`). Ereignisse **streng chronologisch** nach `state.quests[id].t` / `state.done[id].t` (Gleichstand: Reihenfolge
+  der Aktivitäten); nur jetzt erledigte Quests, Rückgängiggemachtes fehlt ganz; der Region-Joker färbt seine Region zu seinem
+  Zeitpunkt (ohne Auftritt). Je Ereignis: `points` (inkl. Stufen/Insel-Bonus, Summe = verdiente Punkte), `earned`, `levels`,
+  `day` (1 = Spielbeginn), regional `km` (Luftlinie `L.distanceKm` zwischen den Pins nacheinander erledigter regionaler Quests).
+  Bild: Vollbild-Ebene `.recap` (z-index 95): oben Titel, „Tag X · Punkte“ (zählen mit), „Überspringen“; Inselkarte (eigene
+  Pfade ohne `data-region`): goldene Linie im Zickzack zum Ort der nächsten regionalen Quest (stroke-dashoffset), Region färbt
+  sich nach Stufe, kurzes Fenster (Titel, Region, Tag, +Punkte, Erinnerungsfoto-Vorschau, sonst Pin-Icon). Darunter „Tisch“
+  `.rc-table` mit Zähler: Stapel-Quest-Karte fliegt heran (Schwierigkeitsfarbe oben, Titel, Punkte, Multiplikator, kleines Foto)
+  und landet lesbar, leicht gedreht (±8,5°) und versetzt (fest aus `L.hash(id:seed)`), neue verdeckt ältere nur teilweise.
+  Eine Uhr per `requestAnimationFrame` (`run.vt`), nur transform/opacity/dashoffset; Pause (auch automatisch, wenn die Seite
+  in den Hintergrund geht), Tempo 0,5×–3× (−/+), Fortschrittsbalken; Dauer je Ereignis 75 s / Anzahl (1,4–4,5 s) → ~60–90 s
+  bei vielen Quests. Fotos werden vorab geladen/dekodiert. Ende: Zusammenfassung (Rang mit Figur, Punkte, Tage, Stapel-Quests,
+  regionale Quests, bester Multiplikator, Luftlinie, Regionen je Stufe) mit „Nochmal“/„Fertig“. Geprüft mit 4-fach
+  gedrosselter CPU bei 384×854.
+- **Zertifikat** (`certificateSVG(photos, withImages)`, 1188×840, A4 quer): Namen, Rang mit Figur (`certFigure`, Figur aus
+  figures.js mit festen Farben), kleine Inselkarte mit Stufenfarben + Legende, Collage aus bis zu 6 Erinnerungsfotos
+  (`certPhotoIds`: gleichmäßig über den Urlaub verteilt; Vorschaubilder als data-URL, `loadCertPhotos`, Cache `certCache`),
+  6 Statistik-Kästen (Punkte/%, Regionen je Stufe, Stapel-Quests, Tage, bester Multiplikator, Luftlinie), Gutscheine (ab 3 in zwei
+  Spalten). Vorschau bei den Erfolgen mit Fotos in der SVG; **PDF** (`downloadPDF`): SVG ohne Fotos ins Canvas (2×), Fotos
+  direkt aufs Canvas gezeichnet (sicher für Safari), JPEG 0,85 → ca. 250 KB.
 
 ## Aufbau und Gestaltung
 - Dateien: `server.py` (stdlib-WSGI), `public/logic.js` (Regeln), `public/app.js` (UI), `public/content.js` (Quests, Pins

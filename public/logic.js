@@ -420,6 +420,56 @@
     };
   }
 
+  // ---------------------------------------------------------------- Urlaubs-Rückblick
+  // Luftlinie zwischen zwei [lat, lon] in km (Haversine)
+  function distanceKm(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b[0] - a[0]) * rad, dLon = (b[1] - a[1]) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  // Ereignisse des Rückblicks: nur Quests, die JETZT erledigt sind (Rückgängiggemachtes fehlt also ganz), streng nach
+  // ihrem gespeicherten Zeitpunkt (bei Gleichstand in der Reihenfolge der Aktivitäten). Der Region-Joker färbt seine Region
+  // zu seinem Zeitpunkt ein (ohne eigenen Auftritt). Je Ereignis: Punkte, die es gebracht hat (inkl. Stufen und Insel-Bonus),
+  // Punktestand danach, Stufen aller Regionen danach, Tag (1 = Spielbeginn) und bei regionalen Quests die Luftlinie seit
+  // der vorigen regionalen Quest.
+  function recap(state, content) {
+    const ix = index(content);
+    const order = {};
+    state.log.forEach((e, i) => { if (e.data && e.data.questId && !(e.data.questId in order) && !e.undone) order[e.type + ":" + e.data.questId] = i; });
+    const items = [];
+    Object.keys(state.quests).forEach((id) => { if (ix.quests[id]) items.push({ kind: "quest", id, t: state.quests[id].t, by: state.quests[id].by, o: order["quest:" + id] }); });
+    Object.keys(state.done).forEach((id) => { if (ix.stack[id]) items.push({ kind: "stack", id, t: state.done[id].t, by: state.done[id].by, o: order["stack:" + id] }); });
+    if (state.joker) items.push({ kind: "joker", id: state.joker.region, t: state.joker.t, by: state.joker.by, o: -1 });
+    const key = (x) => (x.o == null ? 1e9 : x.o);
+    items.sort((a, b) => (a.t - b.t) || (key(a) - key(b)));
+    const sim = { quests: {}, done: {}, joker: null, mults: state.mults, deck: [], open: [], log: [], rolls: state.rolls };
+    const day0 = new Date(dayKey(state.createdAt) + "T00:00:00").getTime();
+    let earned = 0, km = 0, lastPin = null;
+    const events = [];
+    items.forEach((x) => {
+      if (x.kind === "quest") sim.quests[x.id] = { by: x.by, t: x.t };
+      else if (x.kind === "stack") sim.done[x.id] = { by: x.by, t: x.t };
+      else sim.joker = state.joker;
+      const sm = summary(sim, content);
+      const ev = { kind: x.kind, id: x.id, t: x.t, by: x.by, points: sm.earned - earned, earned: sm.earned, levels: sm.levels,
+        day: Math.max(1, Math.round((new Date(dayKey(x.t) + "T00:00:00").getTime() - day0) / 86400000) + 1) };
+      earned = sm.earned;
+      if (x.kind === "quest") {
+        const q = ix.quests[x.id];
+        ev.region = q.region;
+        ev.km = lastPin ? distanceKm(lastPin, q.pin) : 0;
+        km += ev.km;
+        lastPin = q.pin;
+      } else if (x.kind === "stack") {
+        ev.difficulty = ix.stack[x.id].difficulty;
+        ev.factor = state.mults[x.id] ? state.mults[x.id].factor : null;
+      }
+      events.push(ev);
+    });
+    return { events, earned, km, days: dayCount(state, Date.now()) };
+  }
+
   function canUndo(entry) {
     return !entry.undone && ["quest", "stack", "joker", "swap", "mult"].indexOf(entry.type) >= 0;
   }
@@ -443,7 +493,7 @@
   const api = {
     STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MAX_SWAPS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
     newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible, regionProgress, rankProgress, maxPoints,
-    canUndo, dayCount, pointsPerDay, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
+    canUndo, dayCount, pointsPerDay, recap, distanceKm, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GameLogic = api;

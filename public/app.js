@@ -3651,13 +3651,20 @@
           finished = true;
           closeAll();
           go("stats");
-          confetti(200);
+          startRecap(() => confetti(200)); // Urlaubs-Rückblick, danach Belohnungen & Zertifikat
         }
       });
     }, { keepScroll: true });
     em.onClose = () => { if (!finished) backToSettings("end"); }; // Verteilen abgebrochen
   }
 
+  // Fotos für die Vorschau der Urkunde: sind sie noch nicht geladen, laden und danach neu zeichnen
+  function certPreviewPhotos() {
+    if (!app.mem) return [];
+    const ids = certPhotoIds(), key = ids.map((id) => app.mem.items[id].f).join(",");
+    if (certCache.key !== key || certCache.loading) loadCertPhotos().then(() => { if (app.view === "stats" && app.state.ended) render(); });
+    return certCache.key === key && !certCache.loading ? certCache.photos : [];
+  }
   function viewEnded(s) {
     const alloc = app.state.ended.alloc || {};
     const lines = C.rewards.filter((r) => alloc[r.id] > 0).map((r) =>
@@ -3665,61 +3672,321 @@
     return '<h2>' + icon("flag") + ' Urlaub beendet</h2>' +
       '<div class="panel rank-panel"><div class="muted small">Euer Rang</div><div class="rank-big">' + esc(s.rankName) + '</div><div class="small">' + fmt(s.earned) + " von " + fmt(s.maxPoints) + " Punkten (" + Math.round(s.earned / s.maxPoints * 100) + " %)</div></div>" +
       '<div class="panel"><h3>Eure Belohnungen</h3>' + (lines || '<p class="muted" style="margin:0">Keine Restpunkte verteilt.</p>') + "</div>" +
-      '<div class="panel"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG()) + '">' +
+      '<div class="panel"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG(certPreviewPhotos(), true)) + '">' +
       '<button class="btn btn-primary btn-block" id="pdf-btn" style="margin-top:12px">' + icon("file-down") + ' Zertifikat als PDF herunterladen</button></div>' +
-      '<div class="panel" style="display:grid;gap:10px"><button class="btn btn-ghost btn-block" id="reopen-btn">Urlaub fortsetzen (Verteilung aufheben)</button>' +
+      '<div class="panel" style="display:grid;gap:10px"><button class="btn btn-gold btn-block" id="recap-btn">' + icon("play") + " Urlaubs-Rückblick abspielen</button>" +
+      '<button class="btn btn-ghost btn-block" id="reopen-btn">Urlaub fortsetzen (Verteilung aufheben)</button>' +
       '<button class="btn btn-ghost btn-block" id="tab-stats-btn">Erfolge ansehen</button></div>';
   }
 
-  // ---- Zertifikat
-  function certificateSVG() {
-    const s = sum();
-    const st = app.state;
+  // ---- Urlaubs-Rückblick (nach „Urlaub beenden“, erneut über die Erfolge): streng chronologisch nur die erledigten Quests
+  // (L.recap). Regionale Quests: Linie im Zickzack auf der Inselkarte zum Ort der Quest, Region färbt sich nach Stufe, kurzes
+  // Fenster (Titel, Region, Tag, Punkte, Erinnerungsfoto). Stapel-Quests: Karte fliegt auf einen Stapel (leicht zufällig
+  // gedreht/versetzt, immer lesbar). Eine eigene Uhr (requestAnimationFrame) treibt alles an: Pause, langsamer/schneller,
+  // Überspringen. Bewegt wird nur per transform/opacity bzw. stroke-dashoffset; nichts wird während der Animation neu gezeichnet.
+  const RC_SPEEDS = [0.5, 1, 1.5, 2, 3];
+  let recapRun = null;
+  const nfmt1 = (n) => n.toLocaleString("de-DE", { maximumFractionDigits: 1, minimumFractionDigits: n < 100 ? 1 : 0 });
+  const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : 1 - Math.pow(1 - x, 3));
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  function recapSummaryHTML(R) {
+    const s = sum(), c = [0, 0, 0, 0];
+    C.regions.forEach((r) => c[s.levels[r.id]]++);
+    const chip = (i, label) => '<span class="rc-chip"><i style="background:' + L.LEVELS[i].color + '"></i>' + c[i] + " " + label + "</span>";
+    return '<div class="rc-sum"><div class="rc-sum-in">' +
+      '<div class="rc-sum-fig">' + rankFigure(s.rank) + "</div>" +
+      '<div class="muted small">Euer Rang</div><h2>' + esc(s.rankName) + "</h2>" +
+      '<div class="rc-sum-pts">' + fmt(s.earned) + " Punkte</div>" +
+      '<div class="rc-sum-grid">' +
+        '<div><b>' + R.days + "</b><span>" + (R.days === 1 ? "Tag" : "Tage") + "</span></div>" +
+        '<div><b>' + s.doneStack + "</b><span>Stapel-Quests</span></div>" +
+        '<div><b>' + s.questsDone + "</b><span>regionale Quests</span></div>" +
+        '<div><b>' + (s.bestMult ? L.fmtFactor(s.bestMult) : "–") + "</b><span>bester Multiplikator</span></div>" +
+        '<div class="wide"><b>' + nfmt1(R.km) + " km</b><span>Luftlinie zwischen den Quest-Orten</span></div>" +
+      "</div>" +
+      '<div class="rc-chips">' + chip(3, "erschlossen") + chip(2, "erobert") + chip(1, "erkundet") + chip(0, "unbesucht") + "</div>" +
+      '<div class="rc-sum-btns"><button class="btn btn-ghost" data-rc="again">' + icon("rotate-ccw") + " Nochmal</button>" +
+      '<button class="btn btn-gold" data-rc="close">Fertig</button></div></div></div>';
+  }
+  function startRecap(onDone) {
+    if (recapRun) return;
+    const R = L.recap(app.state, C);
+    const shown = R.events.filter((e) => e.kind !== "joker").length;
+    const D = Math.max(1400, Math.min(4500, 75000 / Math.max(1, shown))); // gesamt ≈ 60–90 s bei vielen Quests
+    const INTRO = 1200;
+    let t = INTRO;
+    R.events.forEach((e) => { e.start = t; e.dur = e.kind === "joker" ? 0 : D; t += e.dur; });
+    const total = t + 600;
+    const el = document.createElement("div");
+    el.className = "recap";
+    el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Urlaubs-Rückblick");
+    const paths = C.regions.map((r) => '<path data-rc-region="' + r.id + '" d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[0].color + '"/>').join("");
+    el.innerHTML = '<div class="rc-top"><div><div class="rc-title">' + icon("history") + " Urlaubs-Rückblick</div>" +
+        '<div class="rc-stats"><span class="rc-day">Tag 1</span> · <span class="rc-pts">0</span> Punkte</div></div>' +
+        '<button class="btn btn-small rc-skip" data-rc="skip">Überspringen</button></div>' +
+      '<div class="rc-map"><svg viewBox="0 0 ' + MAP.w + " " + MAP.h + '" aria-hidden="true"><g class="rc-regions">' + paths + '</g><g class="rc-line"></g><g class="rc-dots"></g></svg><div class="rc-pop" hidden></div></div>' +
+      '<div class="rc-table"><div class="rc-count" aria-label="Stapel-Quests">' + icon("layers") + " <span>0</span></div><div class=\"rc-cards\"></div></div>" +
+      '<div class="rc-bar"><div class="rc-progress"><i></i></div><div class="rc-ctrl">' +
+        '<button class="btn btn-small btn-ghost" data-rc="slower" aria-label="Langsamer">' + icon("minus") + "</button>" +
+        '<span class="rc-speed">1×</span>' +
+        '<button class="btn btn-small btn-ghost" data-rc="faster" aria-label="Schneller">' + icon("plus") + "</button>" +
+        '<button class="btn btn-small btn-primary rc-play" data-rc="pause" aria-label="Pause">' + icon("pause") + "</button></div></div>";
+    document.body.appendChild(el);
+    const svg = $(".rc-map svg", el), lineG = $(".rc-line", el), dotG = $(".rc-dots", el), pop = $(".rc-pop", el), cards = $(".rc-cards", el), mapBox = $(".rc-map", el);
+    const run = recapRun = { vt: 0, last: 0, speed: 1, paused: false, i: -1, raf: 0, done: false };
+    // Erinnerungsfotos vorab laden und dekodieren (ruckelfrei beim Einblenden)
+    const thumbs = {};
+    R.events.forEach((e) => {
+      const it = memFor(e.id);
+      if (!it || e.kind === "joker") return;
+      const im = new Image(); im.decoding = "async"; im.src = memUrl(it, true);
+      if (im.decode) im.decode().catch(() => {});
+      thumbs[e.id] = im.src;
+    });
+    let lastPin = null, stackN = 0;
+    const NS = "http://www.w3.org/2000/svg";
+    const svgEl = (tag, attrs) => { const n = document.createElementNS(NS, tag); Object.keys(attrs).forEach((k) => n.setAttribute(k, attrs[k])); return n; };
+    const setLevels = (lv) => C.regions.forEach((r) => { const p = $('[data-rc-region="' + r.id + '"]', svg); if (p) p.setAttribute("fill", L.LEVELS[lv[r.id]].color); });
+    const prevEarned = (i) => (i > 0 ? R.events[i - 1].earned : 0);
+    function begin(i) { // einmalig, wenn ein Ereignis dran ist
+      const e = R.events[i];
+      $(".rc-day", el).textContent = "Tag " + e.day;
+      if (e.kind === "joker") { setLevels(e.levels); return; }
+      if (e.kind === "quest") {
+        const q = IX.quests[e.id], xy = toMap(q.pin[0], q.pin[1]);
+        if (lastPin) {
+          const len = Math.hypot(xy[0] - lastPin[0], xy[1] - lastPin[1]) || 1;
+          e.line = svgEl("line", { x1: lastPin[0], y1: lastPin[1], x2: xy[0], y2: xy[1], "stroke-dasharray": len, "stroke-dashoffset": len });
+          e.len = len;
+          lineG.appendChild(e.line);
+        }
+        lastPin = xy;
+        e.xy = xy;
+        const it = thumbs[e.id];
+        pop.innerHTML = (it ? '<img src="' + it + '" alt="">' : '<span class="rc-pop-ic">' + icon("map-pin") + "</span>") +
+          '<div><strong>' + esc(q.title) + '</strong><div class="small">' + esc(IX.regions[q.region].name) + " · Tag " + e.day + ' · <b class="plus">+' + e.points + "</b></div></div>";
+        pop.hidden = false;
+        const W = mapBox.clientWidth, H = mapBox.clientHeight, k = W / MAP.w, px = xy[0] * k, py = xy[1] * k;
+        const pw = pop.offsetWidth, ph = pop.offsetHeight;
+        const left = Math.max(6, Math.min(W - pw - 6, px - pw / 2));
+        const top = py < H / 2 ? Math.min(H - ph - 4, py + 14) : Math.max(4, py - ph - 14);
+        pop.style.left = left + "px"; pop.style.top = top + "px";
+        pop.style.transformOrigin = (px - left) + "px " + (py < H / 2 ? "0" : ph + "px");
+        pop.style.opacity = "0"; pop.style.transform = "scale(.6)";
+      } else {
+        const q = IX.stack[e.id], h = L.hash(e.id + ":" + app.state.seed);
+        const it = thumbs[e.id];
+        const c = document.createElement("div");
+        c.className = "rc-card rc-d-" + q.difficulty;
+        c.innerHTML = '<div class="rc-card-body"><div class="rc-card-txt"><span class="pill diff-' + q.difficulty + '">' + diffLabel(q.difficulty) + "</span>" +
+          (e.factor ? ' <span class="pill mult-badge">' + L.fmtFactor(e.factor) + "</span>" : "") +
+          "<strong>" + esc(q.title) + '</strong><span class="rc-card-pts">+' + e.points + " Punkte · Tag " + e.day + "</span></div>" +
+          (it ? '<img src="' + it + '" alt="">' : "") + "</div>";
+        e.rot = ((h % 1700) / 100) - 8.5;                      // −8,5° … +8,5°
+        e.ox = (((h >>> 8) % 101) - 50); e.oy = (((h >>> 16) % 81) - 40);
+        c.style.zIndex = 1 + stackN;
+        c.style.willChange = "transform, opacity";
+        cards.appendChild(c);
+        e.card = c;
+      }
+    }
+    function frame(i, p) { // laufend: nur transform/opacity/stroke-dashoffset
+      const e = R.events[i];
+      if (!e || e.kind === "joker") return;
+      const pts = prevEarned(i) + (e.earned - prevEarned(i)) * ease(clamp01((p - 0.3) / 0.35));
+      $(".rc-pts", el).textContent = fmt(pts);
+      if (e.kind === "quest") {
+        if (e.line) e.line.setAttribute("stroke-dashoffset", (e.len * (1 - ease(clamp01(p / 0.35)))).toFixed(1));
+        if (p >= 0.35 && !e.colored) { e.colored = true; setLevels(e.levels); dotG.appendChild(svgEl("circle", { cx: e.xy[0], cy: e.xy[1], r: 9, class: "rc-dot" })); }
+        const a = clamp01((p - 0.3) / 0.12), z = clamp01((1 - p) / 0.12);
+        pop.style.opacity = Math.min(a, z).toFixed(3);
+        pop.style.transform = "scale(" + (0.6 + 0.4 * ease(a)).toFixed(3) + ")";
+      } else {
+        const f = ease(clamp01(p / 0.45)), W = cards.clientWidth;
+        const x = e.ox + (1 - f) * (W * 0.75), y = e.oy - (1 - f) * 260, r = e.rot + (1 - f) * 28, sc = 1 + (1 - f) * 0.15;
+        e.card.style.transform = "translate(-50%,-50%) translate3d(" + x.toFixed(1) + "px," + y.toFixed(1) + "px,0) rotate(" + r.toFixed(2) + "deg) scale(" + sc.toFixed(3) + ")";
+        e.card.style.opacity = clamp01(p / 0.12).toFixed(3);
+        if (f >= 1 && !e.landed) { e.landed = true; stackN++; $(".rc-count span", el).textContent = stackN; e.card.style.willChange = "auto"; }
+      }
+    }
+    function finish(i) { frame(i, 1); const e = R.events[i]; if (e && e.kind === "quest") pop.hidden = true; }
+    function showSummary() {
+      if (run.done) return;
+      run.done = true;
+      cancelAnimationFrame(run.raf);
+      for (let i = Math.max(0, run.i); i < R.events.length; i++) { if (i > run.i) begin(i); finish(i); }
+      run.i = R.events.length;
+      $(".rc-pts", el).textContent = fmt(R.earned);
+      $(".rc-progress i", el).style.transform = "scaleX(1)";
+      el.insertAdjacentHTML("beforeend", recapSummaryHTML(R));
+      confetti(80);
+    }
+    function tick(now) {
+      if (run.done) return;
+      const dt = run.last ? Math.min(100, now - run.last) : 0;
+      run.last = now;
+      if (!run.paused) run.vt += dt * run.speed;
+      while (run.i + 1 < R.events.length && run.vt >= R.events[run.i + 1].start) { if (run.i >= 0) finish(run.i); run.i++; begin(run.i); }
+      if (run.i >= 0) { const e = R.events[run.i]; frame(run.i, e.dur ? (run.vt - e.start) / e.dur : 1); }
+      $(".rc-progress i", el).style.transform = "scaleX(" + Math.min(1, run.vt / total).toFixed(4) + ")";
+      if (run.vt >= total) { showSummary(); return; }
+      run.raf = requestAnimationFrame(tick);
+    }
+    const close = () => {
+      cancelAnimationFrame(run.raf);
+      document.removeEventListener("visibilitychange", onHide);
+      document.removeEventListener("keydown", onKey);
+      el.remove();
+      recapRun = null;
+      if (onDone) onDone();
+    };
+    const setPause = (v) => { run.paused = v; const b = $(".rc-play", el); b.innerHTML = icon(v ? "play" : "pause"); b.setAttribute("aria-label", v ? "Weiter" : "Pause"); };
+    const onHide = () => { if (document.hidden) setPause(true); };
+    const onKey = (ev) => { if (ev.key === "Escape") close(); else if (ev.key === " ") { ev.preventDefault(); setPause(!run.paused); } };
+    document.addEventListener("visibilitychange", onHide);
+    document.addEventListener("keydown", onKey);
+    el.addEventListener("click", (ev) => {
+      const b = ev.target.closest("[data-rc]");
+      if (!b) return;
+      const a = b.dataset.rc;
+      if (a === "pause") setPause(!run.paused);
+      else if (a === "faster" || a === "slower") {
+        const k = RC_SPEEDS.indexOf(run.speed) + (a === "faster" ? 1 : -1);
+        run.speed = RC_SPEEDS[Math.max(0, Math.min(RC_SPEEDS.length - 1, k))];
+        $(".rc-speed", el).textContent = String(run.speed).replace(".", ",") + "×";
+      } else if (a === "skip") showSummary();
+      else if (a === "close") close();
+      else if (a === "again") { const cb = onDone; onDone = null; close(); startRecap(cb); }
+    });
+    if (!R.events.length) { showSummary(); return; }
+    run.raf = requestAnimationFrame(tick);
+  }
+
+  // ---- Zertifikat (Urkunde): Namen, Rang mit Figur, kleine Inselkarte mit gefärbten Regionen, wichtigste Statistiken
+  // (wie im Rückblick), Collage aus bis zu 6 Erinnerungsfotos, Gutscheine. Vorschau als SVG (Fotos als kleine data-URLs, nur
+  // Vorschaubilder ~320 px); fürs PDF wird die SVG ohne Fotos ins Canvas gezeichnet und die Fotos direkt aufs Canvas (sicher
+  // auch in Safari) – dadurch bleibt das PDF handlich.
+  const CERT_W = 1188, CERT_H = 840, CERT_CELL = 100, CERT_GAP = 8;
+  const certCache = { key: null, photos: [], loading: null };
+  function certPhotoIds() { // bis zu 6 Fotos, gleichmäßig über den Urlaub verteilt
+    const ids = visibleMems().sort((a, b) => ((app.state.quests[a] || app.state.done[a]).t - (app.state.quests[b] || app.state.done[b]).t));
+    if (ids.length <= 6) return ids;
+    return [0, 1, 2, 3, 4, 5].map((i) => ids[Math.round(i * (ids.length - 1) / 5)]);
+  }
+  function loadCertPhotos() {
+    const ids = certPhotoIds(), key = ids.map((id) => app.mem.items[id].f).join(",");
+    if (certCache.key === key) return certCache.loading || Promise.resolve(certCache.photos);
+    certCache.key = key;
+    certCache.loading = Promise.all(ids.map((id) => fetch(memUrl(app.mem.items[id], true), { cache: "force-cache" }).then((r) => (r.ok ? r.blob() : null)).then((b) => !b ? null :
+      new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => res(null); fr.readAsDataURL(b); })).catch(() => null)))
+      .then((list) => { if (certCache.key === key) { certCache.photos = list.filter(Boolean); certCache.loading = null; } return certCache.photos; });
+    return certCache.loading;
+  }
+  function certSlots(n) {
+    return Array.from({ length: n }, (_, i) => ({ x: 800 + (i % 3) * (CERT_CELL + CERT_GAP), y: 298 + Math.floor(i / 3) * (CERT_CELL + CERT_GAP) }));
+  }
+  function certFigure(rank, x, y, size) {
+    const inner = rankFigure(rank).replace(/^<svg[^>]*>/, "").replace(/<\/svg>$/, "")
+      .replace(/class="dot"/g, 'fill="#073b4c" stroke="none"').replace(/class="thin"/g, 'stroke-width="1"')
+      .replace(/class="accent-fill"/g, 'fill="#e5b53b"').replace(/ class="[^"]*"/g, "");
+    return '<g transform="translate(' + x + "," + y + ") scale(" + size / 48 + ')" fill="none" stroke="#073b4c" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + inner + "</g>";
+  }
+  function certificateSVG(photos, withImages) {
+    photos = photos || [];
+    const s = sum(), st = app.state, W = CERT_W, H = CERT_H;
     const alloc = (st.ended && st.ended.alloc) || {};
-    const W = 1188, H = 840;
     const names = alloc._players || players().join(", ");
     const pct = Math.round(s.earned / s.maxPoints * 100);
-    const days = L.dayCount(st, Date.now());
+    const R = L.recap(st, C);
     const vouchers = C.rewards.filter((r) => alloc[r.id] > 0).map((r) => "Gutschein: " + L.formatReward(r, alloc[r.id]) + " " + r.voucher);
     const t = (x, y, txt, size, opts) => '<text x="' + x + '" y="' + y + '" font-size="' + size + '" ' + (opts || 'text-anchor="middle"') + ">" + esc(txt) + "</text>";
-    const mapScale = 0.5;
-    const mapG = '<g transform="translate(' + (W / 2 - MAP.w * mapScale / 2) + ',300) scale(' + mapScale + ')">' +
-      C.regions.map((r) => '<path d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[s.levels[r.id]].color + '" stroke="#fff" stroke-width="3"/>').join("") + "</g>";
-    const statsLine = s.questsDone + " regionale Quests · " + s.doneStack + " Stapel-Quests · bester Multiplikator " + (s.bestMult ? L.fmtFactor(s.bestMult) : "–") +
-      " · " + (s.jokerUsed + s.swaps + s.multCount) + " Joker eingesetzt · " + days + (days === 1 ? " Tag" : " Tage");
+    const lv = [0, 0, 0, 0];
+    C.regions.forEach((r) => lv[s.levels[r.id]]++);
     const date = new Date(st.ended ? st.ended.at : Date.now()).toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" });
-    let vy = 640;
-    const vouchersSvg = vouchers.length ? vouchers.map((v, i) => t(W / 2, vy + i * 30, v, 22, 'text-anchor="middle" font-weight="600" fill="#0b5f78"')).join("") : t(W / 2, vy, "Keine Gutscheine", 20, 'text-anchor="middle" fill="#888"');
+    // Rang mit Figur (links)
+    const rankG = '<circle cx="235" cy="375" r="78" fill="#e6f2f5"/>' + certFigure(s.rank, 175, 315, 120) +
+      t(235, 490, s.rankName, 30, 'text-anchor="middle" font-weight="700" fill="#0b5f78"') +
+      t(235, 520, fmt(s.earned) + " Punkte verdient", 17, 'text-anchor="middle" fill="#5f6f76"');
+    // Inselkarte (Mitte bzw. rechts, wenn keine Fotos)
+    const sc = photos.length ? 0.34 : 0.44, mx = photos.length ? 424 : 500, my = photos.length ? 306 : 298;
+    const mapG = '<g transform="translate(' + mx + "," + my + ") scale(" + sc + ')">' +
+      C.regions.map((r) => '<path d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[s.levels[r.id]].color + '" stroke="#fff" stroke-width="3"/>').join("") + "</g>";
+    const cx = mx + MAP.w * sc / 2, ly = my + MAP.h * sc + 20;
+    const legend = [[3, "erschlossen"], [2, "erobert"], [1, "erkundet"], [0, "unbesucht"]];
+    const cols = photos.length ? 2 : 4, legW = photos.length ? 170 : 140; // neben der Collage 2 × 2, sonst eine Zeile
+    const legendG = legend.map(([i, w], k) => {
+      const x = cx - legW * cols / 2 + (k % cols) * legW + 14, y = ly + Math.floor(k / cols) * 21;
+      return '<rect x="' + x + '" y="' + (y - 12) + '" width="14" height="14" rx="3" fill="' + L.LEVELS[i].color + '"/>' + t(x + 20, y, lv[i] + " " + w, 15, 'text-anchor="start" fill="#1d2a30"');
+    }).join("");
+    // Collage (rechts)
+    const slots = certSlots(photos.length);
+    const collage = photos.length ? '<defs>' + slots.map((p, i) => '<clipPath id="cp' + i + '"><rect x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" rx="10"/></clipPath>').join("") + "</defs>" +
+      slots.map((p, i) => (withImages ? '<image href="' + photos[i] + '" x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" preserveAspectRatio="xMidYMid slice" clip-path="url(#cp' + i + ')"/>' : "") +
+        '<rect x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" rx="10" fill="none" stroke="#e5b53b" stroke-width="2"/>').join("") +
+      t(800 + (3 * CERT_CELL + 2 * CERT_GAP) / 2, 298 + (photos.length > 3 ? 2 : 1) * (CERT_CELL + CERT_GAP) + 14, "Erinnerungen", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') : "";
+    // Statistiken (6 Kästen)
+    const stats = [[fmt(s.earned), "Punkte (" + pct + " % von " + fmt(s.maxPoints) + ")"], [lv[3] + " · " + lv[2] + " · " + lv[1], "Regionen erschl. · erob. · erk."],
+      [s.doneStack + " / " + C.stackQuests.length, "Stapel-Quests"], [String(R.days), R.days === 1 ? "Tag" : "Tage"],
+      [s.bestMult ? L.fmtFactor(s.bestMult) : "–", "bester Multiplikator"], [nfmt1(R.km) + " km", "Luftlinie"]];
+    const bw = (W - 140 - 5 * 12) / 6;
+    const statsG = stats.map(([v, l], i) => {
+      const x = 70 + i * (bw + 12);
+      return '<rect x="' + x + '" y="552" width="' + bw + '" height="78" rx="12" fill="#ffffff" stroke="#e3ddd1" stroke-width="1.5"/>' +
+        t(x + bw / 2, 588, v, 26, 'text-anchor="middle" font-weight="700" fill="#0b5f78"') + t(x + bw / 2, 614, l, 13, 'text-anchor="middle" fill="#5f6f76"');
+    }).join("");
+    // Gutscheine (bei mehr als 2 in zwei Spalten)
+    const two = vouchers.length > 2, rows = two ? Math.ceil(vouchers.length / 2) : vouchers.length;
+    const vouchersSvg = vouchers.length ? vouchers.map((v, i) => {
+      const col = two ? Math.floor(i / rows) : 0, row = two ? i % rows : i;
+      return t(two ? (col ? W * 0.72 : W * 0.28) : W / 2, 676 + row * 28, v, 19, 'text-anchor="middle" font-weight="600" fill="#0b5f78"');
+    }).join("") : t(W / 2, 676, "Keine Gutscheine", 18, 'text-anchor="middle" fill="#888"');
     return '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="Georgia, \'Times New Roman\', serif" fill="#1d2a30">' +
       '<rect width="' + W + '" height="' + H + '" fill="#fbf7ef"/>' +
       '<rect x="24" y="24" width="' + (W - 48) + '" height="' + (H - 48) + '" fill="none" stroke="#0b5f78" stroke-width="6" rx="18"/>' +
       '<rect x="40" y="40" width="' + (W - 80) + '" height="' + (H - 80) + '" fill="none" stroke="#e5b53b" stroke-width="2" rx="12"/>' +
-      t(W / 2, 110, "ZERTIFIKAT", 54, 'text-anchor="middle" font-weight="700" letter-spacing="8" fill="#0b5f78"') +
-      t(W / 2, 150, "Operação Madeira - Das Spiel · " + date, 20, 'text-anchor="middle" fill="#5f6f76"') +
-      t(W / 2, 200, "Hiermit wird bestätigt, dass", 20, 'text-anchor="middle" fill="#5f6f76"') +
-      t(W / 2, 245, names || "das Team", 36, 'text-anchor="middle" font-weight="700"') +
-      t(W / 2, 285, "Madeira als Team erkundet und den Rang „" + s.rankName + "“ erreicht haben.", 22, 'text-anchor="middle"') +
-      mapG +
-      t(W / 2, 568, fmt(s.earned) + " von " + fmt(s.maxPoints) + " möglichen Punkten (" + pct + " %)", 28, 'text-anchor="middle" font-weight="700"') +
-      t(W / 2, 600, statsLine, 18, 'text-anchor="middle" fill="#5f6f76"') +
-      vouchersSvg +
-      t(W / 2, H - 60, "Dieses Zertifikat gilt gleichzeitig als Gutschein.", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') +
+      t(W / 2, 102, "ZERTIFIKAT", 50, 'text-anchor="middle" font-weight="700" letter-spacing="8" fill="#0b5f78"') +
+      t(W / 2, 138, "Operação Madeira - Das Spiel · " + date, 19, 'text-anchor="middle" fill="#5f6f76"') +
+      t(W / 2, 180, "Hiermit wird bestätigt, dass", 19, 'text-anchor="middle" fill="#5f6f76"') +
+      t(W / 2, 224, names || "das Team", 34, 'text-anchor="middle" font-weight="700"') +
+      t(W / 2, 262, "Madeira als Team erkundet und den Rang „" + s.rankName + "“ erreicht haben.", 21, 'text-anchor="middle"') +
+      rankG + mapG + legendG + collage + statsG + vouchersSvg +
+      t(W / 2, H - 56, "Dieses Zertifikat gilt gleichzeitig als Gutschein.", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') +
       "</svg>";
   }
 
   async function downloadPDF() {
     if (!window.jspdf) { toast("PDF-Modul lädt noch – gleich nochmal versuchen.", true); return; }
-    const svg = certificateSVG();
+    const photos = app.mem ? await loadCertPhotos() : [];
+    const svg = certificateSVG(photos, false); // Fotos kommen direkt aufs Canvas
     const img = new Image();
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
     await img.decode().catch(() => new Promise((res) => { img.onload = res; }));
     const scale = 2;
     const canvas = document.createElement("canvas");
-    canvas.width = 1188 * scale; canvas.height = 840 * scale;
+    canvas.width = CERT_W * scale; canvas.height = CERT_H * scale;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    const pdf = new window.jspdf.jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-    pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, 297, 210);
+    const slots = certSlots(photos.length);
+    for (let i = 0; i < photos.length; i++) {
+      const im = new Image();
+      im.src = photos[i];
+      try { await im.decode(); } catch (e) { continue; }
+      const p = slots[i], S = CERT_CELL * scale, k = Math.max(S / im.naturalWidth, S / im.naturalHeight);
+      const w = im.naturalWidth * k, h = im.naturalHeight * k;
+      ctx.save();
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(p.x * scale, p.y * scale, S, S, 10 * scale); else ctx.rect(p.x * scale, p.y * scale, S, S);
+      ctx.clip();
+      ctx.drawImage(im, p.x * scale + (S - w) / 2, p.y * scale + (S - h) / 2, w, h);
+      ctx.restore();
+      ctx.strokeStyle = "#e5b53b"; ctx.lineWidth = 2 * scale;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(p.x * scale, p.y * scale, S, S, 10 * scale); else ctx.rect(p.x * scale, p.y * scale, S, S);
+      ctx.stroke();
+    }
+    const pdf = new window.jspdf.jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
+    pdf.addImage(canvas.toDataURL("image/jpeg", 0.85), "JPEG", 0, 0, 297, 210);
+    canvas.width = 0; canvas.height = 0;
     pdf.save("Madeira-Zertifikat.pdf");
   }
 
@@ -4254,6 +4521,7 @@
         if (n) { app.name = n.slice(0, 24); store.set("name", app.name); registerName(); render(); }
       });
       case "tour-btn": go("home"); return setTimeout(startTour, 350);
+      case "recap-btn": return startRecap();
       case "pdf-btn": return downloadPDF().catch(() => toast("PDF konnte nicht erstellt werden.", true));
       case "reopen-btn": return confirmBox("Urlaub fortsetzen?", "Die Verteilung der Belohnungen wird aufgehoben und ihr könnt weiterspielen.", "Fortsetzen").then((ok) => ok && act({ type: "reopen" }));
       case "tab-stats-btn": { const st = app.state.ended; app.state.ended = null; const html = viewStats(sum()); app.state.ended = st; $("#view").innerHTML = html; return; }

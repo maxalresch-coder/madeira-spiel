@@ -38,6 +38,32 @@ assert.throws(() => act(s, { type: "quest", questId: "q-cal-1" }));
   assert(!ds.done[sq], "Rückgängig: Stapel-Quest nicht mehr erledigt (Foto ausgeblendet)");
 }
 
+// Urlaubs-Rückblick: chronologisch, nur erledigte Quests, Rückgängiges fehlt, Punkte summieren sich zum Endstand
+{
+  const T0 = new Date("2026-05-01T10:00:00").getTime(), H = 3600000;
+  let rs = L.newGame(C, 77, T0 - H);
+  rs = L.apply(rs, C, { type: "quest", questId: "q-fun-1" }, "A", T0);
+  rs = L.apply(rs, C, { type: "quest", questId: "q-cal-1" }, "A", T0 + 2 * H);
+  rs = L.apply(rs, C, { type: "undo", logId: rs.log[rs.log.length - 1].id }, "A", T0 + 3 * H); // q-cal-1 rückgängig
+  const sq = rs.open[0];
+  rs = L.apply(rs, C, { type: "mult", questId: sq }, "B", T0 + 4 * H);
+  rs = L.apply(rs, C, { type: "stack", questId: sq }, "B", T0 + 25 * H);                      // Tag 2
+  rs = L.apply(rs, C, { type: "quest", questId: "q-fun-2" }, "C", T0 + 26 * H);
+  rs = L.apply(rs, C, { type: "quest", questId: "q-mac-1" }, "C", T0 + 50 * H);               // Tag 3
+  const R = L.recap(rs, C);
+  assert.deepStrictEqual(R.events.map((e) => e.id), ["q-fun-1", sq, "q-fun-2", "q-mac-1"]);
+  assert(!R.events.some((e) => e.id === "q-cal-1"), "Rückgängiges fehlt");
+  assert.deepStrictEqual(R.events.map((e) => e.day), [1, 2, 2, 3]);
+  assert.deepStrictEqual([R.events[0].points, R.events[2].points, R.events[3].points], [100, 20, 100]);
+  assert.strictEqual(R.events[1].points, L.stackPoints(rs, C, sq));
+  assert.strictEqual(R.events[1].factor, rs.mults[sq].factor);
+  assert.strictEqual(R.earned, L.summary(rs, C).earned);
+  assert.strictEqual(R.events.reduce((a, e) => a + e.points, 0), R.earned);
+  assert.strictEqual(R.events[2].levels.funchal, 2);
+  assert(R.events[3].km > 10 && R.events[3].km < 30, "Funchal → Machico ≈ 15–20 km Luftlinie");
+  assert(Math.abs(L.distanceKm([32.65, -16.9], [32.75, -16.9]) - 11.12) < 0.05);
+}
+
 // Shop-Sperre bei zu wenig Punkten
 assert.throws(() => act(s, { type: "joker", regionId: "funchal" }), /Nicht genug/);
 
