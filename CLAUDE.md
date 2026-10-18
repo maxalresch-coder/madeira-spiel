@@ -364,10 +364,17 @@ Vertrauensbasis, keine Beweisfotos.
   - Links (`LINKS` in tools.js, eigene Zeilen): „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
     „Die zehn UNESCO-Kriterien“ (Mit Lorbeeren und UNESCO gekrönt) → https://whc.unesco.org/en/criteria/.
 - **Urlaub beenden – Reihenfolge** (`startEnd`): Rückfrage → **Urlaubs-Rückblick** (überspringbar) → Restpunkte (verdient −
-  ausgegeben) auf Belohnungen verteilen (`openRewards`; +/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte; Knopf „Weiter: Fotos
+  ausgegeben) auf Belohnungen verteilen (`openRewards`; Massage/Live-Ständchen frei in 5er-Schritten; **zählbare** (`kind`
+  „count“: Photoshop-Bild, Mystery-Drink, Profilbild-Diktat) nur in **ganzen Einheiten** = 100er-Schritten, `L.rewardAmount`
+  rundet auch getippte Werte ab; unter 100 Restpunkten ist ihr Plus ausgegraut mit Hinweis „ab 100 P“; Knopf „Weiter: Fotos
   für die Urkunde“) → **Fotos für die Urkunde** wählen (`chooseCertPhotos`, „Zurück“ führt mit den verteilten Punkten zur
   Verteilung zurück; ohne Erinnerungsfotos entfällt der Schritt) → „Urkunde erstellen“ = Aktion `end` → Erfolge mit
   Belohnungen + Zertifikat (PDF). Rückblick in den Erfolgen erneut abspielbar (`#recap-btn`).
+- **Ansicht „Urlaub beendet“** (`viewEnded`): solange `state.ended` gesetzt ist, zeigt `render` **nur** diese Ansicht
+  (Klasse `body.is-ended`: Kopfzeilen-Navigation und Punkte-Band ausgeblendet, kein Wischen zwischen den Hauptseiten, auch
+  Handy-Zurück bleibt dort). Knöpfe: Rückblick abspielen, Urlaub fortsetzen (Verteilung aufheben → Sperre weg), „Erfolge ansehen“
+  (`app.endedStats`: Erfolge mit „← Zurück zum Urlaubsende“, ebenfalls ohne Wischen), PDF, ganz unten rot **„Kompletter
+  Reset“** (wie in den Einstellungen mit Eintippen von „RESET“).
 - **Plus/Minus gedrückt halten** (alle Knöpfe mit `data-hold="<Kennung>"`: Belohnungen, Zähler der Stapel-Quests, „+1 Auto“,
   „+1 Tipp“ und die −-Knöpfe dazu): kurzes Tippen = normaler Klick; nach 0,45 s gedrückt wiederholt (150 → 75 → 35 ms),
   Loslassen/Abbruch/Verschieben > 12 px stoppt sofort; ausgelöst wird der aktuelle Knopf mit derselben Kennung (`.click()`,
@@ -377,29 +384,33 @@ Vertrauensbasis, keine Beweisfotos.
   chronologisch** nach `state.quests[id].t` / `state.done[id].t` (Gleichstand: Reihenfolge der Aktivitäten); nur jetzt erledigte
   Quests, Rückgängiggemachtes fehlt ganz; der Region-Joker färbt seine Region zu seinem Zeitpunkt (ohne Auftritt). Je Ereignis:
   `points` (inkl. Stufen/Insel-Bonus, Summe = verdiente Punkte), `earned`, `levels`, `day` (1 = Spielbeginn), regional `km`
-  (Luftlinie `L.distanceKm` zwischen den Pins). **Zügig:** je Ereignis 38 s / Anzahl (0,65–2,6 s), Einstieg 0,7 s → ca. 30–45 s
-  bei vollem Spiel. Bild: Vollbild-Ebene `.recap` (z-index 95): oben Titel, „Tag X · Punkte“ (zählen mit), „Überspringen“;
+  (Luftlinie `L.distanceKm` zwischen den Pins). **Schnell:** je Ereignis 12,7 s / Anzahl (0,22–0,87 s), Einstieg 0,3 s → ca.
+  10–15 s bei vollem Spiel. Bild: Vollbild-Ebene `.recap` (z-index 95): oben Titel, „Tag X · Punkte“ (zählen mit), „Überspringen“;
   Inselkarte (eigene Pfade ohne `data-region`): **sanft geschwungene Verbindung** (quadratische Kurve, abwechselnd nach links/
   rechts gebogen) zum Ort der nächsten regionalen Quest – Straßenrouten (OSRM/OpenStreetMap) waren in der Arbeitsumgebung
   gesperrt, daher keine echten Routen; Linie **dunkles Ozeanblau #073b4c mit weißem Rand** (`.rc-halo` + `.rc-path`, nie Gold –
   das ist „Erschlossen“), per stroke-dashoffset nachgezeichnet; Region färbt sich nach Stufe; kurzes Fenster (Titel, Region, Tag,
   +Punkte, Erinnerungsfoto-Vorschau, sonst Pin-Icon). Darunter „Tisch“ `.rc-table` mit Zähler: Stapel-Quest-Karte fliegt heran
-  (Schwierigkeitsfarbe oben, Titel, Punkte, Multiplikator, kleines Foto) und landet **zufällig gedreht −60° … +60°** (nie kopfüber)
-  und versetzt (±70/±45 px, fest aus `L.hash(id:seed)`), neue verdeckt ältere nur teilweise. Eine Uhr per
+  im **Hochformat** wie die Karten der App (124×176 px: Farbstreifen der Schwierigkeit oben, Erinnerungsfoto bzw. Icon, Schwierigkeit,
+  Multiplikator, Titel, Punkte) und landet gedreht in **ganzen Grad −45° … +45°, jeder Winkel höchstens einmal** (alle 91 Winkel
+  je Spiel gemischt mit `L.mulberry32(seed)`), versetzt (±60/±35 px, `L.hash(id:seed)`), neue verdeckt ältere nur teilweise. Eine Uhr per
   `requestAnimationFrame` (`run.vt`), nur transform/opacity/dashoffset; Pause (auch automatisch im Hintergrund), Tempo 0,5×–3×,
-  Fortschrittsbalken; Fotos vorab geladen/dekodiert. Ende: Zusammenfassung (Rang mit Figur, Punkte, Tage, Stapel-Quests,
+  Fortschrittsbalken; Fotos vorab geladen/dekodiert. Ende: **Rang-Feier** (Figur zoomt herein mit pulsierendem goldenem
+  Leuchten, Rangname ploppt auf, Konfetti in den Spielfarben, Punkte zählen per rAF hoch; nur transform/opacity) und Zusammenfassung (Rang mit Figur, Punkte, Tage, Stapel-Quests,
   regionale Quests, bester Multiplikator, Luftlinie, Regionen je Stufe) mit „Nochmal“/„Fertig“. Geprüft mit 4-fach gedrosselter
   CPU bei 384×854.
 - **Fotos für die Urkunde**: bis zu 6 Erinnerungsfotos, Auswahl per Antippen mit Häkchen und „X von 6“ (`certPickHTML`), in den
   Einstellungen → Erinnerungsfotos (sofort für alle gespeichert) und vor der Urkunde (vorbelegt). Server: `cert` in
   `data/memories.json` (`POST api/memories/cert {ids}`, höchstens 6; Reset → `null`). `certPhotoIds()`: gespeicherte Auswahl
   (nur sichtbare Fotos) bzw. – nie gewählt (`null`) – die ersten 6 chronologisch. Weniger als 6 (auch 0) erlaubt.
-- **Zertifikat** (`certificateSVG(photos, withImages)`, 1188×840, A4 quer): oben Titel, Datum, Bestätigungstext, Namen,
-  Rang mit Figur + Punkten (`certFigure`), Inselkarte mit Stufenfarben + Legende, Collage der gewählten Fotos; darunter genau
-  **4 Kästen**: „Regionale Quests X von 30“, „Stapel-Quests X von 26“, Urlaubstage, „Fleißigster Tag“ (Datum + Anzahl Quests,
-  `L.busiestDay`, getestet); unten Gutscheine (ab 3 in zwei Spalten). Vorschau bei den Erfolgen mit Fotos (data-URLs,
-  `loadCertPhotos`, Cache `certCache`); **PDF** (`downloadPDF`): SVG ohne Fotos ins Canvas (2×), Fotos direkt aufs Canvas
-  (sicher für Safari), JPEG 0,85 → ca. 270 KB.
+- **Zertifikat** (`certificateSVG(photos, withImages)`, 1188×840, A4 quer): Kopf in eigenen Zeilen „ZERTIFIKAT“ /
+  „Operação Madeira – Das Spiel“ / (Leerzeile) Zeitraum Spielbeginn bis „Urlaub beenden“ (`L.dateRange`: „10. – 18. Oktober 2026“,
+  über Monatsgrenzen „28. September – 5. Oktober 2026“, getestet) / „Hiermit wird bestätigt, dass“ / Namen / „Madeira als Team
+  erkundet und den Rang … erreicht haben.“; darunter Rang mit Figur + Punkten (`certFigure`), Inselkarte mit Stufenfarben +
+  Legende, Collage der gewählten Fotos; unten links untereinander „Regionale Quests X von 30“ und „Stapel-Quests X von 26“,
+  rechts **eine** Box „Gutscheine“ mit einfacher Liste (ohne „Gutschein:“, ab 4 in zwei Spalten). Kein fleißigster Tag, keine
+  Urlaubstage. Vorschau bei den Erfolgen mit Fotos (data-URLs, `loadCertPhotos`, Cache `certCache`); **PDF** (`downloadPDF`):
+  SVG ohne Fotos ins Canvas (2×), Fotos direkt aufs Canvas (sicher für Safari), JPEG 0,85 → ca. 270 KB.
 - **Test-Simulation** (Einstellungen → „Testspiel simulieren“, Unterseite `sim`, Bestätigung durch Eintippen von „TEST“):
   Spielstand von `L.simulateGame(content, seed, now, names)` (logic.js, getestet: jede Aktion über `apply`, ~7 Tage 8:30–21 Uhr,
   Regionen in allen Stufen, ~30 % ganz Madeira erkundet, 6–12 Stapel-Quests, Multiplikatoren, Tausch-/Region-Joker, 2–4

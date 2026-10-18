@@ -531,7 +531,26 @@
     return !entry.undone && ["quest", "stack", "joker", "swap", "mult"].indexOf(entry.type) >= 0;
   }
 
+  // Zeitraum für die Urkunde: „10. – 18. Oktober 2026“, „28. September – 5. Oktober 2026“,
+  // „28. Dezember 2026 – 3. Januar 2027“, gleicher Tag: „18. Oktober 2026“
+  const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+  function dateRange(from, to) {
+    const a = new Date(dayKey(from) + "T12:00:00"), b = new Date(dayKey(Math.max(from, to)) + "T12:00:00");
+    const d = (x) => x.getDate() + ".", m = (x) => MONTHS[x.getMonth()], y = (x) => x.getFullYear();
+    if (dayKey(a.getTime()) === dayKey(b.getTime())) return d(b) + " " + m(b) + " " + y(b);
+    if (y(a) !== y(b)) return d(a) + " " + m(a) + " " + y(a) + " – " + d(b) + " " + m(b) + " " + y(b);
+    if (a.getMonth() !== b.getMonth()) return d(a) + " " + m(a) + " – " + d(b) + " " + m(b) + " " + y(b);
+    return d(a) + " – " + d(b) + " " + m(b) + " " + y(b);
+  }
+
   // ---------------------------------------------------------------- Belohnungen
+  // Zählbare Belohnungen (kind "count": Bild, Zutat, Tag) nur in ganzen Einheiten (100 Punkte = 1), Zeit-Belohnungen frei.
+  // Liefert den erlaubten Wert für eine gewünschte Punktzahl, wenn insgesamt höchstens „max“ Punkte möglich sind.
+  function rewardAmount(reward, want, max) {
+    let v = Math.max(0, Math.min(Math.round(want) || 0, max));
+    if (reward.kind === "count") v = Math.floor(v / 100) * 100;
+    return v;
+  }
   function rewardValue(reward, points) {
     return (points / 100) * reward.per100;
   }
@@ -550,7 +569,7 @@
   const api = {
     STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MAX_SWAPS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
     newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible, regionProgress, rankProgress, maxPoints,
-    canUndo, dayCount, pointsPerDay, recap, distanceKm, busiestDay, simulateGame, mulberry32, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
+    canUndo, dayCount, pointsPerDay, recap, distanceKm, busiestDay, simulateGame, mulberry32, multFreeSlot, rewardValue, formatReward, rewardAmount, dateRange, fmtFactor, index, hash
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GameLogic = api;

@@ -984,16 +984,18 @@ a.btn { text-decoration: none; text-align: center; justify-content: center; }
 .rc-table { position: relative; z-index: 0; flex: 1 1 auto; margin: 10px 10px 0; border-radius: 18px; background: rgba(255, 255, 255, .07); overflow: hidden; min-height: 180px; }
 .rc-count { position: absolute; left: 12px; top: 10px; z-index: 100; display: flex; align-items: center; gap: 6px; font-weight: 700; background: rgba(0, 0, 0, .25); padding: 4px 10px; border-radius: 99px; font-variant-numeric: tabular-nums; }
 .rc-cards { position: absolute; inset: 0; }
-.rc-card { position: absolute; left: 50%; top: 52%; width: 216px; background: #fffdf8; color: #1d2a30; border-radius: 12px; opacity: 0;
-  border-top: 7px solid var(--einfach); box-shadow: 0 3px 10px rgba(0, 0, 0, .28); }
+/* Stapel-Karten im Hochformat wie die Karten der App: Farbstreifen oben, Foto/Icon, Schwierigkeit, Titel, Punkte */
+.rc-card { position: absolute; left: 50%; top: 50%; width: 124px; height: 176px; background: #fffdf8; color: #1d2a30; border-radius: 12px; opacity: 0;
+  border-top: 7px solid var(--einfach); box-shadow: 0 3px 10px rgba(0, 0, 0, .28); display: flex; flex-direction: column; overflow: hidden; }
 .rc-card.rc-d-mittel { border-top-color: var(--medium); } .rc-card.rc-d-schwer { border-top-color: var(--hard); }
-.rc-card-body { display: flex; gap: 8px; padding: 8px 10px 10px; align-items: flex-start; }
-.rc-card-txt { flex: 1 1 auto; min-width: 0; }
-.rc-card-txt .pill { font-size: .7rem; }
+.rc-card img, .rc-card-ic { display: block; width: 100%; height: 64px; object-fit: cover; flex: 0 0 auto; background: var(--sea); }
+.rc-card-ic { display: grid; place-items: center; color: var(--ocean); }
+.rc-card-ic .ic { width: 26px; height: 26px; }
+.rc-card-txt { padding: 6px 8px 8px; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.rc-card-txt .pill { font-size: .66rem; padding: 2px 7px; }
 .rc-card-txt .mult-badge { background: var(--gold); color: #3b2a00; }
-.rc-card strong { display: block; font-family: var(--display); font-size: 1rem; line-height: 1.2; margin-top: 4px; }
-.rc-card-pts { display: block; font-size: .78rem; color: #4d5c63; margin-top: 2px; }
-.rc-card img { width: 46px; height: 46px; border-radius: 8px; object-fit: cover; flex: 0 0 auto; }
+.rc-card strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-family: var(--display); font-size: .92rem; line-height: 1.15; margin-top: 2px; }
+.rc-card-pts { display: block; font-size: .72rem; color: #4d5c63; }
 .rc-bar { padding: 10px 16px 12px; }
 .rc-progress { height: 4px; border-radius: 4px; background: rgba(255, 255, 255, .2); overflow: hidden; margin-bottom: 8px; }
 .rc-progress i { display: block; height: 100%; background: var(--gold); transform-origin: left; transform: scaleX(0); }
@@ -1006,6 +1008,7 @@ a.btn { text-decoration: none; text-align: center; justify-content: center; }
   animation: slideUp .35s cubic-bezier(.2,.9,.3,1); }
 .rc-sum-in h2 { margin: 0; }
 .rc-sum-fig { width: 84px; height: 84px; margin: 0 auto 4px; color: var(--ocean); }
+.rc-rank .rc-sum-fig { color: var(--ocean); }
 .rc-sum-fig .fig { width: 100%; height: 100%; }
 .rc-sum-pts { font-family: var(--display); font-weight: 800; font-size: 1.6rem; color: var(--ocean); margin: 2px 0 10px; }
 .rc-sum-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
@@ -1041,3 +1044,20 @@ a.btn { text-decoration: none; text-align: center; justify-content: center; }
 .sim-band { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 16px; background: repeating-linear-gradient(135deg, #8a3fc7 0 14px, #7a33b5 14px 28px); color: #fff; font-size: .88rem; }
 .sim-band .ic { width: 16px; height: 16px; vertical-align: -3px; }
 .sim-band .btn { background: #fff; color: #5b1f8a; min-height: 40px; white-space: nowrap; flex: 0 0 auto; }
+
+/* Rang-Feier am Ende des Rückblicks: Figur zoomt herein, Leuchten pulsiert (nur transform/opacity) */
+.rc-rank { position: relative; width: 120px; height: 120px; margin: 0 auto 4px; }
+.rc-rank .rc-sum-fig { position: relative; width: 100%; height: 100%; margin: 0; animation: rcZoom .9s cubic-bezier(.2,1.5,.35,1) both; }
+.rc-glow { position: absolute; inset: -30px; border-radius: 50%; background: radial-gradient(circle, rgba(229, 181, 59, .55) 0%, rgba(229, 181, 59, .18) 45%, rgba(229, 181, 59, 0) 70%);
+  animation: rcGlow 2.4s ease-in-out .3s infinite both; will-change: transform, opacity; }
+.rc-rank-name { animation: rcPop .6s cubic-bezier(.2,1.6,.4,1) .55s both; }
+.rc-pop-in { animation: rcFade .4s ease both; }
+.rc-sum-pts { animation: rcFade .4s ease .7s both; font-variant-numeric: tabular-nums; }
+@keyframes rcZoom { 0% { transform: scale(.2) rotate(-12deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
+@keyframes rcGlow { 0%, 100% { transform: scale(.85); opacity: .55; } 50% { transform: scale(1.12); opacity: 1; } }
+@keyframes rcPop { 0% { transform: scale(.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes rcFade { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) { .rc-rank .rc-sum-fig, .rc-glow, .rc-rank-name, .rc-pop-in, .rc-sum-pts { animation: none; } }
+.step-hint { grid-column: 1 / -1; text-align: right; font-size: .75rem; color: var(--muted); margin-top: -2px; }
+/* Urlaub beendet: keine Kopfzeilen-Navigation und kein Punkte-Band (nur die Knöpfe der Ansicht) */
+body.is-ended .hdr-nav, body.is-ended #page-dots { display: none !important; }

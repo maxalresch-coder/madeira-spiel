@@ -298,7 +298,11 @@
     $("#hdr-points").classList.toggle("neg", s.balance < 0);
     $("#hdr-rank").textContent = s.rankName;
     $("#rb-fig").innerHTML = rankFigure(s.rank, "fig-sm");
-    const view = VIEWS[app.view] ? app.view : "home";
+    // Urlaub beendet: nur die Ansicht „Urlaub beendet“ (bzw. über „Erfolge ansehen“ die Erfolge) – kein Wischen, keine Kopfzeilen-Navigation
+    const ended = !!app.state.ended;
+    if (!ended) app.endedStats = false;
+    document.body.classList.toggle("is-ended", ended);
+    const view = ended ? "stats" : VIEWS[app.view] ? app.view : "home";
     $$(".hdr-btn[data-go]").forEach((b) => b.classList.toggle("active", b.dataset.go === view || (SETTINGS_PAGES.indexOf(view) >= 0 && b.dataset.go === "settings")));
     // Punkte-Band unter der Kopfzeile: aktuelle Hauptseite (nur auf den 5 Hauptseiten)
     const pi = MAIN_PAGES.indexOf(view), dots = $("#page-dots");
@@ -315,7 +319,10 @@
     help: viewHelp, player: viewPlayer, team: viewTeam, backup: viewBackup, errors: viewErrors, photos: viewPhotos, end: viewEnd, sim: viewSim, reset: viewReset };
   // Inhalt einer Seite (auch für die Vorschau beim Wischen)
   function pageHTML(view, s) {
-    const body = app.state.ended && view === "stats" ? viewEnded(s) : VIEWS[view](s);
+    if (app.state.ended && view === "stats") { // Urlaub beendet: eigene Knöpfe statt der normalen Navigation
+      return app.endedStats ? '<button class="back-btn" id="ended-back">' + icon("arrow-left") + " Zurück zum Urlaubsende</button>" + viewStats(s) : viewEnded(s);
+    }
+    const body = VIEWS[view](s);
     // Unterseiten der Einstellungen: „← Einstellungen“ und „Zu den Quests“; alle anderen Bereiche: „← Zu den Quests“
     const back = view === "home" ? ""
       : SETTINGS_PAGES.indexOf(view) >= 0
@@ -336,7 +343,7 @@
   const EDGE = 28; // px am Bildschirmrand gehören der Zurück-Geste des Systems
   const sw = { g: null, busy: false };
   function swipeStart(e) {
-    if (sw.busy || e.touches.length !== 1 || app.modals.length || MAIN_PAGES.indexOf(app.view) < 0 || !app.state || !L.isCompatible(app.state, C)) return;
+    if (sw.busy || e.touches.length !== 1 || app.modals.length || MAIN_PAGES.indexOf(app.view) < 0 || !app.state || !L.isCompatible(app.state, C) || app.state.ended) return;
     const t = e.touches[0];
     if (t.clientX < EDGE || t.clientX > window.innerWidth - EDGE) return;
     if (!e.target.closest || !e.target.closest("#view") || e.target.closest(SWIPE_NO)) return;
@@ -3622,13 +3629,14 @@
         '<div class="remaining" style="color:' + (rem === 0 ? "var(--laurel)" : rem < 0 ? "var(--hibiscus)" : "inherit") + '">Noch zu verteilen: ' + fmt(rem) + " Punkte</div></div>" +
         '<label style="margin-top:10px">Spielernamen fürs Zertifikat<input id="end-names" value="' + esc(names) + '"></label>' +
         C.rewards.map((r) => {
-          const v = alloc[r.id] || 0;
+          const v = alloc[r.id] || 0, whole = r.kind === "count", plusOff = whole ? rem < 100 : rem <= 0; // zählbar: nur ganze Einheiten
           return '<div class="reward"><div><strong>' + esc(r.name) + '</strong><span class="tag tag-' + r.type + '">' + r.type + "</span></div>" +
             (r.desc ? '<div class="muted small">' + esc(r.desc) + "</div>" : "") +
-            '<div class="muted small">100 Punkte = ' + r.per100 + " " + (r.per100 === 1 ? r.unit : (r.unitPlural || r.unit)) + " · Schritte: " + r.step + "</div>" +
+            '<div class="muted small">100 Punkte = ' + r.per100 + " " + (r.per100 === 1 ? r.unit : (r.unitPlural || r.unit)) + (whole ? " · nur ganze " + (r.unitPlural || r.unit) : " · Schritte: " + r.step) + "</div>" +
             '<div class="stepper"><button class="btn" data-minus="' + r.id + '" data-hold="r-:' + r.id + '" aria-label="weniger">−</button>' +
             '<input inputmode="numeric" data-amount="' + r.id + '" value="' + v + '" aria-label="Punkte für ' + esc(r.name) + '">' +
-            '<button class="btn" data-plus="' + r.id + '" data-hold="r+:' + r.id + '" aria-label="mehr">+</button></div>' +
+            '<button class="btn" data-plus="' + r.id + '" data-hold="r+:' + r.id + '" aria-label="mehr"' + (plusOff ? " disabled" : "") + ">+</button>" +
+            (whole && plusOff ? '<span class="step-hint">ab 100 P</span>' : "") + "</div>" +
             '<div class="live">' + fmt(v) + " Punkte = " + L.formatReward(r, v) + " " + esc(r.name) + "</div>" +
             (r.rules ? '<div class="muted small">' + esc(r.rules) + "</div>" : "") + "</div>";
         }).join("") +
@@ -3636,9 +3644,11 @@
         '<div class="modal-actions"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-good" id="finish" ' + (rem !== 0 ? "disabled" : "") + ">Weiter: Fotos für die Urkunde</button></div>";
     }, (el, refresh) => {
       $("#end-names", el).addEventListener("input", (ev) => { names = ev.target.value; });
-      const setV = (id, v) => { alloc[id] = Math.max(0, Math.round(v)); refresh(); };
+      // Grenzen: nie mehr als die Restpunkte, nie unter 0; zählbare Belohnungen nur in ganzen 100ern (L.rewardAmount)
+      const setV = (id, v) => { const r = C.rewards.find((x) => x.id === id); alloc[id] = L.rewardAmount(r, v, (alloc[id] || 0) + Math.max(0, remaining())); refresh(); };
       $$("[data-plus]", el).forEach((b) => b.addEventListener("click", () => {
         const r = C.rewards.find((x) => x.id === b.dataset.plus);
+        if (r.kind === "count" && remaining() < 100) return;
         setV(r.id, (alloc[r.id] || 0) + Math.min(r.step, Math.max(0, remaining())));
       }));
       $$("[data-minus]", el).forEach((b) => b.addEventListener("click", () => {
@@ -3683,7 +3693,8 @@
       '<button class="btn btn-primary btn-block" id="pdf-btn" style="margin-top:12px">' + icon("file-down") + ' Zertifikat als PDF herunterladen</button></div>' +
       '<div class="panel" style="display:grid;gap:10px"><button class="btn btn-gold btn-block" id="recap-btn">' + icon("play") + " Urlaubs-Rückblick abspielen</button>" +
       '<button class="btn btn-ghost btn-block" id="reopen-btn">Urlaub fortsetzen (Verteilung aufheben)</button>' +
-      '<button class="btn btn-ghost btn-block" id="tab-stats-btn">Erfolge ansehen</button></div>';
+      '<button class="btn btn-ghost btn-block" id="tab-stats-btn">Erfolge ansehen</button></div>' +
+      '<div class="set-danger"><button class="btn btn-danger btn-block" id="reset-btn">' + icon("rotate-ccw") + " Kompletter Reset</button></div>";
   }
 
   // ---- Urlaubs-Rückblick (nach „Urlaub beenden“, erneut über die Erfolge): streng chronologisch nur die erledigten Quests
@@ -3701,9 +3712,9 @@
     C.regions.forEach((r) => c[s.levels[r.id]]++);
     const chip = (i, label) => '<span class="rc-chip"><i style="background:' + L.LEVELS[i].color + '"></i>' + c[i] + " " + label + "</span>";
     return '<div class="rc-sum"><div class="rc-sum-in">' +
-      '<div class="rc-sum-fig">' + rankFigure(s.rank) + "</div>" +
-      '<div class="muted small">Euer Rang</div><h2>' + esc(s.rankName) + "</h2>" +
-      '<div class="rc-sum-pts">' + fmt(s.earned) + " Punkte</div>" +
+      '<div class="rc-rank"><div class="rc-glow" aria-hidden="true"></div><div class="rc-sum-fig">' + rankFigure(s.rank) + "</div></div>" +
+      '<div class="muted small rc-pop-in" style="animation-delay:.45s">Euer Rang</div><h2 class="rc-rank-name">' + esc(s.rankName) + "</h2>" +
+      '<div class="rc-sum-pts"><span class="rc-count-up" data-to="' + s.earned + '">0</span> Punkte</div>' +
       '<div class="rc-sum-grid">' +
         '<div><b>' + R.days + "</b><span>" + (R.days === 1 ? "Tag" : "Tage") + "</span></div>" +
         '<div><b>' + s.doneStack + "</b><span>Stapel-Quests</span></div>" +
@@ -3719,11 +3730,11 @@
     if (recapRun) return;
     const R = L.recap(app.state, C);
     const shown = R.events.filter((e) => e.kind !== "joker").length;
-    const D = Math.max(650, Math.min(2600, 38000 / Math.max(1, shown))); // zügig: gesamt ≈ 30–45 s bei vollem Spiel
-    const INTRO = 700;
+    const D = Math.max(220, Math.min(870, 12700 / Math.max(1, shown))); // dreimal so schnell: gesamt ≈ 10–15 s bei vollem Spiel
+    const INTRO = 300;
     let t = INTRO;
     R.events.forEach((e) => { e.start = t; e.dur = e.kind === "joker" ? 0 : D; t += e.dur; });
-    const total = t + 400;
+    const total = t + 250;
     const el = document.createElement("div");
     el.className = "recap";
     el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Urlaubs-Rückblick");
@@ -3751,6 +3762,9 @@
       thumbs[e.id] = im.src;
     });
     let lastPin = null, stackN = 0, segN = 0;
+    // Winkel der Stapel-Karten: alle ganzen Grad −45 … +45 gemischt (fest je Spiel), jede Karte bekommt den nächsten
+    const angles = Array.from({ length: 91 }, (_, k) => k - 45), rnd = L.mulberry32(app.state.seed >>> 0);
+    for (let k = angles.length - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [angles[k], angles[j]] = [angles[j], angles[k]]; }
     const NS = "http://www.w3.org/2000/svg";
     const svgEl = (tag, attrs) => { const n = document.createElementNS(NS, tag); Object.keys(attrs).forEach((k) => n.setAttribute(k, attrs[k])); return n; };
     const setLevels = (lv) => C.regions.forEach((r) => { const p = $('[data-rc-region="' + r.id + '"]', svg); if (p) p.setAttribute("fill", L.LEVELS[lv[r.id]].color); });
@@ -3793,12 +3807,12 @@
         const it = thumbs[e.id];
         const c = document.createElement("div");
         c.className = "rc-card rc-d-" + q.difficulty;
-        c.innerHTML = '<div class="rc-card-body"><div class="rc-card-txt"><span class="pill diff-' + q.difficulty + '">' + diffLabel(q.difficulty) + "</span>" +
+        c.innerHTML = (it ? '<img src="' + it + '" alt="">' : '<span class="rc-card-ic">' + icon("layers") + "</span>") + // Hochformat wie die Karten der App
+          '<div class="rc-card-txt"><span class="pill diff-' + q.difficulty + '">' + diffLabel(q.difficulty) + "</span>" +
           (e.factor ? ' <span class="pill mult-badge">' + L.fmtFactor(e.factor) + "</span>" : "") +
-          "<strong>" + esc(q.title) + '</strong><span class="rc-card-pts">+' + e.points + " Punkte · Tag " + e.day + "</span></div>" +
-          (it ? '<img src="' + it + '" alt="">' : "") + "</div>";
-        e.rot = ((h % 1201) / 10) - 60;                        // −60° … +60° (nie kopfüber), wie auf einen Stapel geworfen
-        e.ox = (((h >>> 8) % 141) - 70); e.oy = (((h >>> 16) % 91) - 45);
+          "<strong>" + esc(q.title) + '</strong><span class="rc-card-pts">+' + e.points + " Punkte · Tag " + e.day + "</span></div>";
+        e.rot = angles[stackN];                                 // ganze Grad −45 … +45, jeder Winkel höchstens einmal
+        e.ox = (((h >>> 8) % 121) - 60); e.oy = (((h >>> 16) % 71) - 35);
         c.style.zIndex = 1 + stackN;
         c.style.willChange = "transform, opacity";
         cards.appendChild(c);
@@ -3834,7 +3848,15 @@
       $(".rc-pts", el).textContent = fmt(R.earned);
       $(".rc-progress i", el).style.transform = "scaleX(1)";
       el.insertAdjacentHTML("beforeend", recapSummaryHTML(R));
-      confetti(80);
+      // Rang feiern: Figur zoomt herein und leuchtet (CSS, nur transform/opacity), Konfetti in den Spielfarben, Punkte zählen hoch
+      setTimeout(() => { confetti(70); setTimeout(() => confetti(50), 700); }, 350);
+      const cu = $(".rc-count-up", el), to = +cu.dataset.to, t0 = performance.now() + 500;
+      const up = (now) => {
+        const p = clamp01((now - t0) / 1300);
+        cu.textContent = fmt(to * ease(p));
+        if (p < 1 && document.body.contains(cu)) requestAnimationFrame(up);
+      };
+      requestAnimationFrame(up);
     }
     function tick(now) {
       if (run.done) return;
@@ -3941,7 +3963,7 @@
     return certCache.loading;
   }
   function certSlots(n) {
-    return Array.from({ length: n }, (_, i) => ({ x: 800 + (i % 3) * (CERT_CELL + CERT_GAP), y: 298 + Math.floor(i / 3) * (CERT_CELL + CERT_GAP) }));
+    return Array.from({ length: n }, (_, i) => ({ x: 800 + (i % 3) * (CERT_CELL + CERT_GAP), y: 332 + Math.floor(i / 3) * (CERT_CELL + CERT_GAP) }));
   }
   function certFigure(rank, x, y, size) {
     const inner = rankFigure(rank).replace(/^<svg[^>]*>/, "").replace(/<\/svg>$/, "")
@@ -3954,19 +3976,17 @@
     const s = sum(), st = app.state, W = CERT_W, H = CERT_H;
     const alloc = (st.ended && st.ended.alloc) || {};
     const names = alloc._players || players().join(", ");
-    const pct = Math.round(s.earned / s.maxPoints * 100);
-    const R = L.recap(st, C);
-    const vouchers = C.rewards.filter((r) => alloc[r.id] > 0).map((r) => "Gutschein: " + L.formatReward(r, alloc[r.id]) + " " + r.voucher);
+    const vouchers = C.rewards.filter((r) => alloc[r.id] > 0).map((r) => L.formatReward(r, alloc[r.id]) + " " + r.voucher);
     const t = (x, y, txt, size, opts) => '<text x="' + x + '" y="' + y + '" font-size="' + size + '" ' + (opts || 'text-anchor="middle"') + ">" + esc(txt) + "</text>";
     const lv = [0, 0, 0, 0];
     C.regions.forEach((r) => lv[s.levels[r.id]]++);
-    const date = new Date(st.ended ? st.ended.at : Date.now()).toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" });
+    const period = L.dateRange(st.createdAt, st.ended ? st.ended.at : Date.now()); // Spielbeginn bis „Urlaub beenden“
     // Rang mit Figur (links)
-    const rankG = '<circle cx="235" cy="375" r="78" fill="#e6f2f5"/>' + certFigure(s.rank, 175, 315, 120) +
-      t(235, 490, s.rankName, 30, 'text-anchor="middle" font-weight="700" fill="#0b5f78"') +
-      t(235, 520, fmt(s.earned) + " Punkte verdient", 17, 'text-anchor="middle" fill="#5f6f76"');
+    const rankG = '<circle cx="235" cy="409" r="78" fill="#e6f2f5"/>' + certFigure(s.rank, 175, 349, 120) +
+      t(235, 524, s.rankName, 30, 'text-anchor="middle" font-weight="700" fill="#0b5f78"') +
+      t(235, 552, fmt(s.earned) + " Punkte verdient", 17, 'text-anchor="middle" fill="#5f6f76"');
     // Inselkarte (Mitte bzw. rechts, wenn keine Fotos)
-    const sc = photos.length ? 0.34 : 0.44, mx = photos.length ? 424 : 500, my = photos.length ? 306 : 298;
+    const sc = photos.length ? 0.34 : 0.4, mx = photos.length ? 424 : 520, my = photos.length ? 340 : 332;
     const mapG = '<g transform="translate(' + mx + "," + my + ") scale(" + sc + ')">' +
       C.regions.map((r) => '<path d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[s.levels[r.id]].color + '" stroke="#fff" stroke-width="3"/>').join("") + "</g>";
     const cx = mx + MAP.w * sc / 2, ly = my + MAP.h * sc + 20;
@@ -3981,34 +4001,30 @@
     const collage = photos.length ? '<defs>' + slots.map((p, i) => '<clipPath id="cp' + i + '"><rect x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" rx="10"/></clipPath>').join("") + "</defs>" +
       slots.map((p, i) => (withImages ? '<image href="' + photos[i] + '" x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" preserveAspectRatio="xMidYMid slice" clip-path="url(#cp' + i + ')"/>' : "") +
         '<rect x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" rx="10" fill="none" stroke="#e5b53b" stroke-width="2"/>').join("") +
-      t(800 + (3 * CERT_CELL + 2 * CERT_GAP) / 2, 298 + (photos.length > 3 ? 2 : 1) * (CERT_CELL + CERT_GAP) + 14, "Erinnerungen", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') : "";
-    // Statistiken (4 Kästen, ohne Doppelungen zum oberen Teil): regionale Quests, Stapel-Quests, Urlaubstage, fleißigster Tag
-    const busy = L.busiestDay(st);
-    const busyTxt = busy ? new Date(busy.day + "T12:00:00").toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "long" }) : "–";
-    const stats = [[s.questsDone + " von 30", "Regionale Quests"], [s.doneStack + " von " + C.stackQuests.length, "Stapel-Quests"],
-      [String(R.days), R.days === 1 ? "Urlaubstag" : "Urlaubstage"],
-      [busyTxt, "Fleißigster Tag" + (busy ? " · " + busy.count + (busy.count === 1 ? " Quest" : " Quests") : "")]];
-    const bw = (W - 140 - 3 * 16) / 4;
-    const statsG = stats.map(([v, l], i) => {
-      const x = 70 + i * (bw + 16);
-      return '<rect x="' + x + '" y="552" width="' + bw + '" height="78" rx="12" fill="#ffffff" stroke="#e3ddd1" stroke-width="1.5"/>' +
-        t(x + bw / 2, 588, v, i === 3 ? 22 : 26, 'text-anchor="middle" font-weight="700" fill="#0b5f78"') + t(x + bw / 2, 614, l, 14, 'text-anchor="middle" fill="#5f6f76"');
+      t(800 + (3 * CERT_CELL + 2 * CERT_GAP) / 2, 332 + (photos.length > 3 ? 2 : 1) * (CERT_CELL + CERT_GAP) + 14, "Erinnerungen", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') : "";
+    // Unten links: regionale Quests und Stapel-Quests untereinander; rechts eine Box „Gutscheine“ mit einfacher Liste
+    const box = (x, y, w, h) => '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="12" fill="#ffffff" stroke="#e3ddd1" stroke-width="1.5"/>';
+    const statsG = [["Regionale Quests", s.questsDone + " von 30"], ["Stapel-Quests", s.doneStack + " von " + C.stackQuests.length]].map(([l, v], i) => {
+      const y = 584 + i * 78;
+      return box(70, y, 300, 68) + t(90, y + 41, l, 18, 'text-anchor="start" fill="#5f6f76"') + t(350, y + 43, v, 26, 'text-anchor="end" font-weight="700" fill="#0b5f78"');
     }).join("");
-    // Gutscheine (bei mehr als 2 in zwei Spalten)
-    const two = vouchers.length > 2, rows = two ? Math.ceil(vouchers.length / 2) : vouchers.length;
-    const vouchersSvg = vouchers.length ? vouchers.map((v, i) => {
-      const col = two ? Math.floor(i / rows) : 0, row = two ? i % rows : i;
-      return t(two ? (col ? W * 0.72 : W * 0.28) : W / 2, 676 + row * 28, v, 19, 'text-anchor="middle" font-weight="600" fill="#0b5f78"');
-    }).join("") : t(W / 2, 676, "Keine Gutscheine", 18, 'text-anchor="middle" fill="#888"');
+    const two = vouchers.length > 3, rows = two ? Math.ceil(vouchers.length / 2) : Math.max(1, vouchers.length);
+    const vx = 392, vw = W - 70 - vx;
+    const vouchersSvg = box(vx, 584, vw, 146) + t(vx + 20, 616, "Gutscheine", 20, 'text-anchor="start" font-weight="700" fill="#0b5f78"') +
+      (vouchers.length ? vouchers.map((v, i) => {
+        const col = two ? Math.floor(i / rows) : 0, row = two ? i % rows : i;
+        return t(vx + 22 + col * vw / 2, 648 + row * 26, "• " + v, 18, 'text-anchor="start" fill="#1d2a30"');
+      }).join("") : t(vx + 22, 648, "Keine Gutscheine", 18, 'text-anchor="start" fill="#888"'));
     return '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + " " + H + '" font-family="Georgia, \'Times New Roman\', serif" fill="#1d2a30">' +
       '<rect width="' + W + '" height="' + H + '" fill="#fbf7ef"/>' +
       '<rect x="24" y="24" width="' + (W - 48) + '" height="' + (H - 48) + '" fill="none" stroke="#0b5f78" stroke-width="6" rx="18"/>' +
       '<rect x="40" y="40" width="' + (W - 80) + '" height="' + (H - 80) + '" fill="none" stroke="#e5b53b" stroke-width="2" rx="12"/>' +
-      t(W / 2, 102, "ZERTIFIKAT", 50, 'text-anchor="middle" font-weight="700" letter-spacing="8" fill="#0b5f78"') +
-      t(W / 2, 138, "Operação Madeira - Das Spiel · " + date, 19, 'text-anchor="middle" fill="#5f6f76"') +
-      t(W / 2, 180, "Hiermit wird bestätigt, dass", 19, 'text-anchor="middle" fill="#5f6f76"') +
-      t(W / 2, 224, names || "das Team", 34, 'text-anchor="middle" font-weight="700"') +
-      t(W / 2, 262, "Madeira als Team erkundet und den Rang „" + s.rankName + "“ erreicht haben.", 21, 'text-anchor="middle"') +
+      t(W / 2, 96, "ZERTIFIKAT", 50, 'text-anchor="middle" font-weight="700" letter-spacing="8" fill="#0b5f78"') +
+      t(W / 2, 130, "Operação Madeira – Das Spiel", 20, 'text-anchor="middle" fill="#5f6f76"') +
+      t(W / 2, 172, period, 19, 'text-anchor="middle" fill="#5f6f76"') + // nach einer Leerzeile: Zeitraum des Urlaubs
+      t(W / 2, 214, "Hiermit wird bestätigt, dass", 19, 'text-anchor="middle" fill="#5f6f76"') +
+      t(W / 2, 256, names || "das Team", 34, 'text-anchor="middle" font-weight="700"') +
+      t(W / 2, 292, "Madeira als Team erkundet und den Rang „" + s.rankName + "“ erreicht haben.", 21, 'text-anchor="middle"') +
       rankG + mapG + legendG + collage + statsG + vouchersSvg +
       t(W / 2, H - 56, "Dieses Zertifikat gilt gleichzeitig als Gutschein.", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') +
       "</svg>";
@@ -4714,7 +4730,8 @@
       case "recap-btn": return startRecap();
       case "pdf-btn": return downloadPDF().catch(() => toast("PDF konnte nicht erstellt werden.", true));
       case "reopen-btn": return confirmBox("Urlaub fortsetzen?", "Die Verteilung der Belohnungen wird aufgehoben und ihr könnt weiterspielen.", "Fortsetzen").then((ok) => ok && act({ type: "reopen" }));
-      case "tab-stats-btn": { const st = app.state.ended; app.state.ended = null; const html = viewStats(sum()); app.state.ended = st; $("#view").innerHTML = html; return; }
+      case "tab-stats-btn": app.endedStats = true; window.scrollTo(0, 0); return render();
+      case "ended-back": app.endedStats = false; window.scrollTo(0, 0); return render();
     }
   });
   document.addEventListener("keydown", (ev) => {

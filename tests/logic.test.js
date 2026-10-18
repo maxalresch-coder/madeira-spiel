@@ -94,6 +94,26 @@ assert.throws(() => act(s, { type: "quest", questId: "q-cal-1" }));
   assert(sawExplored && sawMixed, "mal ganz Madeira erkundet, meist gemischte Stufen");
 }
 
+// Zeitraum auf der Urkunde und ganze Einheiten bei zählbaren Belohnungen
+{
+  const D = (x) => new Date(x + "T10:00:00").getTime();
+  assert.strictEqual(L.dateRange(D("2026-10-10"), D("2026-10-18")), "10. – 18. Oktober 2026");
+  assert.strictEqual(L.dateRange(D("2026-09-28"), D("2026-10-05")), "28. September – 5. Oktober 2026");
+  assert.strictEqual(L.dateRange(D("2026-12-28"), D("2027-01-03")), "28. Dezember 2026 – 3. Januar 2027");
+  assert.strictEqual(L.dateRange(D("2026-10-18"), D("2026-10-18")), "18. Oktober 2026");
+  const byId = (id) => C.rewards.find((r) => r.id === id);
+  ["drink", "profilbild", "photoshop"].forEach((id) => {
+    assert.strictEqual(byId(id).kind, "count");
+    assert.strictEqual(L.rewardAmount(byId(id), 165, 1000), 100);
+    assert.strictEqual(L.rewardAmount(byId(id), 300, 265), 200);
+    assert.strictEqual(L.rewardAmount(byId(id), 65, 65), 0);
+    assert(!/,/.test(L.formatReward(byId(id), L.rewardAmount(byId(id), 999, 999))), "keine Bruchteile");
+  });
+  ["massage", "staendchen"].forEach((id) => assert.strictEqual(L.rewardAmount(byId(id), 65, 1000), 65));
+  assert.strictEqual(L.rewardAmount(byId("massage"), 500, 120), 120);
+  assert.strictEqual(L.rewardAmount(byId("massage"), -5, 120), 0);
+}
+
 // Shop-Sperre bei zu wenig Punkten
 assert.throws(() => act(s, { type: "joker", regionId: "funchal" }), /Nicht genug/);
 
