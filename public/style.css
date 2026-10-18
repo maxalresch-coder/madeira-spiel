@@ -111,15 +111,16 @@ input:focus, select:focus { outline: 2px solid var(--ocean); outline-offset: 1px
 .brand { display: grid; line-height: 1.1; }
 .brand-title { font-family: var(--display); font-weight: 800; font-size: 1.2rem; }
 .brand-rank { font-size: .8rem; opacity: .85; }
+/* Offline-Streifen: dezent („Offline – X Änderungen warten“), danach kurz grün „Synchronisiert“ */
 .offline {
-  display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px -16px -8px;
-  background: var(--hibiscus); color: #fff; text-align: center; font-size: .92rem; font-weight: 700; padding: 8px 16px;
+  display: flex; align-items: center; justify-content: center; gap: 6px; margin: 8px -16px -8px;
+  background: rgba(4, 30, 40, .55); color: #e8f1f4; text-align: center; font-size: .82rem; font-weight: 600; padding: 5px 16px;
 }
+.offline.ok { background: rgba(47, 158, 68, .85); color: #fff; }
 .offline[hidden] { display: none; }
-.offline .ic { width: 18px; height: 18px; flex: 0 0 auto; }
-/* Offline: speichernde Knöpfe sehen gesperrt aus (Antippen erklärt per Hinweis, warum) */
-body.is-offline :is([data-done], [data-swap], [data-mult], [data-undo], [data-quest], #buy-joker, #end-btn, #reset-btn,
-  #reopen-btn, #restore-btn, #upgrade-btn, #finish) { opacity: .45; filter: grayscale(.7); }
+.offline .ic { width: 15px; height: 15px; flex: 0 0 auto; }
+/* Offline: nur Knöpfe, die Netz brauchen, sehen gesperrt aus (Antippen erklärt per Hinweis, warum) */
+body.is-offline :is(#end-btn, #reset-btn, #reopen-btn, #restore-btn, #upgrade-btn, #finish, #sim-btn, #sim-stop, [data-srv-restore]) { opacity: .45; filter: grayscale(.7); }
 .view { max-width: 640px; margin: 0 auto; padding: 16px 16px calc(40px + env(safe-area-inset-bottom)); }
 
 .panel { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; margin-bottom: 14px; }
@@ -727,6 +728,11 @@ img.gone { visibility: hidden; }
 /* Fehlerprotokoll */
 .errlog { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: .9rem; overflow-wrap: anywhere; }
 .errlog .small { margin-top: 2px; }
+.srv-backups { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.srv-backups li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid #ece6da; }
+.srv-backups li:first-child { border-top: 0; }
+.sb-info { display: grid; gap: 2px; min-width: 0; }
+.srv-backups .btn { flex: 0 0 auto; min-height: 44px; }
 .photo-zone { display: flex; flex-direction: column; gap: 10px; }
 /* Kamera in der Seite */
 .cam { display: flex; flex-direction: column; gap: 10px; }

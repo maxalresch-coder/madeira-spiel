@@ -265,7 +265,8 @@
         break;
       }
       case "undo": {
-        const target = state.log.find((e) => e.id === action.logId) || fail("Eintrag nicht gefunden.");
+        // refUid: Ziel per fester Kennung (Eintrag von unterwegs – seine Nummer kann sich beim Synchronisieren ändern)
+        const target = state.log.find((e) => (action.refUid ? e.uid === action.refUid : e.id === action.logId)) || fail("Eintrag nicht gefunden.");
         if (target.undone) fail("Das wurde schon rückgängig gemacht.");
         undoEntry(state, content, target);
         target.undone = true;
@@ -294,6 +295,7 @@
     entry.dE = after.earned - before.earned;
     entry.dS = after.spent - before.spent;
     entry.undone = false;
+    if (action.uid) entry.uid = String(action.uid);
     state.log.push(entry);
     // Meilensteine "Madeira erobert/erschlossen" (ohne Punkte) bei den Aktivitäten festhalten –
     // auch wenn sie durch Rückgängigmachen wieder verloren gehen.
@@ -566,10 +568,40 @@
     return String(n).replace(".", ",") + " " + unit;
   }
 
+  /**
+   * Offline-Warteschlange nachspielen: wendet die gemerkten Änderungen der Reihe nach auf einen (neueren) Stand an.
+   * items: {k: "act", uid, seed, by, t, action} bzw. {k: "tool", uid, seed, qid, op, now, by} (Hilfsmittel über applyTool).
+   * Was nicht mehr passt (ein anderes Handy war schneller, z. B. dieselbe Quest schon erledigt), wird übersprungen –
+   * Punkte werden immer aus dem Ergebnis berechnet, also nie doppelt gezählt. Schon übernommene Änderungen (uid in
+   * state.uids, z. B. Antwort des Servers ging verloren) werden nicht noch einmal angewendet.
+   * Ergebnis: {state, applied: [uid], skipped: [{item, reason}]}
+   */
+  const UIDS_KEEP = 400;
+  function replay(base, content, items, applyTool) {
+    let state = base;
+    const applied = [], skipped = [];
+    (items || []).forEach((it) => {
+      if (!state || it.seed !== state.seed) { skipped.push({ item: it, reason: "Änderung aus einem früheren Spiel", old: true }); return; }
+      if ((state.uids || []).indexOf(it.uid) >= 0) return; // schon übernommen
+      let next;
+      try {
+        next = it.k === "tool" ? applyTool(state, it) : apply(state, content, Object.assign({}, it.action, { uid: it.uid }), it.by, it.t);
+      } catch (e) {
+        skipped.push({ item: it, reason: (e && e.message) || "passt nicht mehr" });
+        return;
+      }
+      if (next === state) next = Object.assign({}, state);
+      next.uids = (state.uids || []).concat(it.uid).slice(-UIDS_KEEP);
+      state = next;
+      applied.push(it.uid);
+    });
+    return { state, applied, skipped };
+  }
+
   const api = {
     STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MAX_SWAPS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
     newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible, regionProgress, rankProgress, maxPoints,
-    canUndo, dayCount, pointsPerDay, recap, distanceKm, busiestDay, simulateGame, mulberry32, multFreeSlot, rewardValue, formatReward, rewardAmount, dateRange, fmtFactor, index, hash
+    canUndo, dayCount, pointsPerDay, recap, distanceKm, busiestDay, simulateGame, mulberry32, multFreeSlot, rewardValue, formatReward, rewardAmount, dateRange, fmtFactor, index, hash, replay
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GameLogic = api;

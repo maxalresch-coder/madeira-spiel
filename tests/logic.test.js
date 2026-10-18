@@ -808,4 +808,54 @@ assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, unde
   });
   assert.deepStrictEqual([T.seaLevelAltitude(1048.4, false), T.seaLevelAltitude(1000, true), T.seaLevelAltitude(null, false)], [1000, 1000, null]);
 }
+// ---------------------------------------------------------------- Offline-Warteschlange (L.replay)
+{
+  const toolApply = (st, it) => Object.assign({}, st, { tools: Object.assign({}, st.tools, { [it.qid]: T.update(T.config(it.qid, C), (st.tools || {})[it.qid], it.op, it.now, it.by) }) });
+  const base = L.newGame(C, 77, 1000);
+  const A = (uid, action, by, tt) => ({ k: "act", uid, seed: 77, by, t: tt, action });
+  // Zwei Handys offline: beide haken dieselbe Quest ab, A kauft den Region-Joker, B auch → B wird übersprungen
+  const qa = [A("a1", { type: "quest", questId: "q-cal-1" }, "Ana", 2000), A("a2", { type: "quest", questId: "q-fun-1" }, "Ana", 2100)];
+  const qb = [A("b1", { type: "quest", questId: "q-cal-1" }, "Ben", 2050), A("b2", { type: "quest", questId: "q-mac-1" }, "Ben", 2200)];
+  let sv = L.replay(base, C, qa, toolApply);                 // Ana kommt zuerst wieder ins Netz
+  assert.deepStrictEqual(sv.applied, ["a1", "a2"]);
+  const rb = L.replay(sv.state, C, qb, toolApply);           // Ben danach: q-cal-1 schon erledigt
+  assert.deepStrictEqual(rb.applied, ["b2"]);
+  assert.strictEqual(rb.skipped.length, 1);
+  assert.strictEqual(rb.skipped[0].item.uid, "b1");
+  assert.strictEqual(L.summary(rb.state, C).earned, 300, "drei Regionen erkundet, nichts doppelt");
+  assert.strictEqual(rb.state.quests["q-cal-1"].by, "Ana");
+  // Schon übernommene Änderungen (Antwort ging verloren) nicht doppelt anwenden – auch bei Hilfsmitteln
+  const tq = { k: "tool", uid: "t1", seed: 77, qid: "s-e07", op: { type: "inc" }, now: 3000, by: "Ana" };
+  let r1 = L.replay(base, C, [tq], toolApply);
+  const r2 = L.replay(r1.state, C, [tq, A("a1", { type: "quest", questId: "q-cal-1" }, "Ana", 2000)], toolApply);
+  assert.strictEqual(r2.state.tools["s-e07"].count, 1);
+  assert.deepStrictEqual(r2.applied, ["a1"]);
+  // Rückgängig per fester Kennung: Eintrag von unterwegs bekommt beim Zusammenführen eine andere Nummer
+  const local = L.replay(base, C, [A("u1", { type: "quest", questId: "q-svi-1" }, "Ana", 4000)], toolApply).state;
+  const localEntry = local.log.find((e) => e.uid === "u1");
+  const undoIt = A("u2", { type: "undo", logId: localEntry.id, refUid: "u1" }, "Ana", 4100);
+  const remote = L.replay(base, C, [A("x1", { type: "quest", questId: "q-cal-2" }, "Ben", 3900)], toolApply).state; // anderes Handy war online
+  const merged = L.replay(remote, C, [A("u1", { type: "quest", questId: "q-svi-1" }, "Ana", 4000), undoIt], toolApply);
+  assert.deepStrictEqual(merged.applied, ["u1", "u2"]);
+  assert(!merged.state.quests["q-svi-1"] && merged.state.quests["q-cal-2"], "richtige Quest rückgängig");
+  assert.strictEqual(L.summary(merged.state, C).earned, 100);
+  // Gleiches Rückgängig von zwei Handys: nur einmal
+  const both = L.replay(merged.state, C, [A("u3", { type: "undo", logId: 0, refUid: "u1" }, "Ben", 4200)], toolApply);
+  assert.strictEqual(both.skipped.length, 1);
+  // Änderungen aus einem früheren Spiel (Reset dazwischen) werden verworfen
+  const reset = L.apply(base, C, { type: "reset", seed: 5 }, "X", 5000);
+  const old = L.replay(reset, C, [A("o1", { type: "quest", questId: "q-cal-1" }, "Ana", 4500)], toolApply);
+  assert(old.skipped[0].old && !old.applied.length);
+  // Reihenfolge bleibt: Abhaken einer Stapel-Quest setzt ihr Hilfsmittel zurück, danach neues Zählen
+  const sq = base.open.find((id) => T.config(id, C) && T.config(id, C).kind === "counter") || null;
+  if (sq) {
+    const seq = [{ k: "tool", uid: "c1", seed: 77, qid: sq, op: { type: "inc" }, now: 6000, by: "Ana" }, A("c2", { type: "stack", questId: sq }, "Ana", 6100)];
+    const rs = L.replay(base, C, seq, toolApply);
+    assert(!rs.state.tools[sq] && rs.state.done[sq]);
+  }
+  // uids-Liste bleibt begrenzt
+  let big = base;
+  for (let i = 0; i < 450; i++) big = L.replay(big, C, [{ k: "tool", uid: "z" + i, seed: 77, qid: "s-e07", op: { type: "inc" }, now: 7000 + i, by: "A" }], toolApply).state;
+  assert.strictEqual(big.uids.length, 400);
+}
 console.log("Alle Logik-Tests bestanden ✓");

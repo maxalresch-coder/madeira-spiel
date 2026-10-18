@@ -27,6 +27,7 @@ Konfiguration über Umgebungsvariablen:
 Lokal starten:  MADEIRA_PASSWORD=test MADEIRA_LINK_KEY=geheim python3 server.py
 Auf PythonAnywhere: siehe ANLEITUNG.md – dort wird `application` als WSGI-App genutzt.
 """
+import calendar
 import hashlib
 import hmac
 import json
@@ -52,6 +53,9 @@ ERRLOG_FIELDS = ("stage", "name", "message", "fileName", "fileType", "fileSize",
 ERRLOG_MERGE = 600              # Sekunden: gleiche allgemeine Fehler in diesem Abstand werden zusammengefasst
 MEMORY_ID = re.compile(r"m[0-9a-f]{24}")
 QUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,40}")
+BACKUP_EVERY = 3600             # Sekunden: automatische Sicherung höchstens so oft (nur bei Änderungen)
+BACKUP_KEEP = 7 * 86400         # Sekunden: so lange bleiben automatische Sicherungen
+BACKUP_ID = re.compile(r"state-(\d{8}-\d{6})-v(\d+)-r(\d+)-s(\d+)-(auto|vorher)")
 MAX_THUMB = 120 * 1024          # Vorschaubild (im Browser ~240 px)
 _lock = threading.Lock()
 
@@ -461,6 +465,93 @@ def _sim_stop(conf):
     return None
 
 
+# ---- Automatische Sicherungen (data/backups/): ausgelöst beim Speichern einer Änderung, wenn die letzte automatische
+# Sicherung älter als eine Stunde ist (kein Hintergrundprozess – läuft auf PythonAnywhere nicht zuverlässig); älter als
+# 7 Tage → gelöscht. Nicht während einer Test-Simulation. Erinnerungsfotos werden nicht kopiert.
+# Dateiname: state-<UTC JJJJMMTT-HHMMSS>-v<Version>-r<regionale Quests>-s<Stapel-Quests>-<auto|vorher>.json
+def _backup_dir(conf):
+    return os.path.join(conf["data_dir"], "backups")
+
+
+def _list_backups(conf):
+    """Alle Sicherungen, neueste zuerst: [{id, savedAt, version, regional, stack, reason}]."""
+    try:
+        names = os.listdir(_backup_dir(conf))
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        m = BACKUP_ID.fullmatch(name[:-5]) if name.endswith(".json") else None
+        if not m:
+            continue
+        saved = calendar.timegm(time.strptime(m.group(1), "%Y%m%d-%H%M%S")) * 1000
+        out.append({"id": name[:-5], "savedAt": saved, "version": int(m.group(2)), "regional": int(m.group(3)),
+                    "stack": int(m.group(4)), "reason": m.group(5)})
+    out.sort(key=lambda b: (b["savedAt"], b["version"]), reverse=True)
+    return out
+
+
+def _write_backup(conf, doc, reason):
+    st = doc.get("state")
+    if not isinstance(st, dict):
+        return None
+    folder = _backup_dir(conf)
+    os.makedirs(folder, exist_ok=True)
+    now = time.time()
+    quests = st.get("quests") if isinstance(st.get("quests"), dict) else {}
+    done = st.get("done") if isinstance(st.get("done"), dict) else {}
+    bid = "state-%s-v%d-r%d-s%d-%s" % (time.strftime("%Y%m%d-%H%M%S", time.gmtime(now)), int(doc.get("version", 0)), len(quests), len(done), reason)
+    tmp = os.path.join(folder, bid + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"app": "operacao-madeira", "savedAt": int(now * 1000), "version": doc.get("version", 0), "reason": reason, "state": st},
+                  f, ensure_ascii=False)
+    os.replace(tmp, os.path.join(folder, bid + ".json"))
+    for b in _list_backups(conf):  # älter als 7 Tage: weg
+        if b["savedAt"] < (now - BACKUP_KEEP) * 1000:
+            _remove(os.path.join(folder, b["id"] + ".json"))
+    return bid
+
+
+def _auto_backup(conf):
+    """Nach dem Speichern einer Änderung aufrufen: sichert, wenn die letzte automatische Sicherung älter als eine Stunde ist."""
+    every = int(os.environ.get("MADEIRA_BACKUP_EVERY") or BACKUP_EVERY)
+    now = time.time()
+    if os.path.isdir(_sim_dir(conf)):
+        return
+    try:
+        with _lock:
+            doc = _load(conf)
+            if doc.get("state") is None:
+                return
+            last = next((b for b in _list_backups(conf) if b["reason"] == "auto"), None)
+            if last and (last["version"] == doc["version"] or now * 1000 - last["savedAt"] < every * 1000):
+                return
+            _write_backup(conf, doc, "auto")
+    except OSError:
+        pass  # Sicherung darf nie das Spiel stören
+
+
+def _restore_backup(conf, bid):
+    """Server-Sicherung wiederherstellen; vorher den aktuellen Stand selbst sichern („vorher“). Erinnerungsfotos bleiben."""
+    if not isinstance(bid, str) or not BACKUP_ID.fullmatch(bid):
+        return "Unbekannte Sicherung."
+    if os.path.isdir(_sim_dir(conf)):
+        return "Während der Test-Simulation nicht möglich – erst „Simulation beenden“."
+    with _lock:
+        try:
+            with open(os.path.join(_backup_dir(conf), bid + ".json"), encoding="utf-8") as f:
+                st = json.load(f).get("state")
+        except (OSError, ValueError):
+            return "Sicherung nicht gefunden."
+        if not isinstance(st, dict) or not isinstance(st.get("log"), list):
+            return "Sicherung ist beschädigt."
+        cur = _load(conf)
+        if cur.get("state") is not None:
+            _write_backup(conf, cur, "vorher")
+        _save(conf, {"version": cur["version"] + 1, "state": st})
+    return None
+
+
 def _clean_label(text):
     """Teil des Dateinamens im ZIP: nur Buchstaben, Ziffern, - und _ (der Browser schreibt Umlaute schon um)."""
     text = re.sub(r"[^A-Za-z0-9_-]+", "-", str(text or ""))
@@ -751,6 +842,15 @@ def _api(path, environ, start_response, conf):
         _team_autofill(conf, body.get("name"))
         return _json(start_response, "200 OK", {"players": players})
 
+    # Automatische Server-Sicherungen: Liste und Wiederherstellen
+    if path == "backups" and method == "GET":
+        return _json(start_response, "200 OK", {"backups": _list_backups(conf), "now": _now_ms(), "every": BACKUP_EVERY})
+    if path == "backups/restore" and method == "POST":
+        err = _restore_backup(conf, (_read_body(environ) or {}).get("id"))
+        if err:
+            return _json(start_response, "409 Conflict", {"error": err})
+        return _json(start_response, "200 OK", dict(_load(conf), now=_now_ms(), memv=_load_mem(conf).get("v", 0), sim=_sim_info(conf)))
+
     if path == "state" and method == "GET":
         doc = _load(conf)
         qs = environ.get("QUERY_STRING", "")
@@ -782,6 +882,7 @@ def _api(path, environ, start_response, conf):
             _gc_photos(conf, body["state"])
         if reset:
             _clear_memories(conf)  # kompletter Reset: auch alle Erinnerungsfotos weg
+        _auto_backup(conf)
         return _json(start_response, "200 OK", {"version": doc["version"], "now": _now_ms(),
                                                 "memv": _load_mem(conf).get("v", 0), "sim": _sim_info(conf)})
 

@@ -29,8 +29,14 @@
     players: [], // alle Namen, mit denen sich je jemand angemeldet hat (vom Server)
     clockOffset: 0, // Serverzeit − Handyzeit (für synchrone Timer)
     busy: false,
+    base: null, // letzter Stand vom Server; app.state = base + noch nicht übertragene Änderungen (app.pending)
+    pending: [], // Offline-Warteschlange (localStorage „pending“): Abhaken, Käufe, Rückgängig, Hilfsmittel
+    flushing: false,
+    waited: false, // es mussten Änderungen warten → nach dem Übertragen kurz „Synchronisiert“
     modals: [] // offene Fenster (oberstes zuletzt)
   };
+  try { app.pending = JSON.parse(store.get("pending") || "[]"); } catch (e) { app.pending = []; }
+  if (!Array.isArray(app.pending)) app.pending = [];
 
   // ------------------------------------------------------------------ API
   // Ohne Netz hängt eine Anfrage sonst sehr lange – nach einer Weile abbrechen (= keine Verbindung).
@@ -74,14 +80,105 @@
     return { status: res.status, data };
   }
 
-  // Offline-Anzeige: Streifen unter der Kopfzeile; speichernde Knöpfe sind gesperrt.
+  // Offline-Anzeige: dezenter Streifen unter der Kopfzeile „Offline – X Änderungen warten“; danach kurz „Synchronisiert“.
+  // Nur Aktionen, die nicht zusammengeführt werden können (Reset, Urlaub beenden …), sind offline gesperrt.
   function setOnline(on) {
     const was = app.online;
     app.online = on;
-    $("#offline").hidden = on;
     document.body.classList.toggle("is-offline", !on);
-    if (on && !was) { toast("Wieder online – Spielstand ist aktuell."); sendErrors(); } // gemerkte Fehler nachschicken
+    if (!on) app.waited = true;
     if (on !== was && app.state) rerenderTools(); // z. B. Foto-Knöpfe sperren/freigeben
+    if (on && !was) {
+      sendErrors(); // gemerkte Fehler nachschicken
+      if (app.pending.length) flushPending(); // wartende Änderungen übertragen (danach „Synchronisiert“)
+      else { app.waited = false; syncBar(true); return; }
+    }
+    syncBar();
+  }
+  function syncBar(synced) {
+    const el = $("#offline"), n = app.pending.length;
+    if (!el) return;
+    clearTimeout(syncBar.t);
+    let txt = "", cls = "";
+    if (!app.online) txt = n ? "Offline – " + n + (n === 1 ? " Änderung wartet" : " Änderungen warten") : "Offline – Änderungen werden später übertragen";
+    else if (synced) { txt = "Synchronisiert"; cls = "ok"; syncBar.t = setTimeout(() => syncBar(), 2500); }
+    el.hidden = !txt;
+    el.classList.toggle("ok", cls === "ok");
+    if (txt) el.innerHTML = icon(cls === "ok" ? "check" : "wifi-off") + " " + esc(txt);
+  }
+  // Letzten Server-Stand merken: so geht die App auch nach einem Neuladen ohne Netz weiter
+  function cacheBase() {
+    if (cacheBase.v === app.version) return;
+    cacheBase.v = app.version;
+    try { localStorage.setItem("madeira:base", JSON.stringify({ version: app.version, state: app.base })); } catch (e) { /* Speicher voll: egal */ }
+  }
+  function savePending() { store.set("pending", app.pending.length ? JSON.stringify(app.pending) : null); }
+  // Hilfsmittel-Eingabe aus der Warteschlange auf einen Stand anwenden (für L.replay)
+  function toolApply(state, it) {
+    const tools = Object.assign({}, state.tools);
+    tools[it.qid] = T.update(tcfg(it.qid), tools[it.qid], it.op, it.now, it.by);
+    return Object.assign({}, state, { tools });
+  }
+  const withPending = (base) => (base && app.pending.length ? L.replay(base, C, app.pending, toolApply).state : base);
+  // Neue Änderung: sofort hier anwenden, merken (übersteht Neuladen) und übertragen, sobald Netz da ist
+  function enqueue(item) {
+    item.uid = item.uid || "u" + rand32().toString(36) + rand32().toString(36);
+    item.seed = app.state.seed;
+    item.by = item.by || app.name;
+    const r = L.replay(app.state, C, [item], toolApply);
+    if (!r.applied.length) return r.skipped[0] ? r.skipped[0].reason : "Das passt gerade nicht.";
+    app.pending.push(item);
+    savePending();
+    app.state = r.state;
+    syncBar();
+    flushPending();
+    return null;
+  }
+  // Warteschlange an den Server senden: auf dem neuesten Stand nachspielen (L.replay), bei Konflikt (409) mit dem
+  // neuen Stand wiederholen; ohne Netz bleibt alles liegen und wird später übertragen.
+  async function flushPending() {
+    if (app.flushing || !app.pending.length || !app.base || !app.token) return;
+    if (app.busy) { setTimeout(flushPending, 200); return; }
+    app.flushing = true;
+    try {
+      for (let attempt = 0; attempt < 8 && app.pending.length; attempt++) {
+        const batch = app.pending.slice();
+        const res = L.replay(app.base, C, batch, toolApply);
+        let r = null;
+        if (res.applied.length) {
+          try { r = await api("state", { method: "POST", body: { baseVersion: app.version, state: res.state } }); } catch (e) { setOnline(false); return; }
+          if (r.status >= 500) { setOnline(false); return; }
+          if (r.status === 409) { setOnline(true); receive(r.data.version, r.data.state, false); continue; }
+          if (r.status !== 200) {
+            dropPending(batch);
+            reportError("Synchronisierung", { name: "Änderungen abgelehnt", message: "HTTP " + r.status + (r.data && r.data.error ? ": " + r.data.error : "") + " (" + batch.length + " Änderungen)" });
+            toast("Speichern abgelehnt" + (r.data && r.data.error ? " (" + r.data.error + ")" : "") + " – " + batch.length + " Änderung(en) NICHT übernommen.", true);
+            receive(app.version, app.base, true);
+            return;
+          }
+        }
+        dropPending(batch);
+        setOnline(true);
+        if (r) receive(r.data.version, res.state, true);
+        else receive(app.version, app.base, true);
+        const lost = res.skipped.filter((x) => !x.old), old = res.skipped.length - lost.length;
+        if (lost.length) {
+          reportError("Synchronisierung", { name: "Konflikt zusammengeführt", message: lost.length + " Änderung(en) übersprungen: " + lost.map((x) => x.reason).slice(0, 3).join(" | ") });
+          toast((lost.length === 1 ? "1 Änderung" : lost.length + " Änderungen") + " von unterwegs nicht übernommen – ein anderes Handy war schneller: " + lost[0].reason, true);
+        }
+        if (old) toast(old + " Änderung(en) aus einem früheren Spiel verworfen.", true);
+      }
+    } finally {
+      app.flushing = false;
+      const synced = !app.pending.length && app.online && app.waited;
+      if (synced) app.waited = false;
+      syncBar(synced);
+    }
+  }
+  function dropPending(batch) {
+    const done = new Set(batch.map((x) => x.uid));
+    app.pending = app.pending.filter((x) => !done.has(x.uid));
+    savePending();
   }
 
   // Server nicht erreichbar oder Fehlerseite (z. B. 502) zählt als offline.
@@ -95,10 +192,11 @@
       // Nach einer Funkstille den kompletten Spielstand neu laden
       const r = await api("state" + (wasOffline ? "" : "?since=" + app.version));
       if (r.status !== 200 || !r.data) throw Object.assign(new Error("Server nicht erreichbar (HTTP " + r.status + ")"), { name: "Abholen fehlgeschlagen" });
-      if (r.data.unchanged) { setOnline(true); return; }
+      if (r.data.unchanged) { setOnline(true); flushPending(); return; }
       if (!r.data.state) { await createGame(); setOnline(true); return; }
       receive(r.data.version, r.data.state, false);
       setOnline(true);
+      flushPending();
     } catch (e) {
       if (!e || !e.logged) reportError("Synchronisierung", e);
       setOnline(false);
@@ -119,7 +217,9 @@
     app.syncRecv = (app.syncRecv || 0) + 1;
     const prev = app.state;
     app.version = version;
-    app.state = state;
+    app.base = state;
+    cacheBase();
+    state = app.state = withPending(state); // gezeigt wird immer der Server-Stand plus noch wartende Änderungen
     if (prev && prev.seed === state.seed && L.isCompatible(prev, C) && L.isCompatible(state, C)) {
       celebrate(prev, state, own);
       if (!own) announceRemote(prev, state);
@@ -131,20 +231,44 @@
     }
   }
 
-  // Aktion ausführen: lokal anwenden, an Server senden, bei Konflikt neu versuchen.
+  // Für Aktionen, die nur mit Netz gehen: vorher alles Wartende übertragen; sonst Hinweis
+  async function needOnline() {
+    if (app.pending.length) await flushPending();
+    if (!app.online || app.pending.length) {
+      await poll(); // vielleicht ist das Netz gerade zurück
+      if (app.pending.length) await flushPending();
+      if (!app.online || app.pending.length) { toast(OFFLINE_MSG, true); return false; }
+    }
+    return true;
+  }
+  // Aktionen, die auch ohne Netz gehen (Warteschlange, später zusammengeführt); Reset, Urlaub beenden/fortsetzen nur online
+  const QUEUED = { quest: 1, stack: 1, joker: 1, swap: 1, mult: 1, undo: 1 };
+  // Aktion ausführen. Abhaken, Käufe, Rückgängig: sofort hier anwenden und über die Warteschlange übertragen (auch
+  // offline). Sonst: lokal anwenden, an Server senden, bei Konflikt neu versuchen.
   async function act(action, opts) {
     opts = opts || {};
-    if (app.busy) return false;
-    if (!app.online) {
-      await poll(); // vielleicht ist das Netz gerade zurück
-      if (!app.online) { toast(OFFLINE_MSG, true); return false; }
+    if (QUEUED[action.type] && app.state) {
+      action = Object.assign({}, action);
+      if (action.type === "undo") { // Ziel per fester Kennung, falls der Eintrag von unterwegs stammt
+        const target = app.state.log.find((e) => e.id === action.logId);
+        if (target && target.uid) action.refUid = target.uid;
+      }
+      const prev = app.state;
+      const err = enqueue({ k: "act", t: Math.round(serverNow()), action }); // Serverzeit: Datum/Uhrzeit für alle Handys gleich
+      if (err) { toast(err, true); return false; }
+      celebrate(prev, app.state, true);
+      render();
+      if (opts.fxFrom) burst(opts.fxFrom, app.state);
+      return true;
     }
+    if (app.busy) return false;
+    if (!(await needOnline())) return false;
     app.busy = true;
     try {
       for (let attempt = 0; attempt < 4; attempt++) {
         let next;
         try {
-          next = L.apply(app.state, C, action, app.name, Math.round(serverNow())); // Serverzeit: Datum/Uhrzeit für alle Handys gleich
+          next = L.apply(app.base, C, action, app.name, Math.round(serverNow())); // Serverzeit: Datum/Uhrzeit für alle Handys gleich
         } catch (e) {
           if (e instanceof L.GameError) { toast(e.message, true); return false; }
           throw e;
@@ -180,9 +304,10 @@
     }
   }
 
-  const OFFLINE_MSG = "Offline – Abhaken, Rückgängig, Käufe und Hilfsmittel gehen erst wieder mit Netz.";
-  // Knöpfe, die etwas speichern würden (offline gesperrt)
-  const SAVING_BUTTONS = "[data-tool-act], [data-done], [data-swap], [data-mult], [data-undo], [data-quest], #buy-joker, #end-btn, #reset-btn, #reopen-btn, #restore-btn, #upgrade-btn, #finish";
+  const OFFLINE_MSG = "Offline – das geht erst wieder mit Netz. Abhaken, Käufe, Rückgängig und Hilfsmittel gehen auch ohne Netz.";
+  const MEM_OFFLINE = "Ohne Netz können keine Erinnerungsfotos hochgeladen werden. Tipp: Foto mit der Kamera-App machen und später hier aus der Galerie hinzufügen.";
+  // Knöpfe, die nur mit Netz gehen (offline gesperrt); alles andere läuft über die Offline-Warteschlange
+  const SAVING_BUTTONS = "#end-btn, #reset-btn, #reopen-btn, #restore-btn, #upgrade-btn, #finish, #sim-btn, #sim-stop, [data-srv-restore]";
 
   // ------------------------------------------------------------------ Spielstand sichern / wiederherstellen
   function localDate(d) {
@@ -217,8 +342,7 @@
     const ok = await confirmBox("Spielstand wiederherstellen?", "Achtung: Der aktuelle Spielstand wird für ALLE drei Handys durch die Sicherung" + from +
       " ersetzt (" + fmt(L.summary(b.state, C).earned) + " Punkte verdient). Alles, was seitdem passiert ist, geht verloren.", "Überschreiben", true);
     if (!ok) { backToSettings("backup"); return; }
-    if (!app.online) await poll();
-    if (!app.online) { toast(OFFLINE_MSG, true); return; }
+    if (!(await needOnline())) return;
     for (let attempt = 0; attempt < 3; attempt++) {
       let r;
       try {
@@ -276,7 +400,15 @@
     $("#app").hidden = false;
     requestAnimationFrame(fitLogo);
     if (document.fonts && document.fonts.load) document.fonts.load('27px "Bebas Neue"', "Operação Madeira").then(fitLogo, () => {});
+    // Letzter bekannter Stand (auch ohne Netz nach einem Neuladen); der Server-Stand kommt gleich per poll
+    if (!app.state) {
+      try {
+        const c = JSON.parse(localStorage.getItem("madeira:base") || "null");
+        if (c && c.state && typeof c.version === "number") receive(c.version, c.state, true);
+      } catch (e) { /* kaputt: egal */ }
+    }
     render();
+    syncBar();
     poll();
     registerName();
   }
@@ -452,6 +584,7 @@
     window.scrollTo(0, 0);
     render();
     if (view === "errors") loadErrorLog();
+    if (view === "backup") loadSrvBackups();
     if (view === "photos") loadMemories(); // Speicherplatz aktuell
   }
   window.addEventListener("popstate", (ev) => { closeAll(); show((ev.state && ev.state.view) || "home"); });
@@ -1040,7 +1173,7 @@
   // in einem eigenen Fenster. Der Zustand liegt in state.tools und wird über den Server geteilt.
   // Änderungen laufen über eine Warteschlange, damit schnelles Antippen (z. B. „+1 Auto“) nichts
   // verliert. Hilfsmittel haken nie ab und geben keine Punkte.
-  const toolUI = { queue: [], flushing: false, signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, sel: {}, handoff: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false, alt: {} };
+  const toolUI = { signaled: new Set(), ttt: { sel: [] }, peek: {}, order: {}, pick: {}, uploading: {}, photoFailed: {}, sel: {}, handoff: {}, picking: null, photoReplace: null, cam: null, camFallback: null, dragging: false, refreshPending: false, alt: {} };
   const compass = { on: false, failed: "", samples: [], last: 0 };
   const tcfg = (qid) => T.config(qid, C);
   function serverNow() { return Date.now() + app.clockOffset; }
@@ -1051,12 +1184,7 @@
   // Stand eines Hilfsmittels inklusive noch nicht gesendeter Eingaben
   function toolState(qid) {
     const cfg = tcfg(qid);
-    let ts = T.sanitize(cfg, (app.state.tools && app.state.tools[qid]) || null);
-    toolUI.queue.forEach((x) => {
-      if (x.qid !== qid) return;
-      try { ts = T.update(cfg, ts, x.op, x.now, x.by); } catch (e) { /* von einem anderen Handy überholt */ }
-    });
-    return ts || {};
+    return T.sanitize(cfg, (app.state.tools && app.state.tools[qid]) || null) || {}; // app.state enthält schon die wartenden Eingaben
   }
 
   // Zeile im Quest-Fenster: Link (neuer Tab) oder Knopf, der das Hilfsmittel öffnet
@@ -1915,7 +2043,7 @@
     const filesBtn = '<button class="btn btn-small btn-ghost photo-files" data-tool-ui="photo-files"' + (multiple ? " data-multiple" : "") + ">" + icon("folder-open") + " Aus Dateien wählen</button>";
     // Kamera in der Seite: Platz für die Live-Vorschau (das Kamera-Element selbst bleibt beim Neuzeichnen erhalten, mountCamera)
     if (cam && cam.qid === qid) return '<div data-cam-slot="' + qid + '"></div>' + failed;
-    if (!app.online) return '<div class="tool-warn">' + icon("wifi-off") + " Offline – Fotos aufnehmen geht erst wieder mit Netz.</div>" + failed;
+    if (!app.online) return '<div class="tool-warn">' + icon("wifi-off") + " " + (isMem(qid) ? MEM_OFFLINE : "Offline – Fotos aufnehmen geht erst wieder mit Netz.") + "</div>" + failed;
     const up = toolUI.uploading[qid];
     if (up) {
       return '<div class="tool-wait photo-progress">' + icon("camera") + "<div><strong>Foto " + Math.min(up.done + 1, up.total) + " von " + up.total + "</strong> wird verkleinert und hochgeladen …" +
@@ -2923,59 +3051,17 @@
     if (act === "inc") tapFeedback(b);
   }
 
+  // Eingabe eines Hilfsmittels: über die Offline-Warteschlange (geht auch ohne Netz, wird später übertragen)
   function toolDo(qid, op, quiet) {
-    if (!app.online) { toast(OFFLINE_MSG, true); return false; }
     const now = serverNow();
     try { T.update(tcfg(qid), toolState(qid), op, now, app.name); } catch (e) {
       if (e instanceof T.ToolError) { toast(e.message, true); return false; }
       throw e;
     }
-    toolUI.queue.push({ qid, op, now, by: app.name });
+    const err = enqueue({ k: "tool", qid, op, now });
+    if (err) { toast(err, true); return false; }
     if (!quiet) rerenderTools(qid); // quiet: z. B. Buchstaben beim Tippen – Felder bleiben unangetastet
-    flushTools();
     return true;
-  }
-
-  // Wartende Eingaben der Hilfsmittel an den Server senden (bei Konflikt auf dem neuen Stand wiederholen)
-  async function flushTools() {
-    if (toolUI.flushing || !toolUI.queue.length) return;
-    if (app.busy) { setTimeout(flushTools, 200); return; }
-    toolUI.flushing = app.busy = true;
-    const batch = toolUI.queue.slice();
-    let failed = "gerade sehr viel los";
-    try {
-      for (let attempt = 0; attempt < 5; attempt++) {
-        const next = JSON.parse(JSON.stringify(app.state));
-        next.tools = next.tools || {};
-        batch.forEach((x) => {
-          try { next.tools[x.qid] = T.update(tcfg(x.qid), next.tools[x.qid], x.op, x.now, x.by); } catch (e) {
-            if (!(e instanceof T.ToolError)) throw e; // sonst: ein anderes Handy war schneller
-          }
-        });
-        let r;
-        try { r = await api("state", { method: "POST", body: { baseVersion: app.version, state: next } }); } catch (e) {
-          setOnline(false); failed = "keine Verbindung"; break;
-        }
-        if (r.status >= 500) { setOnline(false); failed = "Server nicht erreichbar"; break; }
-        if (r.status === 200) {
-          setOnline(true);
-          toolUI.queue.splice(0, batch.length);
-          receive(r.data.version, next, true);
-          return;
-        }
-        if (r.status === 409) { receive(r.data.version, r.data.state, false); continue; }
-        failed = (r.data && r.data.error) || "Fehler";
-        break;
-      }
-      toolUI.queue.splice(0, batch.length);
-      reportError("Synchronisierung", { name: "Hilfsmittel nicht gespeichert", message: failed + " (" + batch.map((x) => x.qid + ": " + x.op.type).slice(0, 5).join(", ") + ")" });
-      toast("Speichern fehlgeschlagen (" + failed + "). Die Eingabe wurde NICHT übernommen.", true);
-      render();
-    } finally {
-      toolUI.flushing = false;
-      app.busy = false;
-      if (toolUI.queue.length) setTimeout(flushTools, 0);
-    }
   }
 
   // ---- Kompass (Grüße nach Rio): nur auf diesem Handy, der Wert wird erst beim Tippen gemessen
@@ -3481,7 +3567,43 @@
         '<button class="btn btn-primary btn-block" id="backup-btn">' + icon("download") + " Spielstand sichern</button>" +
         '<p class="muted small" style="margin:0">Wiederherstellen ersetzt den aktuellen Spielstand auf allen drei Handys durch eine gesicherte Datei.</p>' +
         '<button class="btn btn-ghost btn-block" id="restore-btn">' + icon("upload") + " Spielstand wiederherstellen</button>" +
+      "</div>" + srvBackupsHTML();
+  }
+  // Automatische Server-Sicherungen (data/backups/, stündlich bei Änderungen, 7 Tage): Liste + Wiederherstellen
+  const backupWhen = (ms) => new Date(ms).toLocaleString("de-DE", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  function srvBackupsHTML() {
+    const b = app.srvBackups;
+    const all = b && b.list ? b.list : [], list = app.srvBackupsAll ? all : all.slice(0, 10);
+    return '<div class="panel set-panel"><h3 style="margin:0">' + icon("history") + " Automatische Sicherungen</h3>" +
+      '<p class="muted small" style="margin:0">Der Server sichert den Spielstand automatisch, sobald eine Änderung gespeichert wird und die letzte Sicherung älter als eine Stunde ist. Er behält die Sicherungen der letzten 7 Tage. Erinnerungsfotos werden dabei nicht kopiert – sie bleiben beim Wiederherstellen einfach erhalten.</p>' +
+      (!b ? '<p class="muted small" style="margin:0">Wird geladen …</p>'
+        : b.error ? '<p class="tool-warn">' + esc(b.error) + "</p>"
+        : !all.length ? '<p class="muted small" style="margin:0">Noch keine Sicherung – die erste entsteht automatisch.</p>'
+        : '<ul class="srv-backups">' + list.map((x) => '<li><div class="sb-info"><strong>' + esc(backupWhen(x.savedAt)) + "</strong>" +
+            '<span class="muted small">' + x.regional + " regionale · " + x.stack + " Stapel-Quests" + (x.reason === "vorher" ? " · vor dem Wiederherstellen" : "") + "</span></div>" +
+            '<button class="btn btn-small btn-ghost" data-srv-restore="' + esc(x.id) + '">Wiederherstellen</button></li>').join("") + "</ul>" +
+          (all.length > list.length ? '<button class="btn btn-ghost btn-block" id="srv-backups-all">Alle ' + all.length + " Sicherungen anzeigen</button>" : "")) +
       "</div>";
+  }
+  async function loadSrvBackups() {
+    app.srvBackups = null; app.srvBackupsAll = false;
+    const r = await api("backups").catch(() => null);
+    app.srvBackups = r && r.status === 200 && r.data ? { list: r.data.backups || [] } : { error: "Sicherungen konnten nicht geladen werden (offline?)." };
+    if (app.view === "backup") render();
+  }
+  async function restoreSrvBackup(id) {
+    const b = app.srvBackups && app.srvBackups.list && app.srvBackups.list.find((x) => x.id === id);
+    if (!b) return;
+    const ok = await confirmBox("Spielstand wiederherstellen?", "Der Spielstand vom " + backupWhen(b.savedAt) + " (" + b.regional + " regionale, " + b.stack +
+      " Stapel-Quests) ersetzt den aktuellen Stand für ALLE Handys. Der aktuelle Stand wird vorher automatisch gesichert. Erinnerungsfotos bleiben erhalten.", "Weiter", true);
+    if (!ok) return;
+    if (!(await needOnline())) return;
+    const r = await api("backups/restore", { method: "POST", body: { id } }).catch(() => null);
+    if (!r || r.status !== 200 || !r.data.state) { toast("Wiederherstellen ging nicht" + (r && r.data && r.data.error ? ": " + r.data.error : " (offline?).") + " Es wurde nichts geändert.", true); return; }
+    closeAll();
+    receive(r.data.version, r.data.state, true);
+    toast("Spielstand vom " + backupWhen(b.savedAt) + " wiederhergestellt.");
+    loadSrvBackups();
   }
   // Fehlerprotokoll (data/client-errors.log auf dem Server): die letzten 30 Einträge, neueste zuerst
   function viewErrors() {
@@ -4218,8 +4340,7 @@
   async function startSim() {
     if (app.sim && app.sim.active) { toast("Die Simulation läuft schon.", true); return; }
     if (!(await confirmBox("Testspiel simulieren?", "Euer echter Spielstand samt Erinnerungsfotos wird vorher gesichert und mit „Simulation beenden“ exakt wiederhergestellt – für alle Handys.", "Weiter"))) { backToSettings("sim"); return; }
-    if (!app.online) await poll();
-    if (!app.online) { toast(OFFLINE_MSG, true); return; }
+    if (!(await needOnline())) return;
     const names = teamNames().length ? teamNames() : players().slice(0, 3);
     const st = L.simulateGame(C, rand32(), Math.round(serverNow()), names);
     const r = await api("sim/start", { method: "POST", body: { state: st, by: app.name } }).catch(() => null);
@@ -4244,6 +4365,7 @@
   }
   async function stopSim() {
     if (!(await confirmBox("Simulation beenden?", "Alle Testdaten (Spielstand und Testfotos) werden gelöscht und euer echter Spielstand wird exakt wiederhergestellt – für alle Handys.", "Beenden"))) return;
+    if (!(await needOnline())) return;
     const r = await api("sim/stop", { method: "POST" }).catch(() => null);
     if (!r || r.status !== 200) { toast("Beenden ging nicht" + (r && r.data && r.data.error ? ": " + r.data.error : " (offline?)."), true); return; }
     closeAll();
@@ -4391,6 +4513,7 @@
     const show = () => { // nach den Animationen (Region erkundet schließt die Fenster; Banner abwarten)
       if (!questDone(id) || memFor(id)) return;
       if ($(".banner, .big-celebration") && tries++ < 8) { setTimeout(show, 700); return; }
+      if (!app.online) { toast(MEM_OFFLINE, false, 6000); return; } // ohne Netz kein Hochladen: Hinweis statt Angebot
       openModal(() => '<h2>' + icon("camera") + " Erinnerungsfoto hinzufügen?</h2>" +
         '<p class="muted">„' + esc(questTitle(id)) + "“ ist erledigt. Ein Foto dazu – für euren Urlaubs-Rückblick.</p>" +
         '<div class="grid2 mem-offer"><button class="btn btn-ghost" id="mo-no">Überspringen</button><button class="btn btn-primary" id="mo-yes">' + icon("camera") + " Foto hinzufügen</button></div>",
@@ -4660,12 +4783,12 @@
   }
 
   // ------------------------------------------------------------------ Effekte
-  function toast(msg, err) {
+  function toast(msg, err, ms) {
     const t = document.createElement("div");
     t.className = "toast" + (err ? " err" : "");
     t.textContent = msg;
     $("#toast-root").appendChild(t);
-    setTimeout(() => t.remove(), err ? 4200 : 2800);
+    setTimeout(() => t.remove(), ms || (err ? 4200 : 2800));
   }
   function banner(title, sub) {
     const b = document.createElement("div");
@@ -4801,7 +4924,9 @@
     if (t.dataset.swap) return doSwap(t.dataset.swap);
     if (t.dataset.mult) return doMult(t.dataset.mult);
     if (t.dataset.undo) return undo(Number(t.dataset.undo));
+    if (t.dataset.srvRestore) return restoreSrvBackup(t.dataset.srvRestore);
     switch (t.id) {
+      case "srv-backups-all": app.srvBackupsAll = true; return render();
       case "buy-joker": {
         const rid = $("#joker-region").value;
         return confirmBox("Region-Joker kaufen?", IX.regions[rid].name + " gilt dann als erkundet (ohne 100 Punkte). Kosten: 150 Punkte. Region-Joker: 0 von 1 genutzt.", "Kaufen (150)")
@@ -4875,5 +5000,7 @@
     if (!files.length) return;
     loadImg(files[0]).then(() => { BRAND.file = files[0]; BRAND.img = null; renderBrand(); }, () => loadLogo(files.slice(1)));
   })(["images/logo.svg", "images/logo.png"]);
+  // Service Worker (public/sw.js): Seite lässt sich auch ohne Netz neu laden
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => { /* z. B. ohne https: dann eben nicht */ });
   if (app.token && app.name) start(); else showLogin();
 })();

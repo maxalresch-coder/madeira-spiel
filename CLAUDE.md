@@ -33,7 +33,7 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
    oder die Spielstand-Struktur ändern (dann `SCHEMA` in logic.js erhöhen → App zeigt automatisch „Neue Spielinhalte“).
 Konfiguration in der WSGI-Datei (`pythonanywhere_wsgi.py`): `MADEIRA_PASSWORD`, `MADEIRA_LINK_KEY` (geheimer Link-Teil).
 Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Mitspieler: `data/team.json`, Fotos der Hilfsmittel: `data/photos/`,
-Erinnerungsfotos: `data/memories/` + `data/memories.json`, während einer Test-Simulation der echte Stand in `data/sim-backup/` (alles nicht in git). Details: ANLEITUNG.md.
+Erinnerungsfotos: `data/memories/` + `data/memories.json`, automatische Sicherungen: `data/backups/`, während einer Test-Simulation der echte Stand in `data/sim-backup/` (alles nicht in git). Details: ANLEITUNG.md.
 
 ## Fehlerprotokoll (bei Problemen ZUERST hier nachsehen)
 - Jeder Fehler beim Foto-Upload wird vom Handy automatisch an den Server gemeldet (`POST api/client-error`, ohne Netz in
@@ -99,11 +99,27 @@ Vertrauensbasis, keine Beweisfotos.
 - Ränge nach **verdienten** Punkten (nicht Kontostand): Landstreicher ab 0, Abenteurer ab 700, Inselkönig ab 1.500 (fest).
 - Rückgängig für alles (nicht Meilensteine/Reset/Ende); gleiche Ergebnisse bei Wiederholung (Würfe/Stapel beim Start fest).
   Punkte immer aus dem Spielstand berechnet. Aktivitäten (früher „Logbuch“) mit Zeit + Name. Reset gilt für alle, Rückfrage „Abbrechen“/„Weiter“ (ohne Eintippen).
-- **Offline-Schutz** (app.js): Server nicht erreichbar (Netz weg, Zeitüberschreitung, 5xx) → roter Streifen unter der Kopfzeile
-  „Offline – Änderungen werden nicht gespeichert“, `body.is-offline`; speichernde Knöpfe (`SAVING_BUTTONS`: Abhaken, Rückgängig,
-  Tausch, Multiplikator, Käufe, Ende, Reset, Wiederherstellen) sind ausgegraut und zeigen beim Antippen einen Hinweis. Ansehen
-  geht weiter. Polling läuft weiter; ist der Server zurück, verschwindet der Streifen und der komplette Stand wird neu geladen.
-  Schlägt das Speichern fehl → Fehlermeldung „… Die Aktion wurde NICHT ausgeführt.“, lokaler Stand bleibt unverändert.
+- **Ohne Netz spielen** (app.js, Abschnitt „Offline-Anzeige“/`flushPending`; Logik `L.replay` in logic.js, getestet):
+  Abhaken (regional/Stapel), Käufe (Region-Joker, Tausch, Multiplikator), Rückgängig (`QUEUED` in `act`) und alle
+  Hilfsmittel-Eingaben (`toolDo`) gehen auch offline: sofort lokal angewendet (`enqueue`) und in der **Offline-Warteschlange**
+  `app.pending` gemerkt (localStorage `pending`, übersteht Neuladen; je Eintrag `uid`, `seed`, `by`, Zeit in Serverzeit).
+  Angezeigt wird immer `app.state` = Server-Stand `app.base` + Warteschlange (`withPending`). `flushPending` (nach jeder
+  Änderung, nach erfolgreichem `poll`, bei „online“) spielt die Warteschlange **in der richtigen Reihenfolge** auf dem
+  neuesten Server-Stand nach und speichert; Konflikt (409) → mit neuem Stand wiederholen. **Zusammenführen:** was nicht
+  mehr passt (anderes Handy war schneller: Quest schon erledigt, Joker/Multiplikator weg, schon rückgängig), wird
+  übersprungen + Meldung „… von unterwegs nicht übernommen“ und Fehlerprotokoll („Konflikt zusammengeführt“); Punkte
+  werden immer aus dem Ergebnis berechnet → nie doppelt. Schon übernommene Einträge (Antwort verloren) erkennt
+  `state.uids` (letzte 400) und wendet sie nicht doppelt an. Log-Einträge bekommen `uid`; Rückgängig zielt per `refUid`
+  (Nummern ändern sich beim Zusammenführen). Änderungen aus einem früheren Spiel (anderer `seed`, z. B. Reset) werden
+  verworfen. Letzter Server-Stand liegt in localStorage `base` → App startet auch ohne Netz. **Service Worker**
+  (`public/sw.js`, Netz zuerst, nach 6 s bzw. ohne Netz die gespeicherte Kopie; `api/…` nie zwischengespeichert): Seite
+  lädt auch offline neu. Anzeige: dezenter Streifen unter der Kopfzeile „Offline – X Änderungen warten“ (`syncBar`,
+  `body.is-offline`), danach kurz grün „Synchronisiert“. **Nur mit Netz** (`needOnline`: vorher Warteschlange übertragen;
+  Knöpfe `SAVING_BUTTONS` offline ausgegraut + Hinweis `OFFLINE_MSG`): Reset, Urlaub beenden/fortsetzen, Wiederherstellen
+  (Datei und Server-Sicherung), Simulation starten/beenden, Fotos (Hilfsmittel und Erinnerungsfotos). **Erinnerungsfotos
+  offline:** werden nicht zwischengespeichert (Android beendet den Browser bei Speichermangel, nicht zuverlässig) →
+  Hinweis `MEM_OFFLINE` („… mit der Kamera-App machen und später aus der Galerie hinzufügen“) im Foto-Fenster und statt
+  des Angebots nach dem Abhaken. Geprüft mit zwei Handys (Playwright `setOffline`, auch beide gleichzeitig offline, Neuladen offline).
 - **Datum/Uhrzeit erledigter Quests:** `state.quests[id]` bzw. `state.done[id]` = `{by, t}`; `act` rechnet mit **Serverzeit**
   (`serverNow()`), damit alle Handys dieselbe Zeit speichern (für Erinnerungsfotos/Urlaubs-Rückblick). Rückgängig löscht den Eintrag.
 - **Erinnerungsfotos** (app.js Abschnitt „Erinnerungsfotos“, server.py `_save_memory` …): je erledigter Quest (regional und Stapel)
@@ -132,9 +148,18 @@ Vertrauensbasis, keine Beweisfotos.
 - **Spielstand sichern/wiederherstellen** (Einstellungen, Abschnitt „Spielstand sichern“): lädt `operacao-madeira-JJJJ-MM-TT.json`
   herunter (`{app, savedAt, savedBy, version, state}`); Wiederherstellen prüft die Datei (`isCompatible`), fragt deutlich nach
   (überschreibt für alle Handys) und speichert sie als neuen Stand (nur online).
+- **Automatische Server-Sicherungen** (server.py `_auto_backup`, `data/backups/`): **kein Hintergrundprozess** (läuft auf
+  kostenlosem PythonAnywhere nicht zuverlässig) – ausgelöst beim Speichern einer Änderung (`POST api/state`), wenn die
+  letzte automatische Sicherung älter als eine Stunde ist (`BACKUP_EVERY`, zum Testen `MADEIRA_BACKUP_EVERY` in Sekunden);
+  älter als 7 Tage → gelöscht; nicht während einer Simulation; nur der Spielstand (keine Fotos). Datei
+  `state-<UTC JJJJMMTT-HHMMSS>-v<Version>-r<regional>-s<Stapel>-<auto|vorher>.json`. `GET api/backups` (Liste),
+  `POST api/backups/restore {id}`: sichert vorher den aktuellen Stand („vorher“), setzt die Sicherung mit neuer Version
+  ein (alle Handys laden neu), Erinnerungsfotos bleiben. Oberfläche: Einstellungen → Spielstand sichern → „Automatische
+  Sicherungen“ (`srvBackupsHTML`, neueste 10 + „Alle … anzeigen“, Datum/Uhrzeit + Anzahl Quests), Wiederherstellen per
+  `confirmBox` „Abbrechen“/„Weiter“ (`restoreSrvBackup`, nur online).
 - **Hilfsmittel (Tools)** für einzelne regionale Quests und Stapel-Quests (`public/tools.js` = Liste `TOOLS` mit `label`/`icon` + reine Logik,
   getestet; Oberfläche in app.js). Zustand in `state.tools[questId]` (gleicher Server-Speicher wie der Spielstand,
-  Warteschlange + Konflikt-Wiederholung, offline gesperrt); Reset löscht sie (newGame hat kein `tools`). Zeiten in
+  Offline-Warteschlange `app.pending` wie Abhaken, geht auch ohne Netz); Reset löscht sie (newGame hat kein `tools`). Zeiten in
   **Serverzeit** (`now` in den API-Antworten → `app.clockOffset`), daher synchron auf allen Handys, auch nach Neuladen.
   **Regeln für alle (auch künftige) Hilfsmittel:**
   - Freiwillig; haken **nie** ab, geben **keine Punkte**; „Geschafft!“/„Daneben“ nur als Anzeige.
@@ -435,7 +460,7 @@ Vertrauensbasis, keine Beweisfotos.
 ## Aufbau und Gestaltung
 - Dateien: `server.py` (stdlib-WSGI), `public/logic.js` (Regeln), `public/app.js` (UI), `public/content.js` (Quests, Pins
   `pin:[lat,lon]`, `maps` = Google-Maps-Suchname oder null = Koordinaten, optional `mapsUrl` fester Link, optional `link` = Text in der Aufgabe als Link, `height` = Höhe für „Höhe schätzen“),
-  `public/tools.js` (Hilfsmittel), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `public/bay-map.js`
+  `public/tools.js` (Hilfsmittel), `public/sw.js` (Service Worker, offline neu laden), `public/icons.js` (Lucide, Inline-SVG), `public/figures.js` (Rang-Figuren), `public/map-data.js`, `public/bay-map.js`
   (Buchten-Karte, erzeugt von `tools/buchten_karte.py`), `public/roads.js` (Straßennetz für den Rückblick, erzeugt von
   `tools/strassen_netz.py`), `tests/logic.test.js`.
 - Kopfzeile: links Schriftzug „Operação Madeira“ (Bebas Neue + goldener Kompass, einzeilig, Größe passt sich an),
