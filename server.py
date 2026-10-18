@@ -364,8 +364,101 @@ def _dir_bytes(folder):
 
 def _mem_info(conf):
     doc = _load_mem(conf)
-    return {"v": doc.get("v", 0), "items": doc["items"], "bytes": _dir_bytes(_mem_dir(conf)),
+    return {"v": doc.get("v", 0), "items": doc["items"], "cert": doc.get("cert"), "bytes": _dir_bytes(_mem_dir(conf)),
             "dataBytes": _dir_bytes(conf["data_dir"])}
+
+
+def _save_cert(conf, ids):
+    """Fotos für die Urkunde (Einstellungen → Erinnerungsfotos, vor der Urkunde): bis zu 6 Quest-IDs, für alle Handys."""
+    if not isinstance(ids, list) or len(ids) > 6 or not all(isinstance(i, str) and QUEST_ID.fullmatch(i) for i in ids):
+        return "Bitte höchstens 6 Fotos."
+    with _lock:
+        doc = _load_mem(conf)
+        doc["cert"] = list(dict.fromkeys(ids))
+        _save_mem(conf, doc)
+    return None
+
+
+# ---------------------------------------------------------------- Test-Simulation
+# „Testspiel simulieren“ (Einstellungen): Der echte Stand (state.json, memories.json, Erinnerungsfotos, Hilfsmittel-Fotos)
+# wird nach data/sim-backup/ verschoben, dann gilt der vom Handy erzeugte Test-Spielstand (für alle Handys).
+# „Simulation beenden“ löscht alle Simulationsdaten und holt den echten Stand unverändert zurück (nur die Versionsnummern
+# werden erhöht, damit jedes Handy neu lädt). Solange data/sim-backup/ existiert, ist die Simulation aktiv.
+SIM_ITEMS = ("state.json", "memories.json", "memories", "photos")
+
+
+def _sim_dir(conf):
+    return os.path.join(conf["data_dir"], "sim-backup")
+
+
+def _sim_info(conf):
+    try:
+        with open(os.path.join(_sim_dir(conf), "sim.json"), encoding="utf-8") as f:
+            info = json.load(f)
+        return {"active": True, "since": info.get("since"), "by": info.get("by", "")}
+    except (OSError, ValueError):
+        return {"active": os.path.isdir(_sim_dir(conf))}
+
+
+def _remove(path):
+    import shutil
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
+    elif os.path.exists(path):
+        os.remove(path)
+
+
+def _sim_start(conf, state, by):
+    import shutil
+    if os.path.isdir(_sim_dir(conf)):
+        return "Es läuft schon eine Simulation."
+    if not isinstance(state, dict) or not isinstance(state.get("log"), list):
+        return "Ungültiger Test-Spielstand."
+    with _lock:
+        real = _load(conf)
+        real_v = _load_mem(conf).get("v", 0)
+        tmp = _sim_dir(conf) + ".tmp"
+        _remove(tmp)
+        os.makedirs(tmp)
+        for name in SIM_ITEMS:  # echter Stand: Dateien kopieren bzw. Ordner verschieben
+            src = os.path.join(conf["data_dir"], name)
+            if os.path.isdir(src):
+                shutil.move(src, os.path.join(tmp, name))
+            elif os.path.exists(src):
+                shutil.copy2(src, os.path.join(tmp, name))
+        with open(os.path.join(tmp, "sim.json"), "w", encoding="utf-8") as f:
+            json.dump({"since": _now_ms(), "by": " ".join(str(by or "").split())[:24], "version": real["version"], "memv": real_v}, f)
+        os.replace(tmp, _sim_dir(conf))
+        _remove(os.path.join(conf["data_dir"], "memories.json"))
+        _save(conf, {"version": real["version"] + 1, "state": state})
+        _save_mem(conf, {"v": real_v + 1, "items": {}, "cert": None})
+    return None
+
+
+def _sim_stop(conf):
+    import shutil
+    backup = _sim_dir(conf)
+    if not os.path.isdir(backup):
+        return "Es läuft keine Simulation."
+    with _lock:
+        sim_v = _load(conf)["version"]
+        sim_mv = _load_mem(conf).get("v", 0)
+        for name in SIM_ITEMS:  # alle Simulationsdaten löschen
+            _remove(os.path.join(conf["data_dir"], name))
+        for name in SIM_ITEMS:  # echten Stand zurückholen
+            src = os.path.join(backup, name)
+            if os.path.exists(src):
+                shutil.move(src, os.path.join(conf["data_dir"], name))
+        real = _load(conf)
+        if real.get("state") is not None:  # Inhalt unverändert, nur neue Versionsnummer
+            _save(conf, {"version": max(sim_v, real["version"]) + 1, "state": real["state"]})
+        else:
+            _remove(_state_path(conf))
+        mem = _load_mem(conf)
+        mem["v"] = max(sim_mv, mem.get("v", 0))
+        _save_mem(conf, mem)
+        _remove(backup)
+    return None
 
 
 def _clean_label(text):
@@ -422,8 +515,9 @@ def _clear_memories(conf):
     """Kompletter Reset: alle Erinnerungsfotos löschen."""
     with _lock:
         doc = _load_mem(conf)
-        if doc["items"]:
+        if doc["items"] or doc.get("cert") is not None:
             doc["items"] = {}
+            doc["cert"] = None
             _save_mem(conf, doc)
     folder = _mem_dir(conf)
     if os.path.isdir(folder):
@@ -585,6 +679,22 @@ def _api(path, environ, start_response, conf):
 
     if path == "memories" and method == "GET":
         return _json(start_response, "200 OK", _mem_info(conf))
+    if path == "memories/cert" and method == "POST":
+        err = _save_cert(conf, (_read_body(environ) or {}).get("ids"))
+        if err:
+            return _json(start_response, "400 Bad Request", {"error": err})
+        return _json(start_response, "200 OK", _mem_info(conf))
+    if path == "sim/start" and method == "POST":
+        body = _read_body(environ) or {}
+        err = _sim_start(conf, body.get("state"), body.get("by"))
+        if err:
+            return _json(start_response, "409 Conflict", {"error": err})
+        return _json(start_response, "200 OK", dict(_load(conf), now=_now_ms(), sim=_sim_info(conf)))
+    if path == "sim/stop" and method == "POST":
+        err = _sim_stop(conf)
+        if err:
+            return _json(start_response, "409 Conflict", {"error": err})
+        return _json(start_response, "200 OK", dict(_load(conf), now=_now_ms(), sim=_sim_info(conf)))
     if path.startswith("memory/") and method == "POST":
         parts = path[7:].split("/")
         if not QUEST_ID.fullmatch(parts[0]) or len(parts) > 2 or (len(parts) == 2 and parts[1] != "delete"):
@@ -654,9 +764,9 @@ def _api(path, environ, start_response, conf):
         if since is not None and since == doc["version"]:
             return _json(start_response, "200 OK", {"version": doc["version"], "unchanged": True, "now": _now_ms(),
                                                     "players": _load_players(conf), "team": _load_team(conf),
-                                                    "memv": _load_mem(conf).get("v", 0)})
+                                                    "memv": _load_mem(conf).get("v", 0), "sim": _sim_info(conf)})
         return _json(start_response, "200 OK", dict(doc, now=_now_ms(), players=_load_players(conf), team=_load_team(conf),
-                                                    memv=_load_mem(conf).get("v", 0)))
+                                                    memv=_load_mem(conf).get("v", 0), sim=_sim_info(conf)))
 
     if path == "state" and method == "POST":
         body = _read_body(environ)
@@ -673,7 +783,7 @@ def _api(path, environ, start_response, conf):
         if reset:
             _clear_memories(conf)  # kompletter Reset: auch alle Erinnerungsfotos weg
         return _json(start_response, "200 OK", {"version": doc["version"], "now": _now_ms(),
-                                                "memv": _load_mem(conf).get("v", 0)})
+                                                "memv": _load_mem(conf).get("v", 0), "sim": _sim_info(conf)})
 
     return _not_found(start_response)
 

@@ -66,6 +66,7 @@
     if (data && Array.isArray(data.players)) app.players = data.players;
     if (data && data.team && Array.isArray(data.team.names)) app.team = data.team;
     if (data && typeof data.memv === "number" && data.memv !== app.memv && app.token) loadMemories(data.memv); // Erinnerungsfotos geändert
+    if (data && data.sim) setSim(data.sim); // Test-Simulation aktiv? (Band für alle Handys)
     if (logIt && res.status >= 400 && res.status !== 409 && !(res.status === 401 && path === "login")) {
       reportError("Server-Anfrage", { name: "HTTP " + res.status, message: label + (data && data.error ? ": " + data.error : "") });
     }
@@ -311,7 +312,7 @@
   }
 
   const VIEWS = { home: viewHome, shop: viewShop, log: viewLog, stats: viewStats, settings: viewSettings,
-    help: viewHelp, player: viewPlayer, team: viewTeam, backup: viewBackup, errors: viewErrors, photos: viewPhotos, end: viewEnd, reset: viewReset };
+    help: viewHelp, player: viewPlayer, team: viewTeam, backup: viewBackup, errors: viewErrors, photos: viewPhotos, end: viewEnd, sim: viewSim, reset: viewReset };
   // Inhalt einer Seite (auch für die Vorschau beim Wischen)
   function pageHTML(view, s) {
     const body = app.state.ended && view === "stats" ? viewEnded(s) : VIEWS[view](s);
@@ -424,7 +425,7 @@
   }
 
   // Unterseiten der Einstellungen (Abbrechen einer Sicherheitsabfrage führt dorthin zurück)
-  const SETTINGS_PAGES = ["help", "player", "team", "backup", "photos", "errors", "end", "reset"];
+  const SETTINGS_PAGES = ["help", "player", "team", "backup", "photos", "errors", "end", "sim", "reset"];
   const backToSettings = (view) => { if (app.view === view) go("settings"); };
 
   // Bereiche (Shop, Erfolge, Aktivitäten, Einstellungen und ihre Unterseiten) öffnen sich als eigene Seite; die Zurück-Taste
@@ -1105,8 +1106,8 @@
     const n = ts.count || 0, pct = Math.min(100, Math.round(n / cfg.target * 100));
     return '<div class="cnt' + (n >= cfg.target ? " done" : "") + '"><div class="cnt-prog"><span class="cnt-num">' + n + "</span> von " + cfg.target + " " + esc(cfg.unit) + "</div>" +
       '<div class="cnt-bar"><i style="width:' + pct + '%"></i></div>' + (n >= cfg.target ? goalNote() : "") +
-      '<div class="cnt-row"><button class="btn btn-ghost cnt-minus" data-tool-act="dec" aria-label="Minus 1"' + (n ? "" : " disabled") + ">−1</button>" +
-      '<button class="btn btn-primary cnt-plus" data-tool-act="inc" aria-label="Plus 1">+1</button></div></div>' +
+      '<div class="cnt-row"><button class="btn btn-ghost cnt-minus" data-tool-act="dec" data-hold="cnt-:' + qid + '" aria-label="Minus 1"' + (n ? "" : " disabled") + ">−1</button>" +
+      '<button class="btn btn-primary cnt-plus" data-tool-act="inc" data-hold="cnt+:' + qid + '" aria-label="Plus 1">+1</button></div></div>' +
       (T.hasTimer(cfg) ? '<div class="cnt-timer"><div class="tool-label">' + icon("timer") + " Timer: " + (cfg.minutes === 60 ? "1 Stunde" : cfg.minutes + " Minuten") + "</div>" + timerBody(qid, cfg, ts, now, false) + "</div>" : "");
   }
   function timerBody(qid, cfg, ts, now, big) {
@@ -1247,8 +1248,8 @@
         if (now < end) {
           return h + '<div class="tool-count-row" data-until="' + end + '"><div class="tool-clock"><div class="tool-big" data-tick="down" data-fmt="s" data-end="' + end + '">' + secs(end - now) + '</div><div class="muted small">Sekunden</div></div>' +
             '<div class="tool-clock"><div class="tool-big">' + (ts.count || 0) + '</div><div class="muted small">gezählt</div></div></div>' +
-            tBtn("inc", icon("plus") + " 1 Auto", "btn-primary btn-block tool-tap tool-plus", ' data-d="1"') +
-            tBtn("inc", icon("minus") + " 1 (Korrektur)", "btn-ghost btn-block", ' data-d="-1"');
+            tBtn("inc", icon("plus") + " 1 Auto", "btn-primary btn-block tool-tap tool-plus", ' data-d="1" data-hold="car+:' + qid + '"') +
+            tBtn("inc", icon("minus") + " 1 (Korrektur)", "btn-ghost btn-block", ' data-d="-1" data-hold="car-:' + qid + '"');
         }
         return h + tResult(res.ok, "Gezählt: <strong>" + res.count + "</strong> · Schätzung " + ts.guess + " · " + res.diff + " daneben (erlaubt: höchstens " + cfg.tolerance + ")") +
           tBtn("newRound", icon("rotate-ccw") + (res.ok ? " Zurücksetzen" : " Neue Runde – für die nächste Minute neu schätzen"), (res.ok ? "btn-ghost" : "btn-primary") + " btn-block");
@@ -1432,8 +1433,8 @@
           : '<div class="term' + (guessed[i] ? " ok" : "") + '">' + inner + "</div>";
       }).join("") + "</div>";
     if (ph === 2) {
-      if ((ts.tips || 0) < cfg.maxTips) h += tBtn("tip", icon("plus") + " 1 Tipp", "btn-primary btn-block tool-tap", ' data-d="1"');
-      h += tBtn("tip", icon("minus") + " 1 Tipp (Korrektur)", "btn-ghost btn-block", ' data-d="-1"' + ((ts.tips || 0) ? "" : " disabled"));
+      if ((ts.tips || 0) < cfg.maxTips) h += tBtn("tip", icon("plus") + " 1 Tipp", "btn-primary btn-block tool-tap", ' data-d="1" data-hold="tip+:' + qid + '"');
+      h += tBtn("tip", icon("minus") + " 1 Tipp (Korrektur)", "btn-ghost btn-block", ' data-d="-1" data-hold="tip-:' + qid + '"' + ((ts.tips || 0) ? "" : " disabled"));
       if (!ts.revealed) h += peekBtn(qid) + revealBtn(ts);
     }
     return h + newRoundBtn(!!res && !res.ok, res && !res.ok ? "Neue Runde – fünf neue Begriffe" : "Neue Runde");
@@ -2383,7 +2384,7 @@
   const ERR_WINDOW = 60000;
   const errSeen = {};
   const PAGE_NAMES = { home: "Startseite", shop: "Shop", stats: "Erfolge", log: "Aktivitäten", settings: "Einstellungen", help: "Spielanleitung",
-    player: "Spieler", team: "Mitspieler", backup: "Spielstand sichern", errors: "Fehlerprotokoll", photos: "Erinnerungsfotos", end: "Urlaub beenden", reset: "Reset" };
+    player: "Spieler", team: "Mitspieler", backup: "Spielstand sichern", errors: "Fehlerprotokoll", photos: "Erinnerungsfotos", end: "Urlaub beenden", sim: "Testspiel", reset: "Reset" };
   function whereNow() {
     const top = app.modals.slice().reverse().find((m) => m.where);
     return "Seite: " + (PAGE_NAMES[app.view] || app.view) + (top ? " · " + top.where : "") + (tour.on ? " · Einführung" : "");
@@ -3434,6 +3435,7 @@
         setRow("photos", "image", "Erinnerungsfotos", memStorage() + " · alle herunterladen") +
         setRow("errors", "bug", "Fehlerprotokoll", "Fehler der App und beim Foto-Upload – zum Weiterschicken") +
         setRow("end", "flag", "Urlaub beenden & Belohnungen", app.state.ended ? "Urlaub beendet – Belohnungen & Zertifikat" : "Restpunkte umtauschen, Zertifikat", "set-end") +
+        setRow("sim", "shuffle", "Testspiel simulieren", app.sim && app.sim.active ? "Simulation läuft gerade" : "Zufälliges Testspiel – euer echter Stand wird gesichert") +
       "</div>" +
       '<div class="set-danger">' + setRow("reset", "rotate-ccw", "Kompletter Reset", "Alles auf null – für alle Handys", "set-reset") + "</div>";
   }
@@ -3599,13 +3601,18 @@
     return names;
   }
 
+  // Ablauf: „Urlaub beenden“ → Urlaubs-Rückblick (überspringbar) → Punkte auf Belohnungen verteilen → Fotos für die
+  // Urkunde wählen → Urkunde (bei den Erfolgen)
   async function startEnd() {
-    if (!(await confirmBox("Urlaub beenden?", "Die Restpunkte werden jetzt in Belohnungen umgetauscht. Danach gibt es das Zertifikat. (Falls nötig, kann man den Urlaub später fortsetzen.)", "Weiter"))) { backToSettings("end"); return; }
+    if (!(await confirmBox("Urlaub beenden?", "Zuerst kommt euer Urlaubs-Rückblick, danach werden die Restpunkte in Belohnungen umgetauscht und ihr wählt die Fotos für die Urkunde. (Falls nötig, kann man den Urlaub später fortsetzen.)", "Weiter"))) { backToSettings("end"); return; }
+    startRecap(() => openRewards());
+  }
+  function openRewards(prev) {
     const s = sum();
     const rest = Math.max(0, s.balance);
-    const alloc = {};
-    C.rewards.forEach((r) => { alloc[r.id] = 0; });
-    let names = players().slice(0, 3).join(", ");
+    const alloc = (prev && prev.alloc) || {};
+    C.rewards.forEach((r) => { alloc[r.id] = alloc[r.id] || 0; });
+    let names = prev ? prev.names : players().slice(0, 3).join(", ");
     const remaining = () => rest - C.rewards.reduce((a, r) => a + (alloc[r.id] || 0), 0);
     let finished = false;
     const em = openModal(() => {
@@ -3619,14 +3626,14 @@
           return '<div class="reward"><div><strong>' + esc(r.name) + '</strong><span class="tag tag-' + r.type + '">' + r.type + "</span></div>" +
             (r.desc ? '<div class="muted small">' + esc(r.desc) + "</div>" : "") +
             '<div class="muted small">100 Punkte = ' + r.per100 + " " + (r.per100 === 1 ? r.unit : (r.unitPlural || r.unit)) + " · Schritte: " + r.step + "</div>" +
-            '<div class="stepper"><button class="btn" data-minus="' + r.id + '" aria-label="weniger">−</button>' +
+            '<div class="stepper"><button class="btn" data-minus="' + r.id + '" data-hold="r-:' + r.id + '" aria-label="weniger">−</button>' +
             '<input inputmode="numeric" data-amount="' + r.id + '" value="' + v + '" aria-label="Punkte für ' + esc(r.name) + '">' +
-            '<button class="btn" data-plus="' + r.id + '" aria-label="mehr">+</button></div>' +
+            '<button class="btn" data-plus="' + r.id + '" data-hold="r+:' + r.id + '" aria-label="mehr">+</button></div>' +
             '<div class="live">' + fmt(v) + " Punkte = " + L.formatReward(r, v) + " " + esc(r.name) + "</div>" +
             (r.rules ? '<div class="muted small">' + esc(r.rules) + "</div>" : "") + "</div>";
         }).join("") +
         '<p class="muted small">Wie die Belohnungen unter euch aufgeteilt werden, regelt ihr selbst – die App rechnet nur um.</p>' +
-        '<div class="modal-actions"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-good" id="finish" ' + (rem !== 0 ? "disabled" : "") + ">Abschließen</button></div>";
+        '<div class="modal-actions"><button class="btn btn-ghost" data-close>Abbrechen</button><button class="btn btn-good" id="finish" ' + (rem !== 0 ? "disabled" : "") + ">Weiter: Fotos für die Urkunde</button></div>";
     }, (el, refresh) => {
       $("#end-names", el).addEventListener("input", (ev) => { names = ev.target.value; });
       const setV = (id, v) => { alloc[id] = Math.max(0, Math.round(v)); refresh(); };
@@ -3647,12 +3654,12 @@
         Object.keys(alloc).forEach((k) => { if (alloc[k] > 0) clean[k] = alloc[k]; });
         clean._players = names.trim();
         clean._rest = rest;
-        if (await act({ type: "end", alloc: clean })) {
-          finished = true;
-          closeAll();
-          go("stats");
-          startRecap(() => confetti(200)); // Urlaubs-Rückblick, danach Belohnungen & Zertifikat
-        }
+        finished = true;
+        closeModal();
+        chooseCertPhotos(async () => { // Fotos gewählt → Urlaub beenden, Urkunde bei den Erfolgen
+          if (await act({ type: "end", alloc: clean })) { closeAll(); go("stats"); confetti(200); return true; }
+          return false;
+        }, () => openRewards({ alloc, names }));
       });
     }, { keepScroll: true });
     em.onClose = () => { if (!finished) backToSettings("end"); }; // Verteilen abgebrochen
@@ -3712,11 +3719,11 @@
     if (recapRun) return;
     const R = L.recap(app.state, C);
     const shown = R.events.filter((e) => e.kind !== "joker").length;
-    const D = Math.max(1400, Math.min(4500, 75000 / Math.max(1, shown))); // gesamt ≈ 60–90 s bei vielen Quests
-    const INTRO = 1200;
+    const D = Math.max(650, Math.min(2600, 38000 / Math.max(1, shown))); // zügig: gesamt ≈ 30–45 s bei vollem Spiel
+    const INTRO = 700;
     let t = INTRO;
     R.events.forEach((e) => { e.start = t; e.dur = e.kind === "joker" ? 0 : D; t += e.dur; });
-    const total = t + 600;
+    const total = t + 400;
     const el = document.createElement("div");
     el.className = "recap";
     el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Urlaubs-Rückblick");
@@ -3743,7 +3750,7 @@
       if (im.decode) im.decode().catch(() => {});
       thumbs[e.id] = im.src;
     });
-    let lastPin = null, stackN = 0;
+    let lastPin = null, stackN = 0, segN = 0;
     const NS = "http://www.w3.org/2000/svg";
     const svgEl = (tag, attrs) => { const n = document.createElementNS(NS, tag); Object.keys(attrs).forEach((k) => n.setAttribute(k, attrs[k])); return n; };
     const setLevels = (lv) => C.regions.forEach((r) => { const p = $('[data-rc-region="' + r.id + '"]', svg); if (p) p.setAttribute("fill", L.LEVELS[lv[r.id]].color); });
@@ -3754,11 +3761,19 @@
       if (e.kind === "joker") { setLevels(e.levels); return; }
       if (e.kind === "quest") {
         const q = IX.quests[e.id], xy = toMap(q.pin[0], q.pin[1]);
-        if (lastPin) {
-          const len = Math.hypot(xy[0] - lastPin[0], xy[1] - lastPin[1]) || 1;
-          e.line = svgEl("line", { x1: lastPin[0], y1: lastPin[1], x2: xy[0], y2: xy[1], "stroke-dasharray": len, "stroke-dashoffset": len });
+        if (lastPin) { // sanft geschwungene Verbindung (Straßenrouten waren nicht abrufbar), abwechselnd nach links/rechts
+          const dx = xy[0] - lastPin[0], dy = xy[1] - lastPin[1], d = Math.hypot(dx, dy) || 1, side = (segN++ % 2 ? 1 : -1) * 0.22;
+          const cx = (lastPin[0] + xy[0]) / 2 - dy / d * d * side, cy = (lastPin[1] + xy[1]) / 2 + dx / d * d * side;
+          let len = 0, px = lastPin[0], py = lastPin[1];
+          for (let k = 1; k <= 16; k++) { // Länge der Kurve (für das Nachzeichnen)
+            const u = k / 16, qx = (1 - u) * (1 - u) * lastPin[0] + 2 * (1 - u) * u * cx + u * u * xy[0], qy = (1 - u) * (1 - u) * lastPin[1] + 2 * (1 - u) * u * cy + u * u * xy[1];
+            len += Math.hypot(qx - px, qy - py); px = qx; py = qy;
+          }
+          len = Math.max(1, len);
+          const dPath = "M" + lastPin[0].toFixed(1) + " " + lastPin[1].toFixed(1) + "Q" + cx.toFixed(1) + " " + cy.toFixed(1) + " " + xy[0].toFixed(1) + " " + xy[1].toFixed(1);
+          e.lines = ["rc-halo", "rc-path"].map((cls) => svgEl("path", { d: dPath, class: cls, "stroke-dasharray": len, "stroke-dashoffset": len }));
           e.len = len;
-          lineG.appendChild(e.line);
+          e.lines.forEach((n) => lineG.appendChild(n));
         }
         lastPin = xy;
         e.xy = xy;
@@ -3782,8 +3797,8 @@
           (e.factor ? ' <span class="pill mult-badge">' + L.fmtFactor(e.factor) + "</span>" : "") +
           "<strong>" + esc(q.title) + '</strong><span class="rc-card-pts">+' + e.points + " Punkte · Tag " + e.day + "</span></div>" +
           (it ? '<img src="' + it + '" alt="">' : "") + "</div>";
-        e.rot = ((h % 1700) / 100) - 8.5;                      // −8,5° … +8,5°
-        e.ox = (((h >>> 8) % 101) - 50); e.oy = (((h >>> 16) % 81) - 40);
+        e.rot = ((h % 1201) / 10) - 60;                        // −60° … +60° (nie kopfüber), wie auf einen Stapel geworfen
+        e.ox = (((h >>> 8) % 141) - 70); e.oy = (((h >>> 16) % 91) - 45);
         c.style.zIndex = 1 + stackN;
         c.style.willChange = "transform, opacity";
         cards.appendChild(c);
@@ -3796,14 +3811,14 @@
       const pts = prevEarned(i) + (e.earned - prevEarned(i)) * ease(clamp01((p - 0.3) / 0.35));
       $(".rc-pts", el).textContent = fmt(pts);
       if (e.kind === "quest") {
-        if (e.line) e.line.setAttribute("stroke-dashoffset", (e.len * (1 - ease(clamp01(p / 0.35)))).toFixed(1));
-        if (p >= 0.35 && !e.colored) { e.colored = true; setLevels(e.levels); dotG.appendChild(svgEl("circle", { cx: e.xy[0], cy: e.xy[1], r: 9, class: "rc-dot" })); }
-        const a = clamp01((p - 0.3) / 0.12), z = clamp01((1 - p) / 0.12);
+        if (e.lines) { const off = (e.len * (1 - ease(clamp01(p / 0.3)))).toFixed(1); e.lines.forEach((n) => n.setAttribute("stroke-dashoffset", off)); }
+        if (p >= 0.3 && !e.colored) { e.colored = true; setLevels(e.levels); dotG.appendChild(svgEl("circle", { cx: e.xy[0], cy: e.xy[1], r: 9, class: "rc-dot" })); }
+        const a = clamp01((p - 0.25) / 0.1), z = clamp01((1 - p) / 0.1);
         pop.style.opacity = Math.min(a, z).toFixed(3);
         pop.style.transform = "scale(" + (0.6 + 0.4 * ease(a)).toFixed(3) + ")";
       } else {
         const f = ease(clamp01(p / 0.45)), W = cards.clientWidth;
-        const x = e.ox + (1 - f) * (W * 0.75), y = e.oy - (1 - f) * 260, r = e.rot + (1 - f) * 28, sc = 1 + (1 - f) * 0.15;
+        const x = e.ox + (1 - f) * (W * 0.75), y = e.oy - (1 - f) * 260, r = e.rot + (1 - f) * (e.rot < 0 ? -40 : 40), sc = 1 + (1 - f) * 0.15;
         e.card.style.transform = "translate(-50%,-50%) translate3d(" + x.toFixed(1) + "px," + y.toFixed(1) + "px,0) rotate(" + r.toFixed(2) + "deg) scale(" + sc.toFixed(3) + ")";
         e.card.style.opacity = clamp01(p / 0.12).toFixed(3);
         if (f >= 1 && !e.landed) { e.landed = true; stackN++; $(".rc-count span", el).textContent = stackN; e.card.style.willChange = "auto"; }
@@ -3868,10 +3883,53 @@
   // auch in Safari) – dadurch bleibt das PDF handlich.
   const CERT_W = 1188, CERT_H = 840, CERT_CELL = 100, CERT_GAP = 8;
   const certCache = { key: null, photos: [], loading: null };
-  function certPhotoIds() { // bis zu 6 Fotos, gleichmäßig über den Urlaub verteilt
-    const ids = visibleMems().sort((a, b) => ((app.state.quests[a] || app.state.done[a]).t - (app.state.quests[b] || app.state.done[b]).t));
-    if (ids.length <= 6) return ids;
-    return [0, 1, 2, 3, 4, 5].map((i) => ids[Math.round(i * (ids.length - 1) / 5)]);
+  // Fotos für die Urkunde: gespeicherte Auswahl (Einstellungen → Erinnerungsfotos bzw. vor der Urkunde, für alle Handys);
+  // noch nie gewählt → die ersten 6 Fotos chronologisch
+  const chronoMems = () => visibleMems().sort((a, b) => ((app.state.quests[a] || app.state.done[a]).t - (app.state.quests[b] || app.state.done[b]).t));
+  function certPhotoIds() {
+    const c = app.mem && app.mem.cert;
+    return Array.isArray(c) ? c.filter((id) => memFor(id)).slice(0, 6) : chronoMems().slice(0, 6);
+  }
+  function certPickHTML(sel) {
+    const ids = chronoMems();
+    return '<div class="cp-head"><strong>Fotos für die Urkunde</strong><span class="cp-count">' + sel.length + " von 6</span></div>" +
+      (ids.length ? '<div class="cp-grid">' + ids.map((id) => {
+        const on = sel.indexOf(id) >= 0;
+        return '<button class="cp-tile' + (on ? " on" : "") + '" data-cp="' + id + '" aria-pressed="' + on + '" aria-label="' + esc(questTitle(id)) + '">' + memThumb(memFor(id)) +
+          '<span class="cp-check">' + (on ? icon("check") : "") + '</span><span class="mem-cap">' + esc(questTitle(id)) + "</span></button>";
+      }).join("") + "</div>" : '<p class="muted small">Noch keine Erinnerungsfotos.</p>');
+  }
+  function toggleCertSel(sel, id) {
+    const i = sel.indexOf(id);
+    if (i >= 0) sel.splice(i, 1);
+    else if (sel.length >= 6) { toast("Höchstens 6 Fotos – erst eines abwählen.", true); return false; }
+    else sel.push(id);
+    return true;
+  }
+  async function saveCertSel(sel) {
+    const r = await api("memories/cert", { method: "POST", body: { ids: sel } }).catch(() => null);
+    if (!r || r.status !== 200) { toast("Auswahl nicht gespeichert (offline?).", true); return false; }
+    setMem(r.data);
+    return true;
+  }
+  // Vor der Urkunde: dieselbe Auswahl, vorbelegt mit der Vorauswahl aus den Einstellungen
+  function chooseCertPhotos(onDone, onBack) {
+    if (!chronoMems().length) { onDone(); return; }
+    const sel = certPhotoIds().slice();
+    let done = false;
+    const m = openModal(() => '<div class="modal-head"><h2>' + icon("image") + " Fotos für die Urkunde</h2><button class=\"modal-close\" data-close aria-label=\"Zurück\">" + icon("x") + "</button></div>" +
+      '<p class="muted small">Bis zu 6 Erinnerungsfotos kommen als kleine Collage auf die Urkunde. Antippen wählt aus oder ab.</p>' + certPickHTML(sel) +
+      '<div class="modal-actions"><button class="btn btn-ghost" id="cp-back">' + icon("arrow-left") + ' Zurück</button><button class="btn btn-good" id="cp-ok">' + icon("check") + " Urkunde erstellen</button></div>",
+    (el, refresh) => {
+      $$("[data-cp]", el).forEach((b) => b.addEventListener("click", () => { if (toggleCertSel(sel, b.dataset.cp)) refresh(); }));
+      $("#cp-back", el).addEventListener("click", () => closeModal());
+      $("#cp-ok", el).addEventListener("click", async () => {
+        if (!(await saveCertSel(sel))) return;
+        done = true;
+        if (!(await onDone())) done = false;
+      });
+    }, { where: "Fotos für die Urkunde" });
+    m.onClose = () => { if (!done) onBack(); };
   }
   function loadCertPhotos() {
     const ids = certPhotoIds(), key = ids.map((id) => app.mem.items[id].f).join(",");
@@ -3924,15 +3982,17 @@
       slots.map((p, i) => (withImages ? '<image href="' + photos[i] + '" x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" preserveAspectRatio="xMidYMid slice" clip-path="url(#cp' + i + ')"/>' : "") +
         '<rect x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" rx="10" fill="none" stroke="#e5b53b" stroke-width="2"/>').join("") +
       t(800 + (3 * CERT_CELL + 2 * CERT_GAP) / 2, 298 + (photos.length > 3 ? 2 : 1) * (CERT_CELL + CERT_GAP) + 14, "Erinnerungen", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') : "";
-    // Statistiken (6 Kästen)
-    const stats = [[fmt(s.earned), "Punkte (" + pct + " % von " + fmt(s.maxPoints) + ")"], [lv[3] + " · " + lv[2] + " · " + lv[1], "Regionen erschl. · erob. · erk."],
-      [s.doneStack + " / " + C.stackQuests.length, "Stapel-Quests"], [String(R.days), R.days === 1 ? "Tag" : "Tage"],
-      [s.bestMult ? L.fmtFactor(s.bestMult) : "–", "bester Multiplikator"], [nfmt1(R.km) + " km", "Luftlinie"]];
-    const bw = (W - 140 - 5 * 12) / 6;
+    // Statistiken (4 Kästen, ohne Doppelungen zum oberen Teil): regionale Quests, Stapel-Quests, Urlaubstage, fleißigster Tag
+    const busy = L.busiestDay(st);
+    const busyTxt = busy ? new Date(busy.day + "T12:00:00").toLocaleDateString("de-DE", { weekday: "short", day: "numeric", month: "long" }) : "–";
+    const stats = [[s.questsDone + " von 30", "Regionale Quests"], [s.doneStack + " von " + C.stackQuests.length, "Stapel-Quests"],
+      [String(R.days), R.days === 1 ? "Urlaubstag" : "Urlaubstage"],
+      [busyTxt, "Fleißigster Tag" + (busy ? " · " + busy.count + (busy.count === 1 ? " Quest" : " Quests") : "")]];
+    const bw = (W - 140 - 3 * 16) / 4;
     const statsG = stats.map(([v, l], i) => {
-      const x = 70 + i * (bw + 12);
+      const x = 70 + i * (bw + 16);
       return '<rect x="' + x + '" y="552" width="' + bw + '" height="78" rx="12" fill="#ffffff" stroke="#e3ddd1" stroke-width="1.5"/>' +
-        t(x + bw / 2, 588, v, 26, 'text-anchor="middle" font-weight="700" fill="#0b5f78"') + t(x + bw / 2, 614, l, 13, 'text-anchor="middle" fill="#5f6f76"');
+        t(x + bw / 2, 588, v, i === 3 ? 22 : 26, 'text-anchor="middle" font-weight="700" fill="#0b5f78"') + t(x + bw / 2, 614, l, 14, 'text-anchor="middle" fill="#5f6f76"');
     }).join("");
     // Gutscheine (bei mehr als 2 in zwei Spalten)
     const two = vouchers.length > 2, rows = two ? Math.ceil(vouchers.length / 2) : vouchers.length;
@@ -3988,6 +4048,94 @@
     pdf.addImage(canvas.toDataURL("image/jpeg", 0.85), "JPEG", 0, 0, 297, 210);
     canvas.width = 0; canvas.height = 0;
     pdf.save("Madeira-Zertifikat.pdf");
+  }
+
+  // ---- Test-Simulation (Einstellungen → Testspiel simulieren): Der Server sichert den echten Stand komplett (Spielstand,
+  // Erinnerungsfotos, Hilfsmittel-Fotos) und setzt einen zufälligen, regelgerechten Test-Spielstand (L.simulateGame) ein;
+  // dazu mindestens 7 erzeugte Platzhalter-Erinnerungsfotos. Band „Simulation aktiv“ auf allen Handys; „Simulation beenden“
+  // holt den echten Stand exakt zurück und löscht alle Simulationsdaten.
+  function setSim(sim) {
+    const was = !!(app.sim && app.sim.active);
+    app.sim = sim;
+    const band = $("#sim-band");
+    if (band) band.hidden = !sim.active;
+    document.body.classList.toggle("sim-on", !!sim.active);
+    if (was !== !!sim.active && app.state && (app.view === "settings" || app.view === "sim")) render();
+  }
+  function viewSim() {
+    const on = app.sim && app.sim.active;
+    return pageHead("shuffle", "Testspiel simulieren") +
+      '<div class="panel set-panel">' +
+        (on ? '<p style="margin:0"><strong>Die Simulation läuft.</strong> Alles, was ihr jetzt macht, ist nur ein Test. Euer echter Spielstand ist sicher gespeichert.</p>' +
+            '<button class="btn btn-danger btn-block" id="sim-stop">' + icon("rotate-ccw") + " Simulation beenden</button>"
+          : '<p style="margin:0">Erzeugt ein zufälliges Testspiel über 7 Tage – mit Regionen in allen Stufen, Stapel-Quests, Multiplikatoren, Jokern, ein paar rückgängig gemachten Aktionen und mindestens 7 Test-Erinnerungsfotos. Damit könnt ihr z. B. „Urlaub beenden“ ausprobieren.</p>' +
+            '<p class="muted small" style="margin:0">Vorher wird euer echter Spielstand samt Erinnerungsfotos automatisch gesichert. „Simulation beenden“ (Band oben) stellt ihn exakt wieder her – für alle Handys.</p>' +
+            '<button class="btn btn-primary btn-block" id="sim-btn">' + icon("shuffle") + " Testspiel simulieren</button>") +
+      "</div>";
+  }
+  // Platzhalter-Foto: farbiger Landschafts-Verlauf (Himmel, Sonne, Berge, Meer) mit dem Quest-Namen
+  function simPhoto(title, hue) {
+    const c = document.createElement("canvas"), W = 1000, H = 667;
+    c.width = W; c.height = H;
+    const g = c.getContext("2d"), hsl = (h, s, l) => "hsl(" + ((h % 360) + 360) % 360 + "," + s + "%," + l + "%)";
+    let gr = g.createLinearGradient(0, 0, 0, H * 0.6);
+    gr.addColorStop(0, hsl(hue, 70, 62)); gr.addColorStop(1, hsl(hue + 35, 75, 88));
+    g.fillStyle = gr; g.fillRect(0, 0, W, H);
+    g.fillStyle = hsl(hue + 50, 95, 82); g.beginPath(); g.arc(W * (0.2 + (hue % 60) / 100), H * 0.25, 70, 0, Math.PI * 2); g.fill();
+    [[0.42, 0.55, 45], [0.52, 0.62, 32], [0.6, 0.7, 22]].forEach(([top, base, l], k) => {
+      g.fillStyle = hsl(hue + 140 + k * 12, 35, l);
+      g.beginPath(); g.moveTo(0, H);
+      for (let x = 0; x <= W; x += 50) g.lineTo(x, H * (top + 0.08 * Math.sin(x / (90 + k * 40) + hue + k)));
+      g.lineTo(W, H); g.closePath(); g.fill();
+    });
+    gr = g.createLinearGradient(0, H * 0.78, 0, H);
+    gr.addColorStop(0, hsl(200, 70, 45)); gr.addColorStop(1, hsl(210, 75, 25));
+    g.fillStyle = gr; g.fillRect(0, H * 0.8, W, H * 0.2);
+    g.font = "700 46px Inter, system-ui, sans-serif"; g.textAlign = "center"; g.fillStyle = "#fff";
+    g.shadowColor = "rgba(0,0,0,.5)"; g.shadowBlur = 8;
+    g.fillText(String(title).slice(0, 34), W / 2, H * 0.9);
+    g.font = "600 24px Inter, system-ui, sans-serif"; g.fillText("Testfoto", W / 2, H * 0.9 - 54);
+    return new Promise((res) => c.toBlob((b) => { c.width = 0; c.height = 0; res(b); }, "image/jpeg", 0.8));
+  }
+  async function startSim() {
+    if (app.sim && app.sim.active) { toast("Die Simulation läuft schon.", true); return; }
+    const typed = await promptBox("Testspiel simulieren?", "Euer echter Spielstand samt Erinnerungsfotos wird vorher gesichert und mit „Simulation beenden“ exakt wiederhergestellt – für alle Handys. Tippe zur Bestätigung TEST ein:", "TEST");
+    if (typed !== "TEST") { if (typed !== null) toast("Abgebrochen – nicht richtig eingetippt.", true); backToSettings("sim"); return; }
+    if (!app.online) await poll();
+    if (!app.online) { toast(OFFLINE_MSG, true); return; }
+    const names = teamNames().length ? teamNames() : players().slice(0, 3);
+    const st = L.simulateGame(C, rand32(), Math.round(serverNow()), names);
+    const r = await api("sim/start", { method: "POST", body: { state: st, by: app.name } }).catch(() => null);
+    if (!r || r.status !== 200 || !r.data.state) { toast("Simulation konnte nicht starten" + (r && r.data && r.data.error ? ": " + r.data.error : " (offline?)."), true); return; }
+    closeAll();
+    receive(r.data.version, r.data.state, true);
+    // Mindestens 7 Test-Erinnerungsfotos (regionale und Stapel-Quests gemischt)
+    const done = T.shuffle(Object.keys(st.quests).concat(Object.keys(st.done)), rand32);
+    const n = Math.min(done.length, 7 + T.randomInt(4, rand32));
+    let ok = 0;
+    const prog = document.createElement("div"); // eine Fortschrittsmeldung statt vieler
+    prog.className = "toast";
+    $("#toast-root").appendChild(prog);
+    for (let i = 0; i < n; i++) {
+      prog.textContent = "Testfotos werden erzeugt … " + (i + 1) + " von " + n;
+      try { await saveMemory(done[i], await simPhoto(questTitle(done[i]), T.randomInt(360, rand32)), true); ok++; } catch (e) { reportError("Simulation", e); }
+    }
+    prog.remove();
+    await loadMemories();
+    go("home");
+    toast("Simulation läuft – " + ok + " Testfotos. Beenden über das Band oben.");
+  }
+  async function stopSim() {
+    if (!(await confirmBox("Simulation beenden?", "Alle Testdaten (Spielstand und Testfotos) werden gelöscht und euer echter Spielstand wird exakt wiederhergestellt – für alle Handys.", "Beenden"))) return;
+    const r = await api("sim/stop", { method: "POST" }).catch(() => null);
+    if (!r || r.status !== 200) { toast("Beenden ging nicht" + (r && r.data && r.data.error ? ": " + r.data.error : " (offline?)."), true); return; }
+    closeAll();
+    certCache.key = null; app.certSel = null;
+    if (r.data.state) receive(r.data.version, r.data.state, true);
+    else { app.version = r.data.version; app.state = null; render(); poll(); }
+    await loadMemories();
+    go("home");
+    toast("Simulation beendet – euer echter Spielstand ist zurück.");
   }
 
   // ---- Reset
@@ -4054,6 +4202,7 @@
   }
   function setMem(data) {
     app.mem = data; app.memv = data.v;
+    app.certSel = null; // Auswahl für die Urkunde neu aus dem Server-Stand
     if (photoBusy() || toolUI.dragging || mapUI.active) { toolUI.refreshPending = true; return; }
     if (app.state && L.isCompatible(app.state, C)) render();
   }
@@ -4078,14 +4227,14 @@
       return out;
     } finally { c.width = 0; c.height = 0; img.removeAttribute("src"); URL.revokeObjectURL(url); }
   }
-  async function saveMemory(id, small) {
+  async function saveMemory(id, small, quiet) {
     let thumb;
     try { thumb = await makeThumb(small); } catch (e) { throw new PhotoError("shrink", e.name || "Fehler", "Vorschaubild: " + (e.message || ""), "Bitte „Erneut versuchen“."); }
     const url = "api/memory/" + encodeURIComponent(id) + "?tl=" + thumb.size + "&label=" + encodeURIComponent(memLabel(id)) + "&by=" + encodeURIComponent(app.name || "");
     const data = await uploadPhoto(new Blob([thumb, small], { type: "image/jpeg" }), url);
     delete toolUI.memReplace[id];
     if (data && data.items) setMem(data);
-    toast("Erinnerungsfoto gespeichert.");
+    if (!quiet) toast("Erinnerungsfoto gespeichert.");
   }
   toolUI.memReplace = {};
   function memoryBody(qid) {
@@ -4160,7 +4309,9 @@
         '<p class="muted small" style="margin:0">Dateinamen: Datum_Region_Quest.jpg</p>' +
       "</div>" +
       (ids.length ? '<div class="mem-grid">' + ids.map((id) => '<button class="mem-tile" data-mem="' + id + '">' + memThumb(memFor(id)) +
-        '<span class="mem-cap">' + esc(questTitle(id)) + "</span></button>").join("") + "</div>"
+        '<span class="mem-cap">' + esc(questTitle(id)) + "</span></button>").join("") + "</div>" +
+        '<div class="panel set-panel cp-panel">' + certPickHTML(app.certSel || (app.certSel = certPhotoIds().slice())) +
+        '<p class="muted small" style="margin:0">Vorauswahl für die Urkunde – vor der Urkunde könnt ihr sie noch ändern. Gilt für alle Handys.</p></div>'
         : '<p class="muted small">Noch keine Erinnerungsfotos.</p>');
   }
   function memStorage() {
@@ -4231,6 +4382,38 @@
   window.addEventListener("resize", () => { if (tour.on) tourPlace(); });
   window.addEventListener("scroll", () => { if (tour.on) tourPlace(); }, { passive: true });
   document.addEventListener("keydown", (ev) => { if (tour.on && ev.key === "Escape") endTour(); });
+
+  // ---- Plus/Minus gedrückt halten (alle Knöpfe mit data-hold): kurzes Tippen wie bisher (normaler Klick); nach 0,45 s
+  // gedrückt wird wiederholt ausgelöst, nach einigen Schritten schneller; Loslassen, Abbrechen oder Verschieben stoppt sofort.
+  // Ausgelöst wird jeweils der aktuelle Knopf mit derselben Kennung (er wird beim Neuzeichnen ersetzt) – so gelten alle
+  // Grenzen der normalen Klick-Funktion. Kein Markieren/Kontextmenü (CSS + contextmenu).
+  const hold = { t: null, sig: null, x: 0, y: 0, n: 0, until: 0 };
+  function holdStop() {
+    if (hold.t) clearTimeout(hold.t);
+    if (hold.n) hold.until = Date.now() + 450; // der abschließende echte Klick zählt nicht mehr mit
+    hold.t = null; hold.sig = null; hold.n = 0;
+  }
+  document.addEventListener("pointerdown", (ev) => {
+    const b = ev.target.closest && ev.target.closest("[data-hold]");
+    if (!b || b.disabled || (ev.button != null && ev.button > 0)) return;
+    holdStop();
+    hold.sig = b.dataset.hold; hold.x = ev.clientX; hold.y = ev.clientY; hold.until = 0;
+    const step = () => {
+      const all = $$('[data-hold="' + hold.sig + '"]'), cur = all[all.length - 1];
+      if (!cur || cur.disabled) { holdStop(); return; }
+      hold.n++;
+      cur.click();
+      hold.t = setTimeout(step, hold.n < 6 ? 150 : hold.n < 20 ? 75 : 35);
+    };
+    hold.t = setTimeout(step, 450);
+  }, true);
+  ["pointerup", "pointercancel"].forEach((t) => document.addEventListener(t, holdStop, true));
+  document.addEventListener("pointermove", (ev) => { if (hold.sig && Math.hypot(ev.clientX - hold.x, ev.clientY - hold.y) > 12) holdStop(); }, true);
+  window.addEventListener("blur", holdStop);
+  document.addEventListener("click", (ev) => {
+    if (ev.isTrusted && hold.until > Date.now() && ev.target.closest && ev.target.closest("[data-hold]")) { hold.until = 0; ev.preventDefault(); ev.stopPropagation(); }
+  }, true);
+  document.addEventListener("contextmenu", (ev) => { if (ev.target.closest && ev.target.closest("[data-hold]")) ev.preventDefault(); });
 
   // ------------------------------------------------------------------ Modals
   function openModal(renderFn, bindFn, opts) {
@@ -4493,6 +4676,11 @@
     if (t.dataset.region) return openRegion(t.dataset.region);
     if (t.dataset.done) { const id = t.dataset.done; return act({ type: "stack", questId: id }, { fxFrom: t }).then((ok) => ok && offerMemory(id)); }
     if (t.dataset.mem) return openMemory(t.dataset.mem);
+    if (t.dataset.cp) { // Einstellungen → Fotos für die Urkunde: sofort für alle speichern
+      const sel = app.certSel || (app.certSel = certPhotoIds().slice());
+      if (toggleCertSel(sel, t.dataset.cp)) { render(); saveCertSel(sel).then((ok) => { if (!ok) { app.certSel = null; render(); } }); }
+      return;
+    }
     if (t.dataset.openQ) return IX.quests[t.dataset.openQ] ? openQuest(t.dataset.openQ) : openStackQuest(t.dataset.openQ);
     if (t.dataset.swap) return doSwap(t.dataset.swap);
     if (t.dataset.mult) return doMult(t.dataset.mult);
@@ -4520,6 +4708,8 @@
       case "rename-btn": return promptBox("Name ändern", "Unter diesem Namen erscheinen deine Aktionen bei den Aktivitäten.", app.name).then((n) => {
         if (n) { app.name = n.slice(0, 24); store.set("name", app.name); registerName(); render(); }
       });
+      case "sim-btn": return startSim();
+      case "sim-stop": return stopSim();
       case "tour-btn": go("home"); return setTimeout(startTour, 350);
       case "recap-btn": return startRecap();
       case "pdf-btn": return downloadPDF().catch(() => toast("PDF konnte nicht erstellt werden.", true));

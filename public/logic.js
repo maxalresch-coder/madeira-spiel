@@ -470,6 +470,63 @@
     return { events, earned, km, days: dayCount(state, Date.now()) };
   }
 
+  // Fleißigster Tag (für die Urkunde): Tag mit den meisten erledigten Quests (regional + Stapel); bei Gleichstand der frühere
+  function busiestDay(state) {
+    const n = {};
+    Object.values(state.quests).concat(Object.values(state.done)).forEach((x) => { const k = dayKey(x.t); n[k] = (n[k] || 0) + 1; });
+    let best = null;
+    Object.keys(n).sort().forEach((k) => { if (!best || n[k] > best.count) best = { day: k, count: n[k] }; });
+    return best;
+  }
+
+  // ---------------------------------------------------------------- Test-Simulation
+  // Zufälliger, aber regelgerechter Spielstand über ~7 Tage (Einstellungen → Testspiel simulieren): Jede Aktion läuft über
+  // apply(), Punkte stimmen also immer. Regionen in allen Stufen gemischt (in ~30 % der Fälle ganz Madeira erkundet),
+  // Stapel-Quests, Multiplikatoren, Tausch- und Region-Joker, einige rückgängig gemachte Aktionen.
+  function simulateGame(content, seed, now, names) {
+    const rand = mulberry32(seed);
+    const pick = (arr) => arr[Math.floor(rand() * arr.length)];
+    const DAY = 86400000, start = new Date(dayKey(now - 6 * DAY) + "T08:30:00").getTime();
+    let s = newGame(content, seed, start);
+    names = names && names.length ? names : ["Spieler 1", "Spieler 2", "Spieler 3"];
+    const all = content.regions.reduce((a, r) => a.concat(r.quests.map((q) => q.id)), []);
+    const explore = rand() < 0.3;
+    const plan = [];
+    if (explore) content.regions.forEach((r) => plan.push(pick(r.quests).id));
+    const extra = all.filter((id) => plan.indexOf(id) < 0).sort(() => rand() - 0.5);
+    plan.push.apply(plan, extra.slice(0, (explore ? 4 : 11) + Math.floor(rand() * 9)));
+    plan.sort(() => rand() - 0.5);
+    const acts = plan.map((id) => ({ type: "quest", questId: id }));
+    const stacks = 6 + Math.floor(rand() * 7);
+    for (let i = 0; i < stacks; i++) acts.splice(Math.floor(rand() * (acts.length + 1)), 0, { type: "stackAny" });
+    for (let i = 0; i < 3; i++) acts.splice(Math.floor(rand() * acts.length) + 1, 0, { type: "multAny" });
+    for (let i = 0; i < 2; i++) acts.splice(Math.floor(rand() * acts.length) + 1, 0, { type: "swapAny" });
+    if (rand() < 0.7) acts.splice(Math.floor(acts.length * (0.4 + rand() * 0.5)), 0, { type: "jokerAny" });
+    for (let i = 0, n = 2 + Math.floor(rand() * 3); i < n; i++) acts.splice(Math.floor(acts.length * (0.2 + rand() * 0.8)), 0, { type: "undoAny" });
+    // Zeitpunkte: aufsteigend, je Tag zwischen 8:30 und 21:00
+    const times = acts.map(() => start + Math.floor(rand() * 7) * DAY + Math.floor(rand() * 12.5 * 3600000)).sort((a, b) => a - b)
+      .map((t) => Math.min(t, now - 60000));
+    acts.forEach((a, i) => {
+      let action = a;
+      const openIds = s.open.filter(Boolean);
+      if (a.type === "stackAny") action = openIds.length && { type: "stack", questId: pick(openIds) };
+      else if (a.type === "multAny") action = openIds.length && { type: "mult", questId: pick(openIds) };
+      else if (a.type === "swapAny") action = openIds.length && { type: "swap", questId: pick(openIds) };
+      else if (a.type === "jokerAny") {
+        const free = content.regions.filter((r) => regionLevel(s, content, r.id) === 0);
+        action = free.length && { type: "joker", regionId: pick(free).id };
+      } else if (a.type === "undoAny") {
+        const can = s.log.filter((e) => canUndo(e) && e.type !== "joker");
+        action = can.length && { type: "undo", logId: pick(can).id };
+      }
+      if (!action) return;
+      try { s = apply(s, content, action, pick(names), Math.max(times[i], s.log.length ? s.log[s.log.length - 1].t + 1000 : start)); } catch (e) {
+        if (!(e instanceof GameError)) throw e; // z. B. zu wenig Punkte: Aktion auslassen
+      }
+    });
+    return s;
+  }
+
   function canUndo(entry) {
     return !entry.undone && ["quest", "stack", "joker", "swap", "mult"].indexOf(entry.type) >= 0;
   }
@@ -493,7 +550,7 @@
   const api = {
     STACK_POINTS, SCHEMA, PRICES, MAX_MULTS, MAX_SWAPS, MADEIRA_BONUS, MAX_POINTS, RANKS, LEVELS, MILESTONES, GameError,
     newGame, apply, summary, regionLevel, regionQuestCount, regionPoints, stackBase, stackPoints, isCompatible, regionProgress, rankProgress, maxPoints,
-    canUndo, dayCount, pointsPerDay, recap, distanceKm, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
+    canUndo, dayCount, pointsPerDay, recap, distanceKm, busiestDay, simulateGame, mulberry32, multFreeSlot, rewardValue, formatReward, fmtFactor, index, hash
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.GameLogic = api;

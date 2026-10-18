@@ -971,8 +971,11 @@ a.btn { text-decoration: none; text-align: center; justify-content: center; }
 .rc-map { position: relative; margin: 0 10px; flex: 0 0 auto; }
 .rc-map svg { display: block; width: 100%; height: auto; }
 .rc-regions path { stroke: rgba(255, 255, 255, .85); stroke-width: 1.5; vector-effect: non-scaling-stroke; transition: fill .45s ease; }
-.rc-line line { stroke: var(--gold); stroke-width: 2.5; vector-effect: non-scaling-stroke; stroke-linecap: round; fill: none; }
-.rc-dot { fill: #fff; stroke: var(--gold); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+/* Verbindungslinie: dunkles Ozeanblau mit hellem Rand – gut sichtbar auf allen Stufenfarben und auf dem Meer */
+.rc-line path { fill: none; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.rc-line .rc-halo { stroke: #ffffff; stroke-width: 6.5; opacity: .95; }
+.rc-line .rc-path { stroke: #073b4c; stroke-width: 3; }
+.rc-dot { fill: #ffffff; stroke: #073b4c; stroke-width: 3; vector-effect: non-scaling-stroke; }
 .rc-pop { position: absolute; display: flex; gap: 8px; align-items: center; width: min(250px, 72%); padding: 7px 10px 7px 7px;
   background: var(--surface); color: var(--ink); border-radius: 12px; box-shadow: 0 8px 22px rgba(0, 0, 0, .35); will-change: transform, opacity; pointer-events: none; }
 .rc-pop img, .rc-pop-ic { width: 52px; height: 52px; border-radius: 9px; object-fit: cover; flex: 0 0 auto; background: var(--sea); display: grid; place-items: center; color: var(--ocean); }
@@ -1016,3 +1019,25 @@ a.btn { text-decoration: none; text-align: center; justify-content: center; }
 .rc-sum-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
 .rc-sum-btns .btn { min-height: 44px; }
 @media (prefers-color-scheme: dark) { .rc-sum-in { color: var(--ink); } }
+
+/* ---------- Plus/Minus gedrückt halten: kein Markieren, kein Kontextmenü, kein Doppeltipp-Zoom ---------- */
+[data-hold] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
+.stepper input { -webkit-user-select: text; user-select: text; }
+
+/* ---------- Fotos für die Urkunde ---------- */
+.cp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin: 6px 0 8px; }
+.cp-count { font-weight: 700; color: var(--ocean); font-variant-numeric: tabular-nums; }
+.cp-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.cp-tile { position: relative; border: 2px solid transparent; padding: 0; background: var(--surface); border-radius: 12px; overflow: hidden; cursor: pointer; color: var(--ink); text-align: left; font: inherit; box-shadow: var(--shadow); }
+.cp-tile .mem-thumb { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--sea); }
+.cp-tile:not(.on) .mem-thumb { opacity: .55; }
+.cp-tile.on { border-color: var(--laurel); }
+.cp-check { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; border-radius: 50%; background: rgba(255, 255, 255, .85); border: 2px solid #fff; display: grid; place-items: center; box-shadow: 0 1px 4px rgba(0, 0, 0, .3); }
+.cp-tile.on .cp-check { background: var(--laurel); color: #fff; }
+.cp-check .ic { width: 16px; height: 16px; stroke-width: 3; }
+.cp-panel { margin-top: 14px; }
+
+/* ---------- Test-Simulation: deutlich sichtbares Band ---------- */
+.sim-band { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 16px; background: repeating-linear-gradient(135deg, #8a3fc7 0 14px, #7a33b5 14px 28px); color: #fff; font-size: .88rem; }
+.sim-band .ic { width: 16px; height: 16px; vertical-align: -3px; }
+.sim-band .btn { background: #fff; color: #5b1f8a; min-height: 40px; white-space: nowrap; flex: 0 0 auto; }

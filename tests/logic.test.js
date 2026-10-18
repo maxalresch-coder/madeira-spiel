@@ -64,6 +64,36 @@ assert.throws(() => act(s, { type: "quest", questId: "q-cal-1" }));
   assert(Math.abs(L.distanceKm([32.65, -16.9], [32.75, -16.9]) - 11.12) < 0.05);
 }
 
+// Fleißigster Tag
+{
+  const st = { quests: { a: { t: new Date("2026-05-02T10:00").getTime() }, b: { t: new Date("2026-05-03T10:00").getTime() } },
+    done: { c: { t: new Date("2026-05-03T18:00").getTime() } } };
+  assert.deepStrictEqual(L.busiestDay(st), { day: "2026-05-03", count: 2 });
+  assert.strictEqual(L.busiestDay({ quests: {}, done: {} }), null);
+}
+
+// Test-Simulation: regelgerecht, ~7 Tage, gemischte Stufen, Rückgängiges, Zeiten aufsteigend
+{
+  const now = Date.now();
+  let sawExplored = false, sawMixed = false;
+  for (let k = 1; k <= 30; k++) {
+    const st = L.simulateGame(C, k * 7919, now, ["A", "B", "C"]);
+    assert(L.isCompatible(st, C), "Simulation passt zum Spiel");
+    const sm = L.summary(st, C);
+    assert(sm.questsDone >= 7, "genug regionale Quests für 7 Erinnerungsfotos");
+    assert(sm.doneStack >= 3, "mehrere Stapel-Quests");
+    assert(st.log.some((e) => e.undone), "rückgängig gemachte Aktionen");
+    assert(L.dayCount(st, now) === 7, "über 7 Tage");
+    for (let i = 1; i < st.log.length; i++) assert(st.log[i].t >= st.log[i - 1].t, "Zeiten aufsteigend");
+    assert(st.log.every((e) => e.t <= now), "nichts in der Zukunft");
+    assert.strictEqual(L.recap(st, C).earned, sm.earned);
+    if (sm.allExplored) sawExplored = true;
+    const lv = new Set(C.regions.map((r) => sm.levels[r.id]));
+    if (lv.size >= 3) sawMixed = true;
+  }
+  assert(sawExplored && sawMixed, "mal ganz Madeira erkundet, meist gemischte Stufen");
+}
+
 // Shop-Sperre bei zu wenig Punkten
 assert.throws(() => act(s, { type: "joker", regionId: "funchal" }), /Nicht genug/);
 

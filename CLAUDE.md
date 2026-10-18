@@ -31,7 +31,7 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
    oder die Spielstand-Struktur ändern (dann `SCHEMA` in logic.js erhöhen → App zeigt automatisch „Neue Spielinhalte“).
 Konfiguration in der WSGI-Datei (`pythonanywhere_wsgi.py`): `MADEIRA_PASSWORD`, `MADEIRA_LINK_KEY` (geheimer Link-Teil).
 Spielstand: `data/state.json`, Spielernamen: `data/players.json`, Mitspieler: `data/team.json`, Fotos der Hilfsmittel: `data/photos/`,
-Erinnerungsfotos: `data/memories/` + `data/memories.json` (alles nicht in git). Details: ANLEITUNG.md.
+Erinnerungsfotos: `data/memories/` + `data/memories.json`, während einer Test-Simulation der echte Stand in `data/sim-backup/` (alles nicht in git). Details: ANLEITUNG.md.
 
 ## Fehlerprotokoll (bei Problemen ZUERST hier nachsehen)
 - Jeder Fehler beim Foto-Upload wird vom Handy automatisch an den Server gemeldet (`POST api/client-error`, ohne Netz in
@@ -363,30 +363,52 @@ Vertrauensbasis, keine Beweisfotos.
     Hinweis auf GPS-Ungenauigkeit. Region per `T.regionAt` (Punkt-in-Polygon mit den Gemeindegrenzen aus map-data.js).
   - Links (`LINKS` in tools.js, eigene Zeilen): „Aktuelle Ankünfte am Flughafen Madeira“ (Halb gelandet) → https://www.madeiraairport.pt/en/fnc/arrivals;
     „Die zehn UNESCO-Kriterien“ (Mit Lorbeeren und UNESCO gekrönt) → https://whc.unesco.org/en/criteria/.
-- Urlaub beenden: Restpunkte (verdient − ausgegeben) verteilen (+/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte), dann
-  **Urlaubs-Rückblick**, danach Belohnungen + Zertifikat (PDF) bei den Erfolgen.
-- **Urlaubs-Rückblick** (`startRecap` in app.js, Daten `L.recap(state, content)` in logic.js, getestet): startet nach
-  „Abschließen“ der Punkteverteilung; erneut über „Urlaubs-Rückblick abspielen“ in den Erfolgen (nach Urlaubsende,
-  `#recap-btn`). Ereignisse **streng chronologisch** nach `state.quests[id].t` / `state.done[id].t` (Gleichstand: Reihenfolge
-  der Aktivitäten); nur jetzt erledigte Quests, Rückgängiggemachtes fehlt ganz; der Region-Joker färbt seine Region zu seinem
-  Zeitpunkt (ohne Auftritt). Je Ereignis: `points` (inkl. Stufen/Insel-Bonus, Summe = verdiente Punkte), `earned`, `levels`,
-  `day` (1 = Spielbeginn), regional `km` (Luftlinie `L.distanceKm` zwischen den Pins nacheinander erledigter regionaler Quests).
-  Bild: Vollbild-Ebene `.recap` (z-index 95): oben Titel, „Tag X · Punkte“ (zählen mit), „Überspringen“; Inselkarte (eigene
-  Pfade ohne `data-region`): goldene Linie im Zickzack zum Ort der nächsten regionalen Quest (stroke-dashoffset), Region färbt
-  sich nach Stufe, kurzes Fenster (Titel, Region, Tag, +Punkte, Erinnerungsfoto-Vorschau, sonst Pin-Icon). Darunter „Tisch“
-  `.rc-table` mit Zähler: Stapel-Quest-Karte fliegt heran (Schwierigkeitsfarbe oben, Titel, Punkte, Multiplikator, kleines Foto)
-  und landet lesbar, leicht gedreht (±8,5°) und versetzt (fest aus `L.hash(id:seed)`), neue verdeckt ältere nur teilweise.
-  Eine Uhr per `requestAnimationFrame` (`run.vt`), nur transform/opacity/dashoffset; Pause (auch automatisch, wenn die Seite
-  in den Hintergrund geht), Tempo 0,5×–3× (−/+), Fortschrittsbalken; Dauer je Ereignis 75 s / Anzahl (1,4–4,5 s) → ~60–90 s
-  bei vielen Quests. Fotos werden vorab geladen/dekodiert. Ende: Zusammenfassung (Rang mit Figur, Punkte, Tage, Stapel-Quests,
-  regionale Quests, bester Multiplikator, Luftlinie, Regionen je Stufe) mit „Nochmal“/„Fertig“. Geprüft mit 4-fach
-  gedrosselter CPU bei 384×854.
-- **Zertifikat** (`certificateSVG(photos, withImages)`, 1188×840, A4 quer): Namen, Rang mit Figur (`certFigure`, Figur aus
-  figures.js mit festen Farben), kleine Inselkarte mit Stufenfarben + Legende, Collage aus bis zu 6 Erinnerungsfotos
-  (`certPhotoIds`: gleichmäßig über den Urlaub verteilt; Vorschaubilder als data-URL, `loadCertPhotos`, Cache `certCache`),
-  6 Statistik-Kästen (Punkte/%, Regionen je Stufe, Stapel-Quests, Tage, bester Multiplikator, Luftlinie), Gutscheine (ab 3 in zwei
-  Spalten). Vorschau bei den Erfolgen mit Fotos in der SVG; **PDF** (`downloadPDF`): SVG ohne Fotos ins Canvas (2×), Fotos
-  direkt aufs Canvas gezeichnet (sicher für Safari), JPEG 0,85 → ca. 250 KB.
+- **Urlaub beenden – Reihenfolge** (`startEnd`): Rückfrage → **Urlaubs-Rückblick** (überspringbar) → Restpunkte (verdient −
+  ausgegeben) auf Belohnungen verteilen (`openRewards`; +/−: Zeit-Belohnungen 5er-, zählbare 100er-Schritte; Knopf „Weiter: Fotos
+  für die Urkunde“) → **Fotos für die Urkunde** wählen (`chooseCertPhotos`, „Zurück“ führt mit den verteilten Punkten zur
+  Verteilung zurück; ohne Erinnerungsfotos entfällt der Schritt) → „Urkunde erstellen“ = Aktion `end` → Erfolge mit
+  Belohnungen + Zertifikat (PDF). Rückblick in den Erfolgen erneut abspielbar (`#recap-btn`).
+- **Plus/Minus gedrückt halten** (alle Knöpfe mit `data-hold="<Kennung>"`: Belohnungen, Zähler der Stapel-Quests, „+1 Auto“,
+  „+1 Tipp“ und die −-Knöpfe dazu): kurzes Tippen = normaler Klick; nach 0,45 s gedrückt wiederholt (150 → 75 → 35 ms),
+  Loslassen/Abbruch/Verschieben > 12 px stoppt sofort; ausgelöst wird der aktuelle Knopf mit derselben Kennung (`.click()`,
+  übersteht Neuzeichnen), dadurch gelten alle Grenzen der normalen Klick-Funktion (Restpunkte, Minimum 0); der echte Klick
+  beim Loslassen zählt nicht doppelt. CSS: kein Markieren, kein Kontextmenü (`-webkit-touch-callout`), `touch-action: manipulation`.
+- **Urlaubs-Rückblick** (`startRecap` in app.js, Daten `L.recap(state, content)` in logic.js, getestet): Ereignisse **streng
+  chronologisch** nach `state.quests[id].t` / `state.done[id].t` (Gleichstand: Reihenfolge der Aktivitäten); nur jetzt erledigte
+  Quests, Rückgängiggemachtes fehlt ganz; der Region-Joker färbt seine Region zu seinem Zeitpunkt (ohne Auftritt). Je Ereignis:
+  `points` (inkl. Stufen/Insel-Bonus, Summe = verdiente Punkte), `earned`, `levels`, `day` (1 = Spielbeginn), regional `km`
+  (Luftlinie `L.distanceKm` zwischen den Pins). **Zügig:** je Ereignis 38 s / Anzahl (0,65–2,6 s), Einstieg 0,7 s → ca. 30–45 s
+  bei vollem Spiel. Bild: Vollbild-Ebene `.recap` (z-index 95): oben Titel, „Tag X · Punkte“ (zählen mit), „Überspringen“;
+  Inselkarte (eigene Pfade ohne `data-region`): **sanft geschwungene Verbindung** (quadratische Kurve, abwechselnd nach links/
+  rechts gebogen) zum Ort der nächsten regionalen Quest – Straßenrouten (OSRM/OpenStreetMap) waren in der Arbeitsumgebung
+  gesperrt, daher keine echten Routen; Linie **dunkles Ozeanblau #073b4c mit weißem Rand** (`.rc-halo` + `.rc-path`, nie Gold –
+  das ist „Erschlossen“), per stroke-dashoffset nachgezeichnet; Region färbt sich nach Stufe; kurzes Fenster (Titel, Region, Tag,
+  +Punkte, Erinnerungsfoto-Vorschau, sonst Pin-Icon). Darunter „Tisch“ `.rc-table` mit Zähler: Stapel-Quest-Karte fliegt heran
+  (Schwierigkeitsfarbe oben, Titel, Punkte, Multiplikator, kleines Foto) und landet **zufällig gedreht −60° … +60°** (nie kopfüber)
+  und versetzt (±70/±45 px, fest aus `L.hash(id:seed)`), neue verdeckt ältere nur teilweise. Eine Uhr per
+  `requestAnimationFrame` (`run.vt`), nur transform/opacity/dashoffset; Pause (auch automatisch im Hintergrund), Tempo 0,5×–3×,
+  Fortschrittsbalken; Fotos vorab geladen/dekodiert. Ende: Zusammenfassung (Rang mit Figur, Punkte, Tage, Stapel-Quests,
+  regionale Quests, bester Multiplikator, Luftlinie, Regionen je Stufe) mit „Nochmal“/„Fertig“. Geprüft mit 4-fach gedrosselter
+  CPU bei 384×854.
+- **Fotos für die Urkunde**: bis zu 6 Erinnerungsfotos, Auswahl per Antippen mit Häkchen und „X von 6“ (`certPickHTML`), in den
+  Einstellungen → Erinnerungsfotos (sofort für alle gespeichert) und vor der Urkunde (vorbelegt). Server: `cert` in
+  `data/memories.json` (`POST api/memories/cert {ids}`, höchstens 6; Reset → `null`). `certPhotoIds()`: gespeicherte Auswahl
+  (nur sichtbare Fotos) bzw. – nie gewählt (`null`) – die ersten 6 chronologisch. Weniger als 6 (auch 0) erlaubt.
+- **Zertifikat** (`certificateSVG(photos, withImages)`, 1188×840, A4 quer): oben Titel, Datum, Bestätigungstext, Namen,
+  Rang mit Figur + Punkten (`certFigure`), Inselkarte mit Stufenfarben + Legende, Collage der gewählten Fotos; darunter genau
+  **4 Kästen**: „Regionale Quests X von 30“, „Stapel-Quests X von 26“, Urlaubstage, „Fleißigster Tag“ (Datum + Anzahl Quests,
+  `L.busiestDay`, getestet); unten Gutscheine (ab 3 in zwei Spalten). Vorschau bei den Erfolgen mit Fotos (data-URLs,
+  `loadCertPhotos`, Cache `certCache`); **PDF** (`downloadPDF`): SVG ohne Fotos ins Canvas (2×), Fotos direkt aufs Canvas
+  (sicher für Safari), JPEG 0,85 → ca. 270 KB.
+- **Test-Simulation** (Einstellungen → „Testspiel simulieren“, Unterseite `sim`, Bestätigung durch Eintippen von „TEST“):
+  Spielstand von `L.simulateGame(content, seed, now, names)` (logic.js, getestet: jede Aktion über `apply`, ~7 Tage 8:30–21 Uhr,
+  Regionen in allen Stufen, ~30 % ganz Madeira erkundet, 6–12 Stapel-Quests, Multiplikatoren, Tausch-/Region-Joker, 2–4
+  Rückgängig). Server `POST api/sim/start {state}`: verschiebt den **echten** Stand (state.json, memories.json, `memories/`,
+  `photos/`) nach `data/sim-backup/` (+ `sim.json`) und setzt den Test-Stand ein; danach lädt das Handy 7–10 erzeugte
+  Platzhalter-Erinnerungsfotos hoch (`simPhoto`: Landschafts-Verlauf mit Quest-Namen). Jede Spielstand-Antwort hat `sim`
+  → Band **„Simulation aktiv“** (`#sim-band`, lila gestreift) mit „Simulation beenden“ auf allen Handys (`setSim`).
+  `POST api/sim/stop`: löscht alle Simulationsdaten und holt den echten Stand unverändert zurück (nur Versionsnummern von
+  Spielstand und Fotoliste werden erhöht, damit alle Handys neu laden). Solange `data/sim-backup/` existiert, läuft die Simulation.
 
 ## Aufbau und Gestaltung
 - Dateien: `server.py` (stdlib-WSGI), `public/logic.js` (Regeln), `public/app.js` (UI), `public/content.js` (Quests, Pins
@@ -459,13 +481,13 @@ Vertrauensbasis, keine Beweisfotos.
   Kopfzeile zeigt die aktuelle Hauptseite (auf Unterseiten ausgeblendet). Seiteninhalt kommt aus `pageHTML(view)`.
 - **Navigation (Regel):** Bereiche Shop / Erfolge / Aktivitäten / Einstellungen (Views `shop`, `stats`, `log`, `settings`) haben
   oben „← Zu den Quests“ (direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
-  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `team`, `backup`, `photos`, `errors`, `end`, `reset`) haben stattdessen zwei Knöpfe:
+  **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `team`, `backup`, `photos`, `errors`, `end`, `sim`, `reset`) haben stattdessen zwei Knöpfe:
   „← Einstellungen“ und „Zu den Quests“. Wird eine Unterseite durch **Abbrechen einer Sicherheitsabfrage** verlassen
   (Reset, RESET-Eingabe, Urlaub beenden, Belohnungs-Fenster schließen, Wiederherstellen), landet man in den Einstellungen
   (`backToSettings(view)`). Neue Unterseiten der Einstellungen in `SETTINGS_PAGES` eintragen.
 - **Einstellungen** = Menü aus antippbaren Zeilen (Reihenfolge): Spielanleitung · Spieler (angemeldeter Name, „Name ändern“,
   „Abmelden“) · Mitspieler (3 Namen für die Hilfsmittel) · Spielstand sichern (sichern/wiederherstellen) · Erinnerungsfotos · Fehlerprotokoll · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
-  „Belohnungen & Zertifikat ansehen“ → Erfolge) · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
+  „Belohnungen & Zertifikat ansehen“ → Erfolge) · Testspiel simulieren · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
   Unterseite; alle Sicherheitsabfragen bleiben.
 - Erfolge (früher „Statistik“): Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);
   Regionen-Block (Meilenstein-Abzeichen, Liste mit Sternen: voll gold/Umriss; **sortiert** Erschlossen → Erobert → Erkundet →
