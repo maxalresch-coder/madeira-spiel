@@ -10,6 +10,8 @@ auf Deutsch erklären, was geändert wurde, und sagen, ob nach dem Update ein **
 - **Repository- und Ordnername `madeira-spiel` nie ändern** (PythonAnywhere-Update hängt daran).
 - Tests: `node tests/logic.test.js` muss durchlaufen; bei Regeländerungen Tests ergänzen.
 - Spielregeln/Punkte/Quest-Texte nur ändern, wenn ausdrücklich verlangt. Quest-Texte **wortwörtlich** lassen.
+- **Keine Bestätigung per Texteingabe** (kein Eintippen von „RESET“, „TEST“ o. Ä.): Sicherheitsabfragen sind nur einfache
+  Dialoge (`confirmBox` mit „Abbrechen“ / „Weiter“). Spielrelevante Eingaben (Wörter, Schätzungen) bleiben natürlich.
 - In Quest-Texten (content.js) **nie das Wort „geheim“** verwenden.
 - Oberfläche im Browser prüfen (Playwright, Chromium vorinstalliert; Handybreite 360 und 390 px).
   Lokal: `MADEIRA_PASSWORD=test MADEIRA_LINK_KEY=geheim python3 server.py` → http://localhost:8000/geheim/
@@ -96,7 +98,7 @@ Vertrauensbasis, keine Beweisfotos.
   sofort neu bei Kauf/Rückgängig. Anzeige: „Maximum: 2.430 (Basis 2.400, Multiplikatoren +30)“, ohne Mult. nur „Maximum: 2.400“.
 - Ränge nach **verdienten** Punkten (nicht Kontostand): Landstreicher ab 0, Abenteurer ab 700, Inselkönig ab 1.500 (fest).
 - Rückgängig für alles (nicht Meilensteine/Reset/Ende); gleiche Ergebnisse bei Wiederholung (Würfe/Stapel beim Start fest).
-  Punkte immer aus dem Spielstand berechnet. Aktivitäten (früher „Logbuch“) mit Zeit + Name. Reset gilt für alle, Eingabe „RESET“.
+  Punkte immer aus dem Spielstand berechnet. Aktivitäten (früher „Logbuch“) mit Zeit + Name. Reset gilt für alle, Rückfrage „Abbrechen“/„Weiter“ (ohne Eintippen).
 - **Offline-Schutz** (app.js): Server nicht erreichbar (Netz weg, Zeitüberschreitung, 5xx) → roter Streifen unter der Kopfzeile
   „Offline – Änderungen werden nicht gespeichert“, `body.is-offline`; speichernde Knöpfe (`SAVING_BUTTONS`: Abhaken, Rückgängig,
   Tausch, Multiplikator, Käufe, Ende, Reset, Wiederherstellen) sind ausgegraut und zeigen beim Antippen einen Hinweis. Ansehen
@@ -374,7 +376,7 @@ Vertrauensbasis, keine Beweisfotos.
   (Klasse `body.is-ended`: Kopfzeilen-Navigation und Punkte-Band ausgeblendet, kein Wischen zwischen den Hauptseiten, auch
   Handy-Zurück bleibt dort). Knöpfe: Rückblick abspielen, Urlaub fortsetzen (Verteilung aufheben → Sperre weg), „Erfolge ansehen“
   (`app.endedStats`: Erfolge mit „← Zurück zum Urlaubsende“, ebenfalls ohne Wischen), PDF, ganz unten rot **„Kompletter
-  Reset“** (wie in den Einstellungen mit Eintippen von „RESET“).
+  Reset“** (wie in den Einstellungen, einfache Rückfrage „Abbrechen“/„Weiter“).
 - **Plus/Minus gedrückt halten** (alle Knöpfe mit `data-hold="<Kennung>"`: Belohnungen, Zähler der Stapel-Quests, „+1 Auto“,
   „+1 Tipp“ und die −-Knöpfe dazu): kurzes Tippen = normaler Klick; nach 0,45 s gedrückt wiederholt (150 → 75 → 35 ms),
   Loslassen/Abbruch/Verschieben > 12 px stoppt sofort; ausgelöst wird der aktuelle Knopf mit derselben Kennung (`.click()`,
@@ -409,15 +411,18 @@ Vertrauensbasis, keine Beweisfotos.
   Einstellungen → Erinnerungsfotos (sofort für alle gespeichert) und vor der Urkunde (vorbelegt). Server: `cert` in
   `data/memories.json` (`POST api/memories/cert {ids}`, höchstens 6; Reset → `null`). `certPhotoIds()`: gespeicherte Auswahl
   (nur sichtbare Fotos) bzw. – nie gewählt (`null`) – die ersten 6 chronologisch. Weniger als 6 (auch 0) erlaubt.
-- **Zertifikat** (`certificateSVG(photos, withImages)`, 1188×840, A4 quer): Kopf in eigenen Zeilen „ZERTIFIKAT“ /
-  „Operação Madeira – Das Spiel“ / (Leerzeile) Zeitraum Spielbeginn bis „Urlaub beenden“ (`L.dateRange`: „10. – 18. Oktober 2026“,
-  über Monatsgrenzen „28. September – 5. Oktober 2026“, getestet) / „Hiermit wird bestätigt, dass“ / Namen / „Madeira als Team
-  erkundet und den Rang … erreicht haben.“; darunter Rang mit Figur + Punkten (`certFigure`), Inselkarte mit Stufenfarben +
-  Legende, Collage der gewählten Fotos; unten links untereinander „Regionale Quests X von 30“ und „Stapel-Quests X von 26“,
-  rechts **eine** Box „Gutscheine“ mit einfacher Liste (ohne „Gutschein:“, ab 4 in zwei Spalten). Kein fleißigster Tag, keine
+- **Zertifikat** (`certificateSVG(photos, withImages, logo)`, 1188×840, A4 quer): **eigene Urkunde je Handy** – Name =
+  angemeldeter Spieler (`app.name`). Oben links das **Logo wie in der Kopfzeile** (`CERT_LOGO`), aus demselben Bauteil
+  (`BRAND`, `brandHTML` für die Kopfzeile, `brandImage` zeichnet es mit Ozean-Verlauf, goldenem Kompass und Bebas Neue als
+  PNG für die Urkunde; ein eigenes `images/logo.svg`/`logo.png` erscheint automatisch in beiden). Kopf in eigenen Zeilen
+  „ZERTIFIKAT“ / (Leerzeile) Zeitraum Spielbeginn bis „Urlaub beenden“ (`L.dateRange`: „10. – 18. Oktober 2026“,
+  über Monatsgrenzen „28. September – 5. Oktober 2026“, getestet) / „Hiermit wird bestätigt, dass“ / Name / „Madeira im Team
+  erkundet und den Rang … erreicht hat.“; darunter Rang mit Figur + Punkten (`certFigure`), Inselkarte mit Stufenfarben +
+  Legende, Collage der gewählten Fotos; unten links untereinander „Regionale Quests X von 30“ und „Stapel-Quests X von 26“
+  (Beschriftung links, Zahl rechts, beide 18 px – „30 von 30“ passt mit Abstand), rechts **eine** Box „Geteilte Gutscheine“ mit einfacher Liste (ohne „Gutschein:“, ab 4 in zwei Spalten). Kein fleißigster Tag, keine
   Urlaubstage. Vorschau bei den Erfolgen mit Fotos (data-URLs, `loadCertPhotos`, Cache `certCache`); **PDF** (`downloadPDF`):
-  SVG ohne Fotos ins Canvas (2×), Fotos direkt aufs Canvas (sicher für Safari), JPEG 0,85 → ca. 270 KB.
-- **Test-Simulation** (Einstellungen → „Testspiel simulieren“, Unterseite `sim`, Bestätigung durch Eintippen von „TEST“):
+  SVG ohne Fotos/Logo ins Canvas (2×), Logo und Fotos direkt aufs Canvas (sicher für Safari), JPEG 0,85 → ca. 270 KB.
+- **Test-Simulation** (Einstellungen → „Testspiel simulieren“, Unterseite `sim`, Rückfrage „Abbrechen“/„Weiter“):
   Spielstand von `L.simulateGame(content, seed, now, names)` (logic.js, getestet: jede Aktion über `apply`, ~7 Tage 8:30–21 Uhr,
   Regionen in allen Stufen, ~30 % ganz Madeira erkundet, 6–12 Stapel-Quests, Multiplikatoren, Tausch-/Region-Joker, 2–4
   Rückgängig). Server `POST api/sim/start {state}`: verschiebt den **echten** Stand (state.json, memories.json, `memories/`,
@@ -439,7 +444,8 @@ Vertrauensbasis, keine Beweisfotos.
   Interne View-Namen bleiben `stats` und `log`. Darunter Abzeichen: Rang-Figur · Rang · Kontostand (führt zu den Erfolgen).
   Bei ≤ 380 px: Knöpfe 44 px, lange Beschriftungen („Aktivitäten“, „Einstellungen“) kleiner (`.hdr-wide`, `.hdr-set`),
   Schriftzug passt sich an (fitLogo, bei 360 px ca. 16 px) – nach Änderungen an der Kopfzeile bei 360/390 px nachmessen.
-  Eigenes Logo: `public/images/logo.svg` oder `logo.png` ersetzt den Schriftzug.
+  Schriftzug aus `BRAND`/`brandHTML` (app.js, gemeinsam mit der Urkunde). Eigenes Logo: `public/images/logo.svg` oder
+  `logo.png` ersetzt den Schriftzug (Kopfzeile und Urkunde).
 - Startseite (keine untere Leiste): Block „Regionale Quests“ (Überschrift auf Karten-Hintergrund, **einzeilig** wie
   „Stapel-Quests“; darunter einzeilig „X von 10 Regionen erkundet · X von 30 erledigt“, auch bei „10 von 10 · 30 von 30“;
   unter 340 px Schrift kleiner) mit Inselkarte, Legende nur 4 Stufen: **eine Zeile**, wenn sie passt (ab 411 px Breite),
@@ -501,11 +507,11 @@ Vertrauensbasis, keine Beweisfotos.
   oben „← Zu den Quests“ (direkt zur Startseite, auch Handy-Zurück; Bereiche ersetzen den History-Eintrag).
   **Unterseiten der Einstellungen** (`SETTINGS_PAGES`: `help`, `player`, `team`, `backup`, `photos`, `errors`, `end`, `sim`, `reset`) haben stattdessen zwei Knöpfe:
   „← Einstellungen“ und „Zu den Quests“. Wird eine Unterseite durch **Abbrechen einer Sicherheitsabfrage** verlassen
-  (Reset, RESET-Eingabe, Urlaub beenden, Belohnungs-Fenster schließen, Wiederherstellen), landet man in den Einstellungen
+  (Reset, Testspiel simulieren, Urlaub beenden, Belohnungs-Fenster schließen, Wiederherstellen), landet man in den Einstellungen
   (`backToSettings(view)`). Neue Unterseiten der Einstellungen in `SETTINGS_PAGES` eintragen.
 - **Einstellungen** = Menü aus antippbaren Zeilen (Reihenfolge): Spielanleitung · Spieler (angemeldeter Name, „Name ändern“,
-  „Abmelden“) · Mitspieler (3 Namen für die Hilfsmittel) · Spielstand sichern (sichern/wiederherstellen) · Erinnerungsfotos · Fehlerprotokoll · Urlaub beenden & Belohnungen (gold umrandet; nach Ende:
-  „Belohnungen & Zertifikat ansehen“ → Erfolge) · Testspiel simulieren · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
+  „Abmelden“) · Mitspieler (3 Namen für die Hilfsmittel) · Spielstand sichern (sichern/wiederherstellen) · Erinnerungsfotos · Fehlerprotokoll · Testspiel simulieren · Urlaub beenden & Belohnungen (gold
+  umrandet; nach Ende: „Belohnungen & Zertifikat ansehen“ → Erfolge) · Kompletter Reset ganz unten mit Abstand, rot. Jede Zeile öffnet eine
   Unterseite; alle Sicherheitsabfragen bleiben.
 - Erfolge (früher „Statistik“): Teamrang mit großer Figur + Rangleiter; Etappen-Balken (Farbe je Etappe = Stufenfarbe, Rang: 0–700–1.500–Maximum);
   Regionen-Block (Meilenstein-Abzeichen, Liste mit Sternen: voll gold/Umriss; **sortiert** Erschlossen → Erobert → Erkundet →

@@ -19,7 +19,7 @@ gegen Belohnungen eintauschen – mit Zertifikat als PDF.
 - **Shop**: Region-Joker (150, 1 im Spiel), Tausch-Joker (10, 5 im Spiel), Multiplikator (10, 3 im Spiel,
   95 % ×0,5–×2,0 / 5 % Jackpot ×5, aufgerundet); gesperrt bei negativem Kontostand
 - **Rückgängig** für alles, mit identischem Ergebnis bei Wiederholung; **Aktivitäten** mit Zeit und Name
-- **Kompletter Reset** mit doppelter Sicherheitsabfrage („RESET“ eintippen)
+- **Kompletter Reset** mit Sicherheitsabfrage („Abbrechen“ / „Weiter“)
 - **Ränge** Landstreicher / Abenteurer / Inselkönig nach verdienten Punkten
 - **Animationen** beim Abhaken, beim Erkunden einer Region und groß bei „Madeira erkundet!“ (+300)
 - **Erfolge** mit Rang, Punkten, bestem Multiplikator, Tagen, Punkten pro Tag (Diagramm)

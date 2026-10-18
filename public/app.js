@@ -3441,8 +3441,8 @@
         setRow("backup", "download", "Spielstand sichern", "Sichern und wiederherstellen") +
         setRow("photos", "image", "Erinnerungsfotos", memStorage() + " · alle herunterladen") +
         setRow("errors", "bug", "Fehlerprotokoll", "Fehler der App und beim Foto-Upload – zum Weiterschicken") +
-        setRow("end", "flag", "Urlaub beenden & Belohnungen", app.state.ended ? "Urlaub beendet – Belohnungen & Zertifikat" : "Restpunkte umtauschen, Zertifikat", "set-end") +
         setRow("sim", "shuffle", "Testspiel simulieren", app.sim && app.sim.active ? "Simulation läuft gerade" : "Zufälliges Testspiel – euer echter Stand wird gesichert") +
+        setRow("end", "flag", "Urlaub beenden & Belohnungen", app.state.ended ? "Urlaub beendet – Belohnungen & Zertifikat" : "Restpunkte umtauschen, Zertifikat", "set-end") +
       "</div>" +
       '<div class="set-danger">' + setRow("reset", "rotate-ccw", "Kompletter Reset", "Alles auf null – für alle Handys", "set-reset") + "</div>";
   }
@@ -3679,8 +3679,12 @@
   function certPreviewPhotos() {
     if (!app.mem) return [];
     const ids = certPhotoIds(), key = ids.map((id) => app.mem.items[id].f).join(",");
-    if (certCache.key !== key || certCache.loading) loadCertPhotos().then(() => { if (app.view === "stats" && app.state.ended) render(); });
+    if (certCache.key !== key || certCache.loading) loadCertPhotos().then(() => { if (app.state && app.state.ended) render(); });
     return certCache.key === key && !certCache.loading ? certCache.photos : [];
+  }
+  function certPreviewLogo() {
+    if (!BRAND.img) brandImage().then((v) => { if (v && app.state && app.state.ended) render(); });
+    return BRAND.img;
   }
   function viewEnded(s) {
     const alloc = app.state.ended.alloc || {};
@@ -3689,7 +3693,7 @@
     return '<h2>' + icon("flag") + ' Urlaub beendet</h2>' +
       '<div class="panel rank-panel"><div class="muted small">Euer Rang</div><div class="rank-big">' + esc(s.rankName) + '</div><div class="small">' + fmt(s.earned) + " von " + fmt(s.maxPoints) + " Punkten (" + Math.round(s.earned / s.maxPoints * 100) + " %)</div></div>" +
       '<div class="panel"><h3>Eure Belohnungen</h3>' + (lines || '<p class="muted" style="margin:0">Keine Restpunkte verteilt.</p>') + "</div>" +
-      '<div class="panel"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG(certPreviewPhotos(), true)) + '">' +
+      '<div class="panel"><h3>Zertifikat</h3><img class="cert-preview" alt="Zertifikat" src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(certificateSVG(certPreviewPhotos(), true, certPreviewLogo())) + '">' +
       '<button class="btn btn-primary btn-block" id="pdf-btn" style="margin-top:12px">' + icon("file-down") + ' Zertifikat als PDF herunterladen</button></div>' +
       '<div class="panel" style="display:grid;gap:10px"><button class="btn btn-gold btn-block" id="recap-btn">' + icon("play") + " Urlaubs-Rückblick abspielen</button>" +
       '<button class="btn btn-ghost btn-block" id="reopen-btn">Urlaub fortsetzen (Verteilung aufheben)</button>' +
@@ -3939,6 +3943,58 @@
     run.raf = requestAnimationFrame(tick);
   }
 
+  // ---- Logo/Schriftzug: ein gemeinsames Bauteil für Kopfzeile und Urkunde. Liegt public/images/logo.svg (oder logo.png)
+  // vor, ersetzt es überall den Schriftzug. Für die Urkunde wird das Logo genau wie in der Kopfzeile (Ozean-Verlauf, goldener
+  // Kompass, Bebas Neue) als Bild gezeichnet (`brandImage`) – so erscheint eine spätere Logo-Änderung automatisch auch dort.
+  const BRAND = { text: "Operação Madeira", icon: "compass", gold: "#f2c14e", file: null, img: null, loading: null };
+  function brandHTML() {
+    return BRAND.file ? '<img class="logo-img" src="' + BRAND.file + '" alt="' + BRAND.text + '">' :
+      '<span class="logo"><span class="logo-ic" aria-hidden="true">' + icon(BRAND.icon) + '</span><span class="logo-txt">' + BRAND.text + "</span></span>";
+  }
+  function renderBrand() {
+    const el = $("#brand-logo");
+    if (el) { el.innerHTML = brandHTML(); fitLogo(); }
+  }
+  const loadImg = (src) => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+  // Logo als PNG-data-URL {url, w, h} (Maße in Urkunden-Punkten, Höhe 54), 4-fach aufgelöst; zwischengespeichert
+  function brandImage() {
+    if (BRAND.img) return Promise.resolve(BRAND.img);
+    if (BRAND.loading) return BRAND.loading;
+    const H = 54, k = 4, pad = 14, done = (v) => { BRAND.loading = null; if (v) BRAND.img = v; return v; };
+    BRAND.loading = (async () => {
+      let pic = null, tw = 0;
+      const font = (px) => px + 'px "Bebas Neue", Fraunces, Georgia, serif';
+      const tx = 27, ix = 22, gap = 5; // wie in der Kopfzeile: Schrift 27 px, Kompass 22 px, Abstand 5 px
+      if (BRAND.file) pic = await loadImg(BRAND.file).catch(() => null);
+      else if (document.fonts && document.fonts.load) await document.fonts.load(font(tx), BRAND.text).catch(() => {});
+      const c = document.createElement("canvas"), g = c.getContext("2d");
+      const inner = H - 2 * pad + 4; // Inhaltshöhe (Schrift bzw. eigenes Logo)
+      if (pic) tw = pic.naturalWidth * inner / pic.naturalHeight;
+      else { g.font = font(tx); tw = ix + gap + g.measureText(BRAND.text).width; }
+      const W = Math.ceil(tw + 2 * pad + 4);
+      c.width = W * k; c.height = H * k;
+      g.scale(k, k);
+      const grad = g.createLinearGradient(0, 0, W, H); // Kopfzeile: linear-gradient(120deg, Ozean, Ozean dunkel)
+      grad.addColorStop(0, "#0b5f78"); grad.addColorStop(1, "#073b4c");
+      g.fillStyle = grad;
+      g.beginPath();
+      if (g.roundRect) g.roundRect(0, 0, W, H, 12); else g.rect(0, 0, W, H);
+      g.fill();
+      if (pic) g.drawImage(pic, pad + 2, (H - inner) / 2, tw, inner);
+      else {
+        const ic = await loadImg("data:image/svg+xml;charset=utf-8," + encodeURIComponent(icon(BRAND.icon).replace('class="ic"', 'xmlns="http://www.w3.org/2000/svg" width="' + ix * k + '" height="' + ix * k + '"').replace('stroke="currentColor"', 'stroke="' + BRAND.gold + '"'))).catch(() => null);
+        if (ic) g.drawImage(ic, pad + 2, (H - ix) / 2, ix, ix);
+        g.font = font(tx); g.fillStyle = "#fff"; g.textBaseline = "middle";
+        g.fillText(BRAND.text, pad + 2 + ix + gap, H / 2 + 2); // padding-top 2 px wie in der Kopfzeile
+      }
+      const url = c.toDataURL("image/png");
+      c.width = 0; c.height = 0;
+      return { url, w: W, h: H };
+    })().then(done, () => done(null));
+    return BRAND.loading;
+  }
+  const CERT_LOGO = { x: 62, y: 60 }; // oben links innerhalb des goldenen Rahmens
+
   // ---- Zertifikat (Urkunde): Namen, Rang mit Figur, kleine Inselkarte mit gefärbten Regionen, wichtigste Statistiken
   // (wie im Rückblick), Collage aus bis zu 6 Erinnerungsfotos, Gutscheine. Vorschau als SVG (Fotos als kleine data-URLs, nur
   // Vorschaubilder ~320 px); fürs PDF wird die SVG ohne Fotos ins Canvas gezeichnet und die Fotos direkt aufs Canvas (sicher
@@ -4011,11 +4067,11 @@
       .replace(/class="accent-fill"/g, 'fill="#e5b53b"').replace(/ class="[^"]*"/g, "");
     return '<g transform="translate(' + x + "," + y + ") scale(" + size / 48 + ')" fill="none" stroke="#073b4c" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + inner + "</g>";
   }
-  function certificateSVG(photos, withImages) {
+  function certificateSVG(photos, withImages, logo) {
     photos = photos || [];
     const s = sum(), st = app.state, W = CERT_W, H = CERT_H;
     const alloc = (st.ended && st.ended.alloc) || {};
-    const names = alloc._players || players().join(", ");
+    const name = app.name; // jede Urkunde trägt den Namen des Spielers, der auf diesem Handy angemeldet ist
     const vouchers = C.rewards.filter((r) => alloc[r.id] > 0).map((r) => L.formatReward(r, alloc[r.id]) + " " + r.voucher);
     const t = (x, y, txt, size, opts) => '<text x="' + x + '" y="' + y + '" font-size="' + size + '" ' + (opts || 'text-anchor="middle"') + ">" + esc(txt) + "</text>";
     const lv = [0, 0, 0, 0];
@@ -4042,15 +4098,16 @@
       slots.map((p, i) => (withImages ? '<image href="' + photos[i] + '" x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" preserveAspectRatio="xMidYMid slice" clip-path="url(#cp' + i + ')"/>' : "") +
         '<rect x="' + p.x + '" y="' + p.y + '" width="' + CERT_CELL + '" height="' + CERT_CELL + '" rx="10" fill="none" stroke="#e5b53b" stroke-width="2"/>').join("") +
       t(800 + (3 * CERT_CELL + 2 * CERT_GAP) / 2, 332 + (photos.length > 3 ? 2 : 1) * (CERT_CELL + CERT_GAP) + 14, "Erinnerungen", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') : "";
-    // Unten links: regionale Quests und Stapel-Quests untereinander; rechts eine Box „Gutscheine“ mit einfacher Liste
+    // Unten links: regionale Quests und Stapel-Quests untereinander; rechts eine Box „Geteilte Gutscheine“ mit einfacher Liste
     const box = (x, y, w, h) => '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="12" fill="#ffffff" stroke="#e3ddd1" stroke-width="1.5"/>';
+    // Beschriftung links, Zahl rechts – beide 18 px, auch „30 von 30“ passt mit Abstand neben „Regionale Quests“
     const statsG = [["Regionale Quests", s.questsDone + " von 30"], ["Stapel-Quests", s.doneStack + " von " + C.stackQuests.length]].map(([l, v], i) => {
       const y = 584 + i * 78;
-      return box(70, y, 300, 68) + t(90, y + 41, l, 18, 'text-anchor="start" fill="#5f6f76"') + t(350, y + 43, v, 26, 'text-anchor="end" font-weight="700" fill="#0b5f78"');
+      return box(70, y, 300, 68) + t(88, y + 40, l, 18, 'text-anchor="start" fill="#5f6f76"') + t(352, y + 40, v, 18, 'text-anchor="end" font-weight="700" fill="#0b5f78"');
     }).join("");
     const two = vouchers.length > 3, rows = two ? Math.ceil(vouchers.length / 2) : Math.max(1, vouchers.length);
     const vx = 392, vw = W - 70 - vx;
-    const vouchersSvg = box(vx, 584, vw, 146) + t(vx + 20, 616, "Gutscheine", 20, 'text-anchor="start" font-weight="700" fill="#0b5f78"') +
+    const vouchersSvg = box(vx, 584, vw, 146) + t(vx + 20, 616, "Geteilte Gutscheine", 20, 'text-anchor="start" font-weight="700" fill="#0b5f78"') +
       (vouchers.length ? vouchers.map((v, i) => {
         const col = two ? Math.floor(i / rows) : 0, row = two ? i % rows : i;
         return t(vx + 22 + col * vw / 2, 648 + row * 26, "• " + v, 18, 'text-anchor="start" fill="#1d2a30"');
@@ -4060,11 +4117,11 @@
       '<rect x="24" y="24" width="' + (W - 48) + '" height="' + (H - 48) + '" fill="none" stroke="#0b5f78" stroke-width="6" rx="18"/>' +
       '<rect x="40" y="40" width="' + (W - 80) + '" height="' + (H - 80) + '" fill="none" stroke="#e5b53b" stroke-width="2" rx="12"/>' +
       t(W / 2, 96, "ZERTIFIKAT", 50, 'text-anchor="middle" font-weight="700" letter-spacing="8" fill="#0b5f78"') +
-      t(W / 2, 130, "Operação Madeira – Das Spiel", 20, 'text-anchor="middle" fill="#5f6f76"') +
+      (withImages && logo ? '<image href="' + logo.url + '" x="' + CERT_LOGO.x + '" y="' + CERT_LOGO.y + '" width="' + logo.w + '" height="' + logo.h + '"/>' : "") + // Logo wie in der Kopfzeile
       t(W / 2, 172, period, 19, 'text-anchor="middle" fill="#5f6f76"') + // nach einer Leerzeile: Zeitraum des Urlaubs
       t(W / 2, 214, "Hiermit wird bestätigt, dass", 19, 'text-anchor="middle" fill="#5f6f76"') +
-      t(W / 2, 256, names || "das Team", 34, 'text-anchor="middle" font-weight="700"') +
-      t(W / 2, 292, "Madeira als Team erkundet und den Rang „" + s.rankName + "“ erreicht haben.", 21, 'text-anchor="middle"') +
+      t(W / 2, 256, name, 34, 'text-anchor="middle" font-weight="700"') +
+      t(W / 2, 292, "Madeira im Team erkundet und den Rang „" + s.rankName + "“ erreicht hat.", 21, 'text-anchor="middle"') +
       rankG + mapG + legendG + collage + statsG + vouchersSvg +
       t(W / 2, H - 56, "Dieses Zertifikat gilt gleichzeitig als Gutschein.", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') +
       "</svg>";
@@ -4073,7 +4130,8 @@
   async function downloadPDF() {
     if (!window.jspdf) { toast("PDF-Modul lädt noch – gleich nochmal versuchen.", true); return; }
     const photos = app.mem ? await loadCertPhotos() : [];
-    const svg = certificateSVG(photos, false); // Fotos kommen direkt aufs Canvas
+    const logo = await brandImage();
+    const svg = certificateSVG(photos, false); // Logo und Fotos kommen direkt aufs Canvas
     const img = new Image();
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
     await img.decode().catch(() => new Promise((res) => { img.onload = res; }));
@@ -4082,6 +4140,10 @@
     canvas.width = CERT_W * scale; canvas.height = CERT_H * scale;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    if (logo) {
+      const li = await loadImg(logo.url).catch(() => null);
+      if (li) ctx.drawImage(li, CERT_LOGO.x * scale, CERT_LOGO.y * scale, logo.w * scale, logo.h * scale);
+    }
     const slots = certSlots(photos.length);
     for (let i = 0; i < photos.length; i++) {
       const im = new Image();
@@ -4155,8 +4217,7 @@
   }
   async function startSim() {
     if (app.sim && app.sim.active) { toast("Die Simulation läuft schon.", true); return; }
-    const typed = await promptBox("Testspiel simulieren?", "Euer echter Spielstand samt Erinnerungsfotos wird vorher gesichert und mit „Simulation beenden“ exakt wiederhergestellt – für alle Handys. Tippe zur Bestätigung TEST ein:", "TEST");
-    if (typed !== "TEST") { if (typed !== null) toast("Abgebrochen – nicht richtig eingetippt.", true); backToSettings("sim"); return; }
+    if (!(await confirmBox("Testspiel simulieren?", "Euer echter Spielstand samt Erinnerungsfotos wird vorher gesichert und mit „Simulation beenden“ exakt wiederhergestellt – für alle Handys.", "Weiter"))) { backToSettings("sim"); return; }
     if (!app.online) await poll();
     if (!app.online) { toast(OFFLINE_MSG, true); return; }
     const names = teamNames().length ? teamNames() : players().slice(0, 3);
@@ -4197,8 +4258,6 @@
   // ---- Reset
   async function doReset() {
     if (!(await confirmBox("Kompletter Reset?", "Setzt ALLES auf null und mischt neu – für alle drei Handys, auch alle Erinnerungsfotos werden gelöscht. Das kann nicht rückgängig gemacht werden.", "Weiter", true))) { backToSettings("reset"); return; }
-    const typed = await promptBox("Wirklich zurücksetzen?", "Tippe zur Sicherheit RESET ein:", "RESET");
-    if (typed !== "RESET") { if (typed !== null) toast("Abgebrochen – nicht richtig eingetippt.", true); backToSettings("reset"); return; }
     if (await act({ type: "reset", seed: Math.floor(Math.random() * 2 ** 31) })) toast("Neues Spiel – viel Spaß!");
   }
 
@@ -4222,7 +4281,7 @@
       "<h3>" + icon("camera") + " Erinnerungsfotos</h3><p>Zu jeder erledigten Quest könnt ihr ein Foto anhängen – direkt nach dem Abhaken, später im Quest-Fenster, bei den erledigten Stapel-Quests oder bei den Aktivitäten. Ersetzen und Löschen geht jederzeit. Die Fotos bleiben dauerhaft; unter Einstellungen → Erinnerungsfotos lassen sich alle als ZIP herunterladen. Wird eine Quest rückgängig gemacht, ist ihr Foto ausgeblendet; der komplette Reset löscht alle Fotos.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
       "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
-      "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys, löscht auch alle Erinnerungsfotos und braucht die Eingabe „RESET“.</p>" +
+      "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys, löscht auch alle Erinnerungsfotos und fragt vorher noch einmal nach.</p>" +
       "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region – dort wechselt Wischen nach links/rechts (oder die Pfeile) zur nächsten Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Bei den Aktivitäten öffnet Antippen eines Eintrags die Quest. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("trophy") + " Erfolge (Rang, Regionen, Punkte und Diagramme), " + icon("history") + " Aktivitäten (alles, was passiert ist, mit Rückgängig) und " + icon("settings") + " Einstellungen (diese Spielanleitung, Spieler, Spielstand sichern, Urlaub beenden, Reset). „← Zu den Quests“ führt zurück zur Startseite; in den Unterseiten der Einstellungen gibt es zusätzlich „← Einstellungen“.</p>" +
       "<h3>" + icon("flag") + " Ende</h3><p>„Urlaub beenden &amp; Belohnungen“ (unter Einstellungen) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
       '<p class="muted small">Straßen im Urlaubs-Rückblick: Routendaten © OpenStreetMap-Mitwirkende (berechnet mit OSRM).</p>' +
@@ -4809,13 +4868,12 @@
   }
   window.addEventListener("resize", fitLogo);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitLogo);
-  // Eigenes Logo: liegt public/images/logo.svg (oder logo.png) vor, ersetzt es den Schriftzug
+  // Schriftzug aus dem gemeinsamen Bauteil (BRAND); eigenes Logo: liegt public/images/logo.svg (oder logo.png) vor, ersetzt
+  // es den Schriftzug in der Kopfzeile und auf der Urkunde
+  renderBrand();
   (function loadLogo(files) {
     if (!files.length) return;
-    const im = new Image();
-    im.onload = () => { $("#brand-logo").innerHTML = '<img class="logo-img" src="' + files[0] + '" alt="Operação Madeira">'; };
-    im.onerror = () => loadLogo(files.slice(1));
-    im.src = files[0];
+    loadImg(files[0]).then(() => { BRAND.file = files[0]; BRAND.img = null; renderBrand(); }, () => loadLogo(files.slice(1)));
   })(["images/logo.svg", "images/logo.png"]);
   if (app.token && app.name) start(); else showLogin();
 })();
