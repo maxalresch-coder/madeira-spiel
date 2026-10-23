@@ -13,7 +13,9 @@
   const MAX_SWAPS = 5; // Tausch-Joker höchstens 5-mal pro Spiel (rückgängig gemachte zählen nicht)
   const REGION_POINTS = { explored: 100, tier: 20 };
   const MADEIRA_BONUS = 300;
-  const MAX_POINTS = 2400; // Basis-Maximum ohne Multiplikator (das tatsächliche Maximum: maxPoints())
+  // Basis-Maximum ohne Multiplikator (das tatsächliche Maximum: maxPoints()): 11 Regionen × 140 + 300 Insel-Bonus +
+  // 700 Stapel-Quests = 2.540 (Test prüft es gegen die Inhalte)
+  const MAX_POINTS = 2540;
   const RANKS = [
     { name: "Landstreicher", min: 0 },
     { name: "Abenteurer", min: 700 },
@@ -378,7 +380,7 @@
     return ids.every((id) => ix.stack[id]) && Object.keys(state.quests).every((id) => ix.quests[id]);
   }
 
-  // Maximal erreichbare Punkte: Basis 2.400, aber jede Stapel-Quest mit Multiplikator
+  // Maximal erreichbare Punkte: Basis 2.540, aber jede Stapel-Quest mit Multiplikator
   // (erledigt oder offen) zählt mit ihrem multiplizierten, aufgerundeten Wert.
   function maxPoints(state, content) {
     let delta = 0;

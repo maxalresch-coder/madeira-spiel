@@ -71,13 +71,13 @@ Erinnerungsfotos: `data/memories/` + `data/memories.json`, automatische Sicherun
   Den Nutzer bei Foto-Problemen bitten, das Protokoll zu kopieren und zu schicken.
 
 ## Zweck
-Private Handy-Webseite für 3 Freunde im Madeira-Urlaub: als **ein Team** alle 10 Regionen erkunden,
+Private Handy-Webseite für 3 Freunde im Madeira-Urlaub: als **ein Team** alle 11 Regionen (10 Gemeinden + Unterkunft Villa Fjord) erkunden,
 Quests erledigen, Punkte sammeln, am Ende Restpunkte in Belohnungen tauschen, Zertifikat als PDF.
 Login = Name + Passwort; Schutz = geheimer Link. Gemeinsamer Spielstand (Polling alle 4 s, Versionsnummer, Konflikt → neu anwenden).
 Vertrauensbasis, keine Beweisfotos.
 
 ## Begriffe (verbindlich)
-- **Regionale Quests**: 30 Stück, 3 je Region, an Orte gebunden (Pins auf der Inselkarte). Grammatik: „eine regionale Quest“.
+- **Regionale Quests**: 33 Stück, 3 je Region (11 Regionen inkl. Villa Fjord), an Orte gebunden (Pins auf der Inselkarte; Villa: Haus-Symbol). Grammatik: „eine regionale Quest“.
 - **Stapel-Quests**: 26 Stück, überall machbar, gemischter Stapel, immer **3 offen**, Rest verdeckt; „vom Stapel ziehen“, „zurück in den Stapel“.
 - Quests **nie „Karte“** nennen (kein „Bonus-Karte“, „Handkarte“). „Karte“ nur für die **Inselkarte**.
   Ausnahme: Quest-Texte („Kartenhaus“, „Karte“) bleiben wortwörtlich.
@@ -85,17 +85,31 @@ Vertrauensbasis, keine Beweisfotos.
 - Spielname: **„Operação Madeira - Das Spiel“** (Kurzform „Operação Madeira“).
 
 ## Regeln und Zahlen (logic.js)
-- Regionen (Reihenfolge): Calheta, Ponta do Sol, Ribeira Brava, Câmara de Lobos, Funchal, Santa Cruz, Machico, Santana, São Vicente, Porto Moniz.
+- Regionen (Reihenfolge): Calheta, Ponta do Sol, Ribeira Brava, Câmara de Lobos, Funchal, Santa Cruz, Machico, Santana, São Vicente, Porto Moniz,
+  **Villa Fjord** (11., unsere Unterkunft, `id: "villa"`, `villa: true` in content.js).
+- **Villa Fjord** (Estr. do Moreno 98, Ribeira Brava; `pin` 32.6738992, -17.0587713; fester Maps-Link
+  https://maps.app.goo.gl/8NJkVpvWyD9ncUDbA für alle 3 Quests): verhält sich in allem wie eine Region (Stufen, Punkte, Joker,
+  Meilensteine, Rückblick, Simulation, Urkunde). Quests ohne `desc`: „Pool Plantsch“ (q-vil-1), „Madeira Filmfestspiele“
+  (q-vil-2), „Blackout im Fjord“ (q-vil-3, Hilfsmittel `timer` 60 min wie die Stapel-Timer; `checkTimers` prüft auch
+  regionale Timer-Quests `TIMER_QUESTS`). **Karte:** keine Fläche (kein Eintrag in map-data.js), keine eigenen Quest-Pins
+  (`PINS` ohne Villa), sondern Haus-Symbol (Lucide „house“, `HOUSE_BODY`/`HOUSE_DOOR`) in der Pin-Ebene `#map-ov`
+  (`.villa-mark`, `data-villa`, `placeVilla`): ~17 px (kleiner als Pins), Tippfläche 44 px, Farbe = Stufe, weißer Rand,
+  immer gleich groß; liegt es auf einem Namen/Knopf, rückt es bis 44 px weiter (Strich `.villa-stem`); Pin-Köpfe weichen ihm
+  aus (`mapUI.villaBox`). Antippen (`mapTap`, Enter) → `openRegion("villa")`, im Wischen die 11. Region nach Porto Moniz.
+  Statische Karten (Urkunde, große Feier, Rückblick `data-rc-region="villa"`) zeichnen das Haus mit `villaSVG`.
+  Zahlen nie fest: `C.regions.length`, `QUESTS_TOTAL` (33). „Wo bin ich?“ zeigt an der Villa Ribeira Brava (keine Fläche).
+  „Fünf auf einen Streich“ (s-s04): Villa zählt nicht (Chips nur die 10 Gemeinden). Rückblick-Route: `roadVia:
+  "ribeirabrava"` → Straßen bis Ribeira Brava, dann kurzes Stück zur Villa (`roadPath`). Alte Spielstände: Villa unbesucht.
 - Stufen je Region: 0 unbesucht (#c9ced4), 1 **Erkundet** (1 Quest, +100, #a6e3a1), 2 **Erobert** (2 Quests, +20, #2f9e44),
   3 **Erschlossen** (3 Quests, +20, #e5b53b). Diese Farben exakt überall verwenden, wo Stufen gezeigt werden.
-- Alle 10 erkundet: „Madeira erkundet!“ +300 (Insel-Bonus). Alle erobert/erschlossen: Meilensteine
+- Alle 11 erkundet (inkl. Villa): „Madeira erkundet!“ +300 (Insel-Bonus). Alle erobert/erschlossen: Meilensteine
   „Madeira erobert!“/„Madeira erschlossen!“ mit großer Animation, **ohne Punkte**, bei den Aktivitäten (auch „nicht mehr erfüllt“).
-- Stapel-Quests: einfach 15 (10×), mittel 25 (10×), schwer 50 (6×) = 700. Basis 1.000 + 300 + 700 = 2.000; mit Stufen 2.400.
+- Stapel-Quests: einfach 15 (10×), mittel 25 (10×), schwer 50 (6×) = 700. Basis 1.100 + 300 + 700 = 2.100; mit Stufen 2.540 (`L.MAX_POINTS`, Test prüft 11 × 140 + 300 + 700).
 - Shop (gesperrt bei negativem Kontostand): **Region-Joker** 150 P, 1 im Spiel (Region gilt als erkundet, ohne 100 P;
   weitere Quests heben normal); **Tausch-Joker** 10 P, 5 im Spiel; **Multiplikator** 10 P, 3 im Spiel, einer pro Stapel-Quest:
   95 % ×0,5–×2,0 (Zehnerschritte), 5 % Jackpot ×5, aufgerundet; Stapel-Quest mit Multiplikator nicht tauschbar.
-- **Variables Maximum** = 2.400 + Σ(multiplizierter Wert − Grundwert) aller Stapel-Quests mit Multiplikator (offen oder erledigt);
-  sofort neu bei Kauf/Rückgängig. Anzeige: „Maximum: 2.430 (Basis 2.400, Multiplikatoren +30)“, ohne Mult. nur „Maximum: 2.400“.
+- **Variables Maximum** = 2.540 + Σ(multiplizierter Wert − Grundwert) aller Stapel-Quests mit Multiplikator (offen oder erledigt);
+  sofort neu bei Kauf/Rückgängig. Anzeige: „Maximum: 2.570 (Basis 2.540, Multiplikatoren +30)“, ohne Mult. nur „Maximum: 2.540“.
 - Ränge nach **verdienten** Punkten (nicht Kontostand): Landstreicher ab 0, Abenteurer ab 700, Inselkönig ab 1.500 (fest).
 - Rückgängig für alles (nicht Meilensteine/Reset/Ende); gleiche Ergebnisse bei Wiederholung (Würfe/Stapel beim Start fest).
   Punkte immer aus dem Spielstand berechnet. Aktivitäten (früher „Logbuch“) mit Zeit + Name. Reset gilt für alle, Rückfrage „Abbrechen“/„Weiter“ (ohne Eintippen).
@@ -421,7 +435,7 @@ Vertrauensbasis, keine Beweisfotos.
   vereinfacht ~40 m; `paths["a|b"]` (alphabetisch) = Teilstücke mit Richtung. Nie von Hand ändern, Skript neu laufen lassen
   (`python3 tools/strassen_netz.py <route.json>`). Linie: Quest-Pin → nächste Stelle der Straße → … → Stelle nächst dem
   Ziel-Pin → Ziel-Pin. Gleiche Region, fehlende/fehlerhafte Datei → **sanft geschwungene Linie** (quadratische Kurve,
-  abwechselnd gebogen). Test prüft alle 45 Verbindungen (lückenlos, auf Madeira). Quellenhinweis in der Spielanleitung. Linie **dunkles Ozeanblau #073b4c mit weißem Rand** (`.rc-halo` + `.rc-path`, nie Gold –
+  abwechselnd gebogen). Test prüft alle 45 Verbindungen der 10 Gemeinden (lückenlos, auf Madeira); die Villa nutzt die von Ribeira Brava. Quellenhinweis in der Spielanleitung. Linie **dunkles Ozeanblau #073b4c mit weißem Rand** (`.rc-halo` + `.rc-path`, nie Gold –
   das ist „Erschlossen“), per stroke-dashoffset nachgezeichnet; Region färbt sich nach Stufe; kurzes Fenster (Titel, Region, Tag,
   +Punkte, Erinnerungsfoto-Vorschau, sonst Pin-Icon). Darunter „Tisch“ `.rc-table` mit Zähler: Stapel-Quest-Karte fliegt heran
   im **Hochformat** wie die Karten der App (124×176 px: Farbstreifen der Schwierigkeit oben, Erinnerungsfoto bzw. Icon, Schwierigkeit,
@@ -443,8 +457,8 @@ Vertrauensbasis, keine Beweisfotos.
   „ZERTIFIKAT“ / (Leerzeile) Zeitraum Spielbeginn bis „Urlaub beenden“ (`L.dateRange`: „10. – 18. Oktober 2026“,
   über Monatsgrenzen „28. September – 5. Oktober 2026“, getestet) / „Hiermit wird bestätigt, dass“ / Name / „Madeira im Team
   erkundet und den Rang … erreicht hat.“; darunter Rang mit Figur + Punkten (`certFigure`), Inselkarte mit Stufenfarben +
-  Legende, Collage der gewählten Fotos; unten links untereinander „Regionale Quests X von 30“ und „Stapel-Quests X von 26“
-  (Beschriftung links, Zahl rechts, beide 18 px – „30 von 30“ passt mit Abstand), rechts **eine** Box „Geteilte Gutscheine“ mit einfacher Liste (ohne „Gutschein:“, ab 4 in zwei Spalten). Kein fleißigster Tag, keine
+  Legende, Collage der gewählten Fotos; unten links untereinander „Regionale Quests X von 33“ und „Stapel-Quests X von 26“
+  (Beschriftung links, Zahl rechts, beide 18 px – „33 von 33“ passt mit Abstand), rechts **eine** Box „Geteilte Gutscheine“ mit einfacher Liste (ohne „Gutschein:“, ab 4 in zwei Spalten). Kein fleißigster Tag, keine
   Urlaubstage. Vorschau bei den Erfolgen mit Fotos (data-URLs, `loadCertPhotos`, Cache `certCache`); **PDF** (`downloadPDF`):
   SVG ohne Fotos/Logo ins Canvas (2×), Logo und Fotos direkt aufs Canvas (sicher für Safari), JPEG 0,85 → ca. 270 KB.
 - **Test-Simulation** (Einstellungen → „Testspiel simulieren“, Unterseite `sim`, Rückfrage „Abbrechen“/„Weiter“):
@@ -472,7 +486,7 @@ Vertrauensbasis, keine Beweisfotos.
   Schriftzug aus `BRAND`/`brandHTML` (app.js, gemeinsam mit der Urkunde). Eigenes Logo: `public/images/logo.svg` oder
   `logo.png` ersetzt den Schriftzug (Kopfzeile und Urkunde).
 - Startseite (keine untere Leiste): Block „Regionale Quests“ (Überschrift auf Karten-Hintergrund, **einzeilig** wie
-  „Stapel-Quests“; darunter einzeilig „X von 10 Regionen erkundet · X von 30 erledigt“, auch bei „10 von 10 · 30 von 30“;
+  „Stapel-Quests“; darunter einzeilig „X von 11 Regionen erkundet · X von 33 erledigt“, auch bei „11 von 11 · 33 von 33“;
   unter 340 px Schrift kleiner) mit Inselkarte, Legende nur 4 Stufen: **eine Zeile**, wenn sie passt (ab 411 px Breite),
   sonst sauber **2 × 2** (`grid`, nie 3 + 1); darunter der kräftig blaue Block „Stapel-Quests“ (3 offene, Tausch/Multiplikator,
   Zeile „… · Joker genutzt: Tausch X von 5 · Multiplikator X von 3“); dann Knopf „Alle Quests anzeigen“.

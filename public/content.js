@@ -9,7 +9,7 @@
 //             null = der Link öffnet stattdessen die Pin-Koordinaten
 //    mapsUrl  optional: fester Google-Maps-Link, wird statt des Such-Links verwendet
 //    Bild     optional: public/images/quests/<ID>.jpg (siehe README dort)
-//    desc     Beschreibung
+//    desc     Beschreibung (optional – die Quests der Villa Fjord haben keine)
 //    task     Aufgabe ("Eure Aufgabe: …")
 //    link     optional: {text, href} – dieser Text in der Aufgabe wird ein Link
 //    height   nur „Angsthase oder Augenmaß?“: echte Höhe in Metern für das Hilfsmittel „Höhe schätzen“
@@ -253,6 +253,28 @@ window.GAME_CONTENT = {
           location: `Fanal (Lorbeerwald am Rand der Paul da Serra)`, pin: [32.8105, -17.1440], maps: "Fanal, Porto Moniz, Madeira",
           desc: `Fanal liegt auf rund 1.200 Metern am Rand der Hochebene Paul da Serra. Der Wald ist berühmt für seinen Nebel, der die jahrhundertealten Lorbeerbäume mit ihren verdrehten, bizarren Formen und die zwischen ihnen grasenden Kühe zu gespenstischen Gestalten macht.`,
           task: `Eure Aufgabe: Eine Person denkt sich ein Wort mit mindestens fünf Buchstaben aus und sucht für jeden Buchstaben einen Baum oder Ast, dessen Form ihn darstellt. Davon macht sie Fotos in der richtigen Reihenfolge. Die anderen beiden müssen anhand der Fotos das Wort erraten. Liegen sie falsch, denkt sich die Person ein neues Wort aus und macht neue Fotos.`
+        }
+      ]
+    },
+    // 11. Region: unsere Unterkunft. Keine Fläche auf der Inselkarte, sondern ein Haus-Symbol an „pin“ (villa: true);
+    // Rückblick-Route über die Straßen von Ribeira Brava (roadVia), dann ein kurzes Stück zur Villa.
+    {
+      id: "villa", name: "Villa Fjord", villa: true, pin: [32.6738992, -17.0587713], roadVia: "ribeirabrava",
+      quests: [
+        {
+          id: "q-vil-1", title: `Pool Plantsch`,
+          location: `Villa Fjord, Estr. do Moreno 98, Ribeira Brava`, pin: [32.6738992, -17.0587713], maps: null, mapsUrl: "https://maps.app.goo.gl/8NJkVpvWyD9ncUDbA",
+          task: `Eure Aufgabe: Springt alle in den Pool der Villa und plantscht eine Runde.`
+        },
+        {
+          id: "q-vil-2", title: `Madeira Filmfestspiele`,
+          location: `Villa Fjord, Estr. do Moreno 98, Ribeira Brava`, pin: [32.6738992, -17.0587713], maps: null, mapsUrl: "https://maps.app.goo.gl/8NJkVpvWyD9ncUDbA",
+          task: `Eure Aufgabe: Macht es euch gemütlich und schaut gemeinsam einen Film oder eine Serie über den Fernseher der Villa.`
+        },
+        {
+          id: "q-vil-3", title: `Blackout im Fjord`,
+          location: `Villa Fjord, Estr. do Moreno 98, Ribeira Brava`, pin: [32.6738992, -17.0587713], maps: null, mapsUrl: "https://maps.app.goo.gl/8NJkVpvWyD9ncUDbA",
+          task: `Eure Aufgabe: Schaltet den Strom im ganzen Haus für mindestens eine Stunde ab und übersteht diese Zeit.`
         }
       ]
     }

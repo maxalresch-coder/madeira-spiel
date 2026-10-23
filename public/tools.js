@@ -36,6 +36,8 @@
     "q-mac-2": { kind: "drawBay", fv: 2, bays: ["b1", "b2", "b3", "b4", "b5", "b6", "b7", "b8", "b9"], label: "Bucht zeichnen und raten", icon: "pencil" }, // Bucht gesucht
     // Auswahl: genau 2 der 10 UNESCO-Kriterien; Lösung (ix) + (x) wird bei „Daneben“ nie gezeigt
     "q-san-3": { kind: "choice", pick: 2, solution: ["ix", "x"], penalty: 10, label: "Zwei Kriterien wählen", icon: "list-checks" }, // Mit Lorbeeren und UNESCO gekrönt
+    // Timer wie bei den Stapel-Quests (Start, Pause, Zurücksetzen; läuft in Serverzeit weiter)
+    "q-vil-3": { kind: "timer", minutes: 60, label: "Timer: 60 Minuten", icon: "timer" },                // Blackout im Fjord (Villa Fjord)
 
     // ---- Stapel-Quests: kleine Hilfsmittel (Zähler, Timer, Regionen-Liste, Höhe). Ziele und Zeiten wie im Quest-Text.
     // Der Zustand wird beim Abhaken, Tauschen und beim Reset gelöscht (logic.js) – Rückgängig holt ihn zurück.

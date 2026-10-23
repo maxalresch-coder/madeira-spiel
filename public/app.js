@@ -603,13 +603,29 @@
     return [(x - P.minx) * P.s + P.pad, (P.maxy - y) * P.s + P.pad];
   }
   const PINS = [];
-  C.regions.forEach((r) => r.quests.forEach((q, i) => PINS.push({ q, region: r, n: i + 1, xy: toMap(q.pin[0], q.pin[1]) })));
+  C.regions.forEach((r) => { if (!r.villa) r.quests.forEach((q, i) => PINS.push({ q, region: r, n: i + 1, xy: toMap(q.pin[0], q.pin[1]) })); });
+  // Villa Fjord (11. Region, unsere Unterkunft): keine Fläche, sondern ein Haus-Symbol (Lucide „house“) an ihren
+  // Koordinaten, gefärbt nach ihrer Stufe; ihre 3 Quests haben keine eigenen Pins (Antippen des Hauses → Regionen-Fenster)
+  const VILLA = C.regions.find((r) => r.villa) || null;
+  const VILLA_XY = VILLA ? toMap(VILLA.pin[0], VILLA.pin[1]) : null;
+  const QUESTS_TOTAL = C.regions.reduce((n, r) => n + r.quests.length, 0); // regionale Quests insgesamt (33)
+  const HOUSE_BODY = "M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
+  const HOUSE_DOOR = "M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8";
+  // Haus in Kartenkoordinaten (Urkunde, Rückblick, große Feier); attrs z. B. data-rc-region für den Rückblick
+  function villaSVG(levels, size, attrs) {
+    if (!VILLA_XY) return "";
+    const lvl = (levels && levels[VILLA.id]) || 0, k = size / 24;
+    return '<g transform="translate(' + (VILLA_XY[0] - size / 2).toFixed(1) + " " + (VILLA_XY[1] - size * 0.55).toFixed(1) + ") scale(" + k.toFixed(3) + ')" stroke-linejoin="round" stroke-linecap="round">' +
+      '<path d="' + HOUSE_BODY + '" fill="none" stroke="#fff" stroke-width="5"/>' +
+      '<path d="' + HOUSE_BODY + '" fill="' + L.LEVELS[lvl].color + '" stroke="#073b4c" stroke-width="2"' + (attrs || "") + "/>" +
+      '<path d="' + HOUSE_DOOR + '" fill="none" stroke="#073b4c" stroke-width="2"/></g>';
+  }
 
   // Zoom-Zustand der Inselkarte: s = Faktor (1–8), tx/ty = Verschiebung in Bildschirmpixeln (bleibt beim Neuzeichnen)
   const mapUI = { st: { s: 1, tx: 0, ty: 0 }, active: false };
 
   function regionPaths(levels) {
-    return C.regions.map((r) => {
+    return C.regions.filter((r) => !r.villa).map((r) => {
       const lvl = levels[r.id] || 0;
       const d = (MAP.regions[r.name] || []).join(" ");
       const hl = mapUI.here && mapUI.here.region === r.id && Date.now() < mapUI.here.hlUntil ? " here-hl" : "";
@@ -622,7 +638,7 @@
       const p = MAP.labels[r.name];
       return p ? '<text class="region-label" x="' + p[0] + '" y="' + p[1] + '">' + esc(r.name) + "</text>" : "";
     }).join("");
-    return '<svg viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg">' + regionPaths(levels) + labels + "</svg>";
+    return '<svg viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg">' + regionPaths(levels) + villaSVG(levels, 30) + labels + "</svg>";
   }
 
   // 3 Sterne für Erkundet / Erobert / Erschlossen: erreicht = voll und kräftig, sonst nur Umriss
@@ -642,7 +658,7 @@
       (app.state.ended ? '<div class="panel ended-note"><strong>' + icon("flag") + ' Urlaub beendet.</strong> <button class="btn btn-small btn-gold" data-go="stats">Zertifikat & Belohnungen</button></div>' : "") +
       '<section class="home-sec region-zone" aria-label="Regionale Quests">' +
       '<div class="zone-head"><div><h2>' + icon("map-pinned") + ' Regionale Quests</h2>' +
-      '<div class="zone-sub">' + s.explored + " von " + C.regions.length + " Regionen erkundet · " + s.questsDone + " von 30 erledigt</div></div></div>" +
+      '<div class="zone-sub">' + s.explored + " von " + C.regions.length + " Regionen erkundet · " + s.questsDone + " von " + QUESTS_TOTAL + " erledigt</div></div></div>" +
       // Karte (per CSS-Transform gezoomt) + Ebene darüber mit Pins, Namen und Standortpunkt in Bildschirmgröße
       '<div class="map-wrap' + (st.s > 1.001 ? " zoomed" : "") + '" id="map-wrap"><div class="map-stage" id="map-stage" style="transform:translate3d(' + st.tx + "px," + st.ty + "px,0) scale(" + st.s + ')">' +
         '<svg id="island" viewBox="0 0 ' + MAP.w + " " + MAP.h + '" xmlns="http://www.w3.org/2000/svg" style="--zs:' + st.s + '"><g id="regions">' + regionPaths(s.levels) + "</g></svg></div>" +
@@ -668,7 +684,7 @@
     return '<section class="home-sec regions-sec" aria-label="Regionen">' +
         '<div class="sec-head"><h2>' + icon("map-pinned") + ' Regionen</h2></div>' +
         '<div class="panel">' +
-          '<div class="row between"><strong>' + rp.text + '</strong><span class="muted small">' + s.questsDone + " von 30 regionale Quests</span></div>" +
+          '<div class="row between"><strong>' + rp.text + '</strong><span class="muted small">' + s.questsDone + " von " + QUESTS_TOTAL + " regionale Quests</span></div>" +
           stageBar(rp, "Regionen") +
           '<div class="ms-row">' + milestones + "</div>" +
         "</div>" +
@@ -712,11 +728,12 @@
     if (!el || !el.closest) return;
     if (el.closest("[data-map-reset]")) { mapUI.pz.reset(); return; }
     if (el.closest("[data-here]")) { whereAmI(); return; }
-    const pin = el.closest("[data-pin]"), grp = el.closest("[data-group]"), reg = el.closest(".region-path[data-region]");
+    const pin = el.closest("[data-pin]"), grp = el.closest("[data-group]"), reg = el.closest(".region-path[data-region]"), villa = el.closest("[data-villa]");
     // Maus: den Klick nach dem Loslassen abfangen, sonst schließt er das neue Fenster sofort (Finger: kein Klick)
-    if ((pin || grp) && mouse) mapUI.ghostUntil = Date.now() + 500;
+    if ((pin || grp || villa) && mouse) mapUI.ghostUntil = Date.now() + 500;
     clearTimeout(mapUI.tapTimer);
     if (pin) openQuest(pin.dataset.pin);
+    else if (villa) openRegion(villa.dataset.villa);
     else if (grp) openGroup(+grp.dataset.group);
     else if (reg) mapUI.tapTimer = setTimeout(() => openRegion(reg.dataset.region), 280);
   }
@@ -733,6 +750,11 @@
       t.setAttribute("x", p[0].toFixed(1)); t.setAttribute("y", p[1].toFixed(1));
     });
     if (!lay) return;
+    if (lay.villa && VILLA_XY) {
+      const p = mapScreen(VILLA_XY), v = lay.villa;
+      v.el.setAttribute("transform", "translate(" + (p[0] + v.ox).toFixed(1) + " " + (p[1] + v.oy).toFixed(1) + ")");
+      if (v.stem) { v.stem.setAttribute("x1", p[0].toFixed(1)); v.stem.setAttribute("y1", p[1].toFixed(1)); v.stem.setAttribute("x2", (p[0] + v.ox).toFixed(1)); v.stem.setAttribute("y2", (p[1] + v.oy).toFixed(1)); }
+    }
     lay.groups.forEach((g) => {
       const pts = g.items.map((o) => mapScreen(o.p.xy));
       const hx = pts.reduce((a, q) => a + q[0], 0) / pts.length + g.ox, hy = pts.reduce((a, q) => a + q[1], 0) / pts.length + g.oy;
@@ -781,6 +803,8 @@
         }
       }
     }
+    const villa = placeVilla(W, H);
+    mapUI.villaBox = villa ? [villa.x - HOUSE.r, villa.y - HOUSE.r, 2 * HOUSE.r, 2 * HOUSE.r] : null; // Pin-Köpfe weichen dem Haus aus
     avoidLabels(groups, W, H, headX, headY);
     // Abstand des Kopfes zur Mitte seiner Standorte merken – so wandert er beim Verschieben/Zoomen mit
     groups.forEach((g) => { g.ox = g.x - g.items.reduce((a, o) => a + o.ax, 0) / g.items.length; g.oy = g.y - g.items.reduce((a, o) => a + o.ay, 0) / g.items.length; });
@@ -814,13 +838,22 @@
         '<animate attributeName="r" values="6;20" dur="1.6s" repeatCount="indefinite"/><animate attributeName="opacity" values=".55;0" dur="1.6s" repeatCount="indefinite"/></circle>' +
         '<circle class="here-dot" cx="' + x + '" cy="' + y + '" r="6" stroke-width="2.5"/></g>';
     })() : "";
+    const villaHTML = villa ? (() => { // Haus-Symbol der Villa Fjord: Farbe = Stufe, immer gleich groß
+      const lvl = sum().levels[VILLA.id], sc = HOUSE.size / 24;
+      return (villa.ox || villa.oy ? '<line class="villa-stem" x1="' + N(villa.ax) + '" y1="' + N(villa.ay) + '" x2="' + N(villa.x) + '" y2="' + N(villa.y) + '" stroke-width="1.4"/>' : "") +
+        '<g class="villa-mark lvl' + lvl + '" data-villa="' + VILLA.id + '" tabindex="0" role="button" aria-label="' + esc(VILLA.name + ": " + L.LEVELS[lvl].name) + '" transform="translate(' + N(villa.x) + " " + N(villa.y) + ')">' +
+        '<circle class="pin-hit" r="' + HOUSE.hit + '"/>' +
+        '<g transform="translate(' + (-HOUSE.size / 2) + " " + (-HOUSE.size * 0.55).toFixed(1) + ") scale(" + sc.toFixed(3) + ')">' +
+        '<path class="villa-halo" d="' + HOUSE_BODY + '"/><path class="villa-body" d="' + HOUSE_BODY + '" fill="' + L.LEVELS[lvl].color + '"/><path class="villa-door" d="' + HOUSE_DOOR + '"/></g></g>';
+    })() : "";
     const pinsEl = $("#pins", ov);
-    pinsEl.innerHTML = stems.join("") + heads.join("") + here;
+    pinsEl.innerHTML = stems.join("") + villaHTML + heads.join("") + here; // Haus über den Stielen, unter den Pin-Köpfen
     // Elemente merken, damit moveOverlay sie ohne Neuaufbau verschieben kann
     const lines = $$(".pin-stem", pinsEl), dots = $$(".pin-dot", pinsEl), headEls = $$(".pin", pinsEl);
     let n = 0;
     groups.forEach((g, gi) => { g.el = headEls[gi]; g.items.forEach((o) => { o.line = lines[n]; o.dot = dots[n]; n++; }); });
-    mapUI.lay = { groups, here: here ? $$(".here-mark circle", pinsEl) : null };
+    mapUI.lay = { groups, here: here ? $$(".here-mark circle", pinsEl) : null,
+      villa: villa ? { el: $(".villa-mark", pinsEl), stem: $(".villa-stem", pinsEl), ox: villa.ox, oy: villa.oy } : null };
     moveOverlay();
   }
   // ---- Standort: nur auf Knopfdruck und einmalig abgefragt; nichts wird gespeichert oder mit anderen Handys geteilt.
@@ -910,10 +943,30 @@
         (cfg.goals.some((g) => g.max != null) ? " Unter Wasser misst das Handy nichts – da zählt euer Wort." : "") + " Gespeichert wird nichts.</p>";
   }
 
-  // Pin-Köpfe dürfen die Namen der 10 Regionen nicht verdecken und sich nicht gegenseitig überlappen: liegt ein Kopf
-  // auf einem Namen oder einem anderen Kopf, rückt er ein Stück weiter (zuerst nach oben); der Stiel zeigt weiter auf den
-  // echten Standort. Findet sich kein freier Platz, werden die beiden Köpfe zu einer Gruppe (Kreis mit Anzahl).
-  function avoidLabels(groups, W, H, headX, headY) {
+  // Haus der Villa: kleiner als ein Pin (ca. 17 statt 26 px), Tippfläche 44 px. Liegt es auf einem Regionsnamen oder den Knöpfen
+  // oben rechts, rückt es ein kurzes Stück weiter (dünner Strich zum echten Ort) – so bleiben alle Namen lesbar.
+  const HOUSE = { size: 20, r: 11, hit: 22 };
+  function placeVilla(W, H) {
+    if (!VILLA_XY) return null;
+    const [ax, ay] = mapScreen(VILLA_XY);
+    if (ax < -20 || ax > W + 20 || ay < -20 || ay > H + 20) return null;
+    const boxes = labelBoxes(W);
+    const R = HOUSE.r;
+    const free = (x, y) => x >= R && x <= W - R && y >= R && y <= H - R &&
+      !boxes.some(([bx, by, bw, bh]) => Math.hypot(x - Math.max(bx, Math.min(x, bx + bw)), y - Math.max(by, Math.min(y, by + bh))) <= R);
+    let x = Math.max(R, Math.min(W - R, ax)), y = Math.max(R, Math.min(H - R, ay));
+    if (!free(x, y)) {
+      search: for (let d = 4; d <= 44; d += 4) {
+        for (const a of [90, 60, 120, 30, 150, 0, 180, -30, -150, -60, -120, -90]) {
+          const nx = x + d * Math.cos(a * Math.PI / 180), ny = y + d * Math.sin(a * Math.PI / 180);
+          if (free(nx, ny)) { x = nx; y = ny; break search; }
+        }
+      }
+    }
+    return { ax, ay, x, y, ox: x - ax, oy: y - ay };
+  }
+  // Rechtecke der Regionsnamen und der Knöpfe oben rechts (Bildschirmpixel)
+  function labelBoxes(W) {
     const boxes = [];
     Object.keys(mapUI.labelBox || {}).forEach((name) => {
       const b = mapUI.labelBox[name], p = mapScreen(MAP.labels[name]);
@@ -921,6 +974,15 @@
     });
     boxes.push([W - 54, 0, 54, 54]);                                   // Knopf „Wo bin ich?“ oben rechts frei lassen
     if (mapUI.st.s > 1.001) boxes.push([W - 102, 0, 50, 54]);          // daneben „Zurücksetzen“ (nur gezoomt)
+    return boxes;
+  }
+
+  // Pin-Köpfe dürfen die Namen der Regionen (und das Haus der Villa) nicht verdecken und sich nicht gegenseitig überlappen: liegt ein Kopf
+  // auf einem Namen oder einem anderen Kopf, rückt er ein Stück weiter (zuerst nach oben); der Stiel zeigt weiter auf den
+  // echten Standort. Findet sich kein freier Platz, werden die beiden Köpfe zu einer Gruppe (Kreis mit Anzahl).
+  function avoidLabels(groups, W, H, headX, headY) {
+    const boxes = labelBoxes(W);
+    if (mapUI.villaBox) boxes.push(mapUI.villaBox);
     const rad = (g) => (g.items.length > 1 ? PIN.r + 4 : PIN.r + 3);
     const onLabel = (x, y, R) => boxes.some(([bx, by, bw, bh]) => Math.hypot(x - Math.max(bx, Math.min(x, bx + bw)), y - Math.max(by, Math.min(y, by + bh))) <= R);
     const hitHead = (x, y, R, self) => groups.find((o) => o !== self && Math.hypot(x - o.x, y - o.y) <= R + rad(o) + 1);
@@ -1154,7 +1216,7 @@
         : '<span class="status ' + (done ? "on" : "") + '" aria-label="' + (done ? "erledigt" : "offen") + '">' + (done ? icon("check") : "") + "</span>") +
       '<div class="quest-body"><h4>' + esc(q.title) + "</h4>" +
       '<a class="loc" href="' + esc(mapsUrl(q)) + '" target="_blank" rel="noopener noreferrer" title="In Google Maps öffnen">' + icon("map-pin") + ' ' + esc(q.location) + ' <span class="loc-ext" aria-hidden="true">' + icon("external-link") + '</span></a>' +
-      '<p class="desc">' + esc(q.desc) + "</p>" + taskHTML(q) + (interactive ? toolHTML(q.id) : "") +
+      (q.desc ? '<p class="desc">' + esc(q.desc) + "</p>" : "") + taskHTML(q) + (interactive ? toolHTML(q.id) : "") +
       (done ? '<div class="by">' + icon("check") + ' erledigt von ' + esc(done.by) + " · " + when(done.t) + "</div>" + (interactive ? memLine(q.id) : "") : "") + "</div></div>";
   }
   function levelPill(lvl) {
@@ -1263,7 +1325,7 @@
     return '<div class="cnt' + (n >= cfg.target ? " done" : "") + '"><div class="cnt-prog"><span class="cnt-num">' + n + "</span> von " + cfg.target + " Regionen</div>" +
       '<div class="cnt-bar"><i style="width:' + Math.min(100, n / cfg.target * 100) + '%"></i></div>' + (n >= cfg.target ? goalNote() : "") + "</div>" +
       '<p class="tool-label">Antippen, wo ihr heute wart:</p><div class="region-chips">' +
-      C.regions.map((r) => '<button class="chip' + (on.indexOf(r.id) >= 0 ? " on" : "") + '" data-tool-act="toggle" data-reg="' + r.id + '" aria-pressed="' + (on.indexOf(r.id) >= 0) + '">' +
+      C.regions.filter((r) => !r.villa).map((r) => '<button class="chip' + (on.indexOf(r.id) >= 0 ? " on" : "") + '" data-tool-act="toggle" data-reg="' + r.id + '" aria-pressed="' + (on.indexOf(r.id) >= 0) + '">' +
         (on.indexOf(r.id) >= 0 ? icon("check") + " " : "") + esc(r.name) + "</button>").join("") + "</div>";
   }
 
@@ -3130,17 +3192,19 @@
   }, 200);
 
   // Timer der offenen Stapel-Quests: Ende auch melden, wenn gerade eine andere Seite offen ist (Ton + Vibration)
+  const TIMER_QUESTS = Object.keys(IX.quests).filter((id) => T.hasTimer(tcfg(id)));
   function checkTimers() {
     if (!app.state || !app.state.open) return;
     const now = serverNow();
-    app.state.open.forEach((qid) => {
+    // offene Stapel-Quests und regionale Quests mit Timer (z. B. „Blackout im Fjord“), solange nicht erledigt
+    app.state.open.concat(TIMER_QUESTS.filter((id) => !app.state.quests[id])).forEach((qid) => {
       const cfg = qid && tcfg(qid);
       if (!cfg || !T.hasTimer(cfg)) return;
       const end = T.timerEnd(cfg, toolState(qid)), key = qid + ":" + end;
       if (end == null || end > now || now - end > 60000 || toolUI.signaled.has(key)) return; // nach Neuladen kein alter Alarm
       toolUI.signaled.add(key);
       signalTimer();
-      toast("Zeit um: „" + IX.stack[qid].title + "“");
+      toast("Zeit um: „" + questTitle(qid) + "“");
       rerenderTools(qid);
     });
   }
@@ -3160,7 +3224,7 @@
     }, { where: "Quest: " + q.title });
   }
 
-  // Übersicht über alle 56 Quests – nur zum Ansehen
+  // Übersicht über alle Quests (regionale inkl. Villa Fjord als eigene Gruppe am Ende, Stapel-Quests) – nur zum Ansehen
   function openAllQuests() {
     openModal(() => {
       const s = sum();
@@ -3182,7 +3246,7 @@
       }).join("");
       return '<div class="modal-head"><h2>Alle Quests</h2><button class="modal-close" data-close aria-label="Schließen">' + icon("x") + '</button></div>' +
         '<p class="muted small">Nur zum Ansehen. Abgehakt wird über die Inselkarte (Pin oder Region) bzw. bei den 3 offenen Stapel-Quests.</p>' +
-        '<div class="ov-jump"><a href="#ov-region">Regionale Quests · ' + s.questsDone + "/30 erledigt</a>" +
+        '<div class="ov-jump"><a href="#ov-region">Regionale Quests · ' + s.questsDone + "/" + QUESTS_TOTAL + " erledigt</a>" +
         '<a href="#ov-stack">Stapel-Quests · ' + s.doneStack + "/" + C.stackQuests.length + " erledigt</a></div>" +
         '<h2 id="ov-region" class="ov-title">Regionale Quests</h2>' + regionsHTML +
         '<h2 id="ov-stack" class="ov-title">Stapel-Quests</h2>' + stackHTML;
@@ -3492,7 +3556,7 @@
       regionsSection(s) +
       '<div class="kpis">' +
         kpi(fmt(s.earned), "Punkte verdient") + kpi(fmt(s.balance), "Kontostand") +
-        kpi(s.questsDone + " von 30", "Regionale Quests erledigt") + kpi(s.doneStack + " von " + C.stackQuests.length, "Stapel-Quests erledigt") +
+        kpi(s.questsDone + " von " + QUESTS_TOTAL, "Regionale Quests erledigt") + kpi(s.doneStack + " von " + C.stackQuests.length, "Stapel-Quests erledigt") +
         kpi(Math.round(s.earned / s.maxPoints * 100) + " %", "vom Maximum") + kpi(s.bestMult ? L.fmtFactor(s.bestMult) : "–", "bester Multiplikator") +
       "</div>" +
       '<p class="muted small max-line">' + maxText(s) + "</p>" +
@@ -3860,6 +3924,10 @@
   function roadPath(r1, r2, fromXY, toXY) {
     const R = window.MADEIRA_ROADS;
     if (!R || !R.paths || !R.edges) return null;
+    // Villa Fjord: über die Straßen von Ribeira Brava (roadVia), das letzte kurze Stück zur Villa direkt
+    const via = (id) => (IX.regions[id] && IX.regions[id].roadVia) || id;
+    r1 = via(r1); r2 = via(r2);
+    if (r1 === r2) return null;
     const key = r1 < r2 ? r1 + "|" + r2 : r2 + "|" + r1;
     if (!(key in roadCache)) {
       const steps = R.paths[key];
@@ -3895,7 +3963,8 @@
     const el = document.createElement("div");
     el.className = "recap";
     el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "Urlaubs-Rückblick");
-    const paths = C.regions.map((r) => '<path data-rc-region="' + r.id + '" d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[0].color + '"/>').join("");
+    const paths = C.regions.filter((r) => !r.villa).map((r) => '<path data-rc-region="' + r.id + '" d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[0].color + '"/>').join("") +
+      (VILLA ? villaSVG(null, 30, ' data-rc-region="' + VILLA.id + '"') : ""); // Haus der Villa färbt sich wie eine Region
     el.innerHTML = '<div class="rc-top"><div><div class="rc-title">' + icon("history") + " Urlaubs-Rückblick</div>" +
         '<div class="rc-stats"><span class="rc-day">Tag 1</span> · <span class="rc-pts">0</span> Punkte</div></div>' +
         '<button class="btn btn-small rc-skip" data-rc="skip">Überspringen</button></div>' +
@@ -4206,7 +4275,8 @@
     // Inselkarte (Mitte bzw. rechts, wenn keine Fotos)
     const sc = photos.length ? 0.34 : 0.4, mx = photos.length ? 424 : 520, my = photos.length ? 340 : 332;
     const mapG = '<g transform="translate(' + mx + "," + my + ") scale(" + sc + ')">' +
-      C.regions.map((r) => '<path d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[s.levels[r.id]].color + '" stroke="#fff" stroke-width="3"/>').join("") + "</g>";
+      C.regions.filter((r) => !r.villa).map((r) => '<path d="' + (MAP.regions[r.name] || []).join(" ") + '" fill="' + L.LEVELS[s.levels[r.id]].color + '" stroke="#fff" stroke-width="3"/>').join("") +
+      villaSVG(s.levels, 40) + "</g>";
     const cx = mx + MAP.w * sc / 2, ly = my + MAP.h * sc + 20;
     const legend = [[3, "erschlossen"], [2, "erobert"], [1, "erkundet"], [0, "unbesucht"]];
     const cols = photos.length ? 2 : 4, legW = photos.length ? 170 : 140; // neben der Collage 2 × 2, sonst eine Zeile
@@ -4222,8 +4292,8 @@
       t(800 + (3 * CERT_CELL + 2 * CERT_GAP) / 2, 332 + (photos.length > 3 ? 2 : 1) * (CERT_CELL + CERT_GAP) + 14, "Erinnerungen", 15, 'text-anchor="middle" fill="#5f6f76" font-style="italic"') : "";
     // Unten links: regionale Quests und Stapel-Quests untereinander; rechts eine Box „Geteilte Gutscheine“ mit einfacher Liste
     const box = (x, y, w, h) => '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" rx="12" fill="#ffffff" stroke="#e3ddd1" stroke-width="1.5"/>';
-    // Beschriftung links, Zahl rechts – beide 18 px, auch „30 von 30“ passt mit Abstand neben „Regionale Quests“
-    const statsG = [["Regionale Quests", s.questsDone + " von 30"], ["Stapel-Quests", s.doneStack + " von " + C.stackQuests.length]].map(([l, v], i) => {
+    // Beschriftung links, Zahl rechts – beide 18 px, auch „33 von 33“ passt mit Abstand neben „Regionale Quests“
+    const statsG = [["Regionale Quests", s.questsDone + " von " + QUESTS_TOTAL], ["Stapel-Quests", s.doneStack + " von " + C.stackQuests.length]].map(([l, v], i) => {
       const y = 584 + i * 78;
       return box(70, y, 300, 68) + t(88, y + 40, l, 18, 'text-anchor="start" fill="#5f6f76"') + t(352, y + 40, v, 18, 'text-anchor="end" font-weight="700" fill="#0b5f78"');
     }).join("");
@@ -4389,10 +4459,10 @@
     return '<h2>' + icon("circle-help") + ' Spielanleitung</h2><div class="muted small help-sub">Operação Madeira - Das Spiel</div>' +
       '<button class="btn btn-ghost btn-block tour-again" id="tour-btn">' + icon("play") + " Einführung noch einmal ansehen</button>" +
       '<div class="panel help">' +
-      "<h3>" + icon("target") + " Ziel</h3><p>Ihr spielt als <strong>ein Team</strong>: Erkundet alle 10 Regionen Madeiras mit regionalen Quests und sammelt zusätzlich Punkte mit Stapel-Quests. Alle Punkte gehören dem Team – wir vertrauen uns, es gibt keine Beweisfotos.</p>" +
+      "<h3>" + icon("target") + " Ziel</h3><p>Ihr spielt als <strong>ein Team</strong>: Erkundet alle " + C.regions.length + " Regionen (die 10 Gemeinden Madeiras und eure Unterkunft, die Villa Fjord) mit regionalen Quests und sammelt zusätzlich Punkte mit Stapel-Quests. Alle Punkte gehören dem Team – wir vertrauen uns, es gibt keine Beweisfotos.</p>" +
       "<h3>" + icon("map-pinned") + " Regionale Quests und Stufen</h3><p>Jede Region hat 3 regionale Quests an festen Orten – auf der Inselkarte als Pins markiert. Pin antippen öffnet die Quest, Region antippen zeigt alle 3. Eine erledigte regionale Quest erkundet die Region, jede weitere hebt sie eine Stufe.</p>" +
       "<table><tr><th>Stufe</th><th>Quests</th><th>Punkte</th></tr><tr><td>Erkundet</td><td>1</td><td>100</td></tr><tr><td>Erobert</td><td>2</td><td>+20</td></tr><tr><td>Erschlossen</td><td>3</td><td>+20</td></tr></table>" +
-      "<p>Alle 10 Regionen erkundet: <strong>„Madeira erkundet!“ +300 Insel-Bonus</strong>. Danach geht das Spiel weiter. Alle 10 Regionen erobert bzw. erschlossen: Meilensteine <strong>„Madeira erobert!“</strong> und <strong>„Madeira erschlossen!“</strong> (ohne Extrapunkte).</p>" +
+      "<p>Alle " + C.regions.length + " Regionen erkundet: <strong>„Madeira erkundet!“ +300 Insel-Bonus</strong>. Danach geht das Spiel weiter. Alle " + C.regions.length + " Regionen erobert bzw. erschlossen: Meilensteine <strong>„Madeira erobert!“</strong> und <strong>„Madeira erschlossen!“</strong> (ohne Extrapunkte).</p>" +
       "<h3>" + icon("layers") + " Stapel-Quests</h3><p>26 Stapel-Quests, überall auf der Insel machbar (einfach 15, mittel 25, schwer 50 Punkte). Sie liegen gemischt in einem Stapel; immer 3 sind offen, der Rest bleibt verdeckt. Ist eine erledigt, wird automatisch eine neue vom Stapel gezogen. Stapel-Quests erkunden keine Region.</p>" +
       "<p>„" + icon("list-checks") + " Alle Quests“ zeigt alle 56 Quests zum Ansehen.</p>" +
       "<h3>" + icon("shopping-bag") + " Shop</h3><ul><li><strong>Region-Joker (150) · 1 im Spiel:</strong> Region gilt als erkundet, ohne die 100 Punkte.</li>" +
@@ -4402,7 +4472,7 @@
       "<h3>" + icon("timer") + " Hilfsmittel</h3><p>Manche regionalen Quests haben unter der Aufgabe eine antippbare Zeile mit einem freiwilligen Hilfsmittel, z. B. Countdown, Fahrzeit stoppen, Autos zählen, Höhe schätzen, Kompass, Tic-Tac-Toe-Spielfeld, geheime Begriffe, geheime Rangfolge, Buchstaben-Fotos, Kriterien wählen oder Bucht zeichnen und raten (Küstenkarte der Ponta de São Lourenço: CAOP, Direção-Geral do Território). Manche Hilfsmittel nehmen Fotos mit der Handykamera auf; sie werden nur für die laufende Runde gespeichert. Bei geheimen Eingaben geht jeder Schritt auf jedem Handy (Phase 1 geheim eingeben, 2 raten, 3 Ergebnis): Wer eingibt, tippt, die anderen schauen weg. Danach ist alles verdeckt; „Anzeigen“ per langem Drücken ist nur für die Person gedacht, die eingegeben hat. „Auflösen“ deckt alles für alle auf. Alle Handys sehen denselben Stand. Ist ein Versuch daneben, startet die Strafzeit automatisch – gesperrt ist dann nur dieses eine Hilfsmittel. Hilfsmittel geben keine Punkte und haken nichts ab – abhaken macht ihr selbst. Manche Stapel-Quests haben Zähler, Timer oder „Höhe messen“; beim Abhaken oder Tauschen beginnen sie wieder bei null. „Wo bin ich?“ bei der Inselkarte fragt einmalig den Standort ab und zeigt Region und Höhe (Geländehöhe: Open-Meteo) – gespeichert wird nichts.</p>" +
       "<h3>" + icon("camera") + " Erinnerungsfotos</h3><p>Zu jeder erledigten Quest könnt ihr ein Foto anhängen – direkt nach dem Abhaken, später im Quest-Fenster, bei den erledigten Stapel-Quests oder bei den Aktivitäten. Ersetzen und Löschen geht jederzeit. Die Fotos bleiben dauerhaft; unter Einstellungen → Erinnerungsfotos lassen sich alle als ZIP herunterladen. Wird eine Quest rückgängig gemacht, ist ihr Foto ausgeblendet; der komplette Reset löscht alle Fotos.</p>" +
       "<h3>" + icon("trophy") + " Ränge</h3><p>Landstreicher (ab 0) · Abenteurer (ab 700) · Inselkönig (ab 1.500). Es zählen die <em>verdienten</em> Punkte – Shop-Ausgaben senken den Rang nicht.</p>" +
-      "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind 2.400 Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
+      "<p><strong>Maximum:</strong> Ohne Multiplikatoren sind " + fmt(L.MAX_POINTS) + " Punkte möglich. Jeder Multiplikator verändert dieses Maximum: Die Stapel-Quest zählt dann mit ihrem multiplizierten Wert (Faktor über 1 erhöht, unter 1 senkt das Maximum). Das aktuelle Maximum steht bei den Erfolgen.</p>" +
       "<h3>" + icon("undo-2") + " Rückgängig und Reset</h3><p>Alles lässt sich rückgängig machen (Haken antippen oder bei den Aktivitäten " + icon("undo-2") + "). Wiederholte Käufe bringen dasselbe Ergebnis. Ein kompletter Reset (ganz unten in den Einstellungen) gilt für alle Handys, löscht auch alle Erinnerungsfotos und fragt vorher noch einmal nach.</p>" +
       "<h3>" + icon("compass") + " Bedienung</h3><p>Die Startseite zeigt die Inselkarte und die 3 offenen Stapel-Quests. Pin antippen öffnet die Quest, Region antippen alle 3 Quests der Region – dort wechselt Wischen nach links/rechts (oder die Pfeile) zur nächsten Region; eine Zahl im Kreis bedeutet mehrere Quests nah beieinander. Bei den Aktivitäten öffnet Antippen eines Eintrags die Quest. Oben rechts: " + icon("shopping-bag") + " Shop, " + icon("trophy") + " Erfolge (Rang, Regionen, Punkte und Diagramme), " + icon("history") + " Aktivitäten (alles, was passiert ist, mit Rückgängig) und " + icon("settings") + " Einstellungen (diese Spielanleitung, Spieler, Spielstand sichern, Urlaub beenden, Reset). „← Zu den Quests“ führt zurück zur Startseite; in den Unterseiten der Einstellungen gibt es zusätzlich „← Einstellungen“.</p>" +
       "<h3>" + icon("flag") + " Ende</h3><p>„Urlaub beenden &amp; Belohnungen“ (unter Einstellungen) tauscht die Restpunkte in Belohnungen um. Danach gibt es das Zertifikat als PDF.</p>" +
@@ -4871,7 +4941,7 @@
     const o = document.createElement("div");
     o.className = "big-celebration";
     const bonus = kind === "erkundet" ? "+300 Insel-Bonus" : "Meilenstein erreicht";
-    o.innerHTML = '<div><div class="sub">Alle 10 Regionen ' + kind + '</div><h1>Madeira ' + kind + '!</h1>' + mapSVG(s.levels, { labels: false }) +
+    o.innerHTML = '<div><div class="sub">Alle ' + C.regions.length + ' Regionen ' + kind + '</div><h1>Madeira ' + kind + '!</h1>' + mapSVG(s.levels, { labels: false }) +
       '<div class="bonus">' + bonus + '</div><button class="btn btn-gold">Weiter geht\'s!</button></div>';
     document.body.appendChild(o);
     $("button", o).addEventListener("click", () => o.remove());
@@ -4964,6 +5034,7 @@
     if ((ev.key === "Enter" || ev.key === " ") && ev.target.dataset) {
       if (ev.target.dataset.pin) { ev.preventDefault(); openQuest(ev.target.dataset.pin); }
       else if (ev.target.dataset.group) { ev.preventDefault(); openGroup(+ev.target.dataset.group); }
+      else if (ev.target.dataset.villa) { ev.preventDefault(); openRegion(ev.target.dataset.villa); }
       else if (ev.target.classList.contains("region-path")) { ev.preventDefault(); openRegion(ev.target.dataset.region); }
     }
   });

@@ -114,12 +114,15 @@ assert.throws(() => act(s, { type: "quest", questId: "q-cal-1" }));
   assert.strictEqual(L.rewardAmount(byId("massage"), -5, 120), 0);
 }
 
-// Straßennetz für den Rückblick (public/roads.js): alle 45 Regionspaare, Teilstücke hängen lückenlos aneinander
+// Straßennetz für den Rückblick (public/roads.js): alle 45 Paare der 10 Gemeinden, Teilstücke hängen lückenlos aneinander;
+// die Villa Fjord fährt über Ribeira Brava (roadVia) und dann ein kurzes Stück
 {
   const RW = {}; require("vm").runInNewContext(require("fs").readFileSync(__dirname + "/../public/roads.js", "utf8"), { window: RW });
   const R = RW.MADEIRA_ROADS;
   assert(R && /OpenStreetMap/.test(R.source), "Quelle genannt");
-  const ids = C.regions.map((r) => r.id).sort();
+  const villa = C.regions.find((r) => r.villa);
+  assert(villa && R.regions[villa.roadVia] && L.distanceKm(villa.pin, R.regions[villa.roadVia]) < 1.5, "Villa: Wegpunkt Ribeira Brava in der Nähe");
+  const ids = C.regions.filter((r) => !r.roadVia).map((r) => r.id).sort();
   assert.deepStrictEqual(Object.keys(R.regions).sort(), ids);
   let pairs = 0;
   ids.forEach((a, i) => ids.slice(i + 1).forEach((b) => {
@@ -205,26 +208,31 @@ assert.throws(() => act(s, { type: "mult", questId: s.open[0] }), /gesperrt/);
 // Summe der Log-Deltas == verdiente Punkte
 assert.strictEqual(s.log.reduce((a, e) => a + e.dE, 0), sm.earned);
 
-// Alle Regionen + alle Stapel-Quests = 2.000 Basis, mit Stufen 2.400
+// Alle 11 Regionen + alle Stapel-Quests = 2.100 Basis, mit Stufen 2.540
 let g = L.newGame(C, 7, t);
 C.regions.forEach(r => r.quests.forEach(q => { g = act(g, { type: "quest", questId: q.id }); }));
 while (g.open.some(Boolean)) g = act(g, { type: "stack", questId: g.open.find(Boolean) });
 sm = L.summary(g, C);
-assert.strictEqual(sm.earned, 2400); assert(sm.allExplored); assert(sm.stackFinished);
+assert.strictEqual(sm.earned, 2540); assert(sm.allExplored); assert(sm.stackFinished);
+assert.strictEqual(sm.earned, L.MAX_POINTS); assert(sm.allConquered && sm.allDeveloped);
 assert.strictEqual(sm.rankName, "Inselkönig");
 
-// Inhalte: 30 regionale Quests, 26 Stapel-Quests (10/10/6) = 700 Punkte, Basis 2.000
-assert.strictEqual(C.regions.length, 10);
+// Inhalte: 11 Regionen (10 Gemeinden + Villa Fjord) mit 33 regionalen Quests, 26 Stapel-Quests (10/10/6) = 700 Punkte,
+// Basis 2.100, Maximum 2.540 (11 × 140 + 300 + 700)
+assert.strictEqual(C.regions.length, 11);
+assert.strictEqual(C.regions[10].id, "villa"); assert(C.regions[10].villa && C.regions.filter((r) => r.villa).length === 1, "Villa ist die 11. Region");
 C.regions.forEach(r => assert.strictEqual(r.quests.length, 3));
 const count = d => C.stackQuests.filter(q => q.difficulty === d).length;
 assert.deepStrictEqual([count("einfach"), count("mittel"), count("schwer")], [10, 10, 6]);
 const stackTotal = C.stackQuests.reduce((a, q) => a + L.STACK_POINTS[q.difficulty], 0);
 assert.strictEqual(stackTotal, 700);
-assert.strictEqual(10 * 100 + L.MADEIRA_BONUS + stackTotal, 2000);
+assert.strictEqual(11 * 100 + L.MADEIRA_BONUS + stackTotal, 2100);
+assert.strictEqual(L.MAX_POINTS, C.regions.length * 140 + L.MADEIRA_BONUS + stackTotal);
+assert.strictEqual(C.regions.reduce((n, r) => n + r.quests.length, 0), 33);
 const ids = C.regions.flatMap(r => r.quests.map(q => q.id)).concat(C.stackQuests.map(q => q.id));
-assert.strictEqual(new Set(ids).size, 56);
+assert.strictEqual(new Set(ids).size, 59);
 C.regions.forEach(r => r.quests.forEach(q => {
-  assert(q.title && q.location && q.desc && q.task.startsWith("Eure Aufgabe: "), q.id);
+  assert(q.title && q.location && (q.desc || r.villa) && q.task.startsWith("Eure Aufgabe: "), q.id);
   assert(Array.isArray(q.pin) && q.pin.length === 2, q.id);
   assert(q.maps === null || (typeof q.maps === "string" && q.maps.length > 3), q.id + ": maps");
   assert(q.mapsUrl === undefined || /^https:\/\/(maps\.app\.goo\.gl|www\.google\.com\/maps)\//.test(q.mapsUrl), q.id + ": mapsUrl");
@@ -241,7 +249,7 @@ assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
   C.regions.forEach(r => r.quests.slice(0, 2).forEach(q => { m = act(m, { type: "quest", questId: q.id }); }));
   let sm2 = L.summary(m, C);
   assert(sm2.allConquered && !sm2.allDeveloped);
-  assert.strictEqual(sm2.earned, 10 * 120 + 300); // keine Extrapunkte
+  assert.strictEqual(sm2.earned, 11 * 120 + 300); // keine Extrapunkte (alle 11 Regionen inkl. Villa)
   assert.strictEqual(ms(m, "allConquered").length, 1);
   assert(ms(m, "allConquered")[0].data.reached);
   assert(!L.canUndo(ms(m, "allConquered")[0]));
@@ -256,7 +264,7 @@ assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
   C.regions.forEach(r => { m = act(m, { type: "quest", questId: r.quests[2].id }); });
   sm2 = L.summary(m, C);
   assert(sm2.allDeveloped);
-  assert.strictEqual(sm2.earned, 10 * 140 + 300); // keine Extrapunkte
+  assert.strictEqual(sm2.earned, 11 * 140 + 300); // keine Extrapunkte
   assert.strictEqual(ms(m, "allDeveloped").length, 1);
   assert.strictEqual(m.log.reduce((a, e) => a + e.dE, 0), sm2.earned);
 }
@@ -281,16 +289,16 @@ assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
 {
   let g2 = L.newGame(C, 21, t);
   let rp = L.regionProgress(L.summary(g2, C), C);
-  assert.deepStrictEqual([rp.stage, rp.pct, rp.text, rp.color], [1, 0, "0 von 10 Regionen erkundet", L.LEVELS[1].color]);
+  assert.deepStrictEqual([rp.stage, rp.pct, rp.text, rp.color], [1, 0, "0 von 11 Regionen erkundet", L.LEVELS[1].color]);
   C.regions.forEach(r => { g2 = act(g2, { type: "quest", questId: r.quests[0].id }); });
   g2 = act(g2, { type: "quest", questId: "q-cal-2" });
   rp = L.regionProgress(L.summary(g2, C), C);
   assert.deepStrictEqual([rp.stage, rp.value, rp.color, rp.done], [2, 1, L.LEVELS[2].color, [true, false, false]]);
-  assert.strictEqual(rp.text, "1 von 10 Regionen erobert");
+  assert.strictEqual(rp.text, "1 von 11 Regionen erobert");
   // Rückgängig unter die Grenze -> zurück in Etappe 1
   g2 = act(g2, { type: "undo", logId: g2.log.find(e => e.type === "quest" && e.data.questId === "q-pmz-1").id });
   rp = L.regionProgress(L.summary(g2, C), C);
-  assert.deepStrictEqual([rp.stage, rp.value, rp.color, rp.done[0]], [1, 9, L.LEVELS[1].color, false]);
+  assert.deepStrictEqual([rp.stage, rp.value, rp.color, rp.done[0]], [1, 10, L.LEVELS[1].color, false]);
   // alles erschlossen -> voll gold
   C.regions.forEach(r => r.quests.forEach(q => { if (!g2.quests[q.id]) g2 = act(g2, { type: "quest", questId: q.id }); }));
   rp = L.regionProgress(L.summary(g2, C), C);
@@ -302,36 +310,36 @@ assert(!L.isCompatible(Object.assign(L.newGame(C, 1, t), { schema: 1 }), C));
   k = L.rankProgress(700);
   assert.deepStrictEqual([k.stage, k.pct, k.text, k.color], [2, 0, "noch 800 Punkte bis Inselkönig", L.LEVELS[2].color]);
   assert.deepStrictEqual(k.ranks.map(x => x.reached), [true, true, false]);
-  k = L.rankProgress(1950);
-  assert.deepStrictEqual([k.stage, k.pct, k.text, k.color], [3, 50, "noch 450 Punkte bis zum Maximum", L.LEVELS[3].color]);
+  k = L.rankProgress(2020);
+  assert.deepStrictEqual([k.stage, k.pct, k.text, k.color], [3, 50, "noch 520 Punkte bis zum Maximum", L.LEVELS[3].color]);
   k = L.rankProgress(699);
   assert.strictEqual(k.stage, 1);
-  assert.deepStrictEqual([L.rankProgress(2400).pct, L.rankProgress(2400).text], [100, "Maximum erreicht!"]);
-  assert.deepStrictEqual([L.rankProgress(2510).pct, L.rankProgress(2510).text], [100, "Maximum übertroffen (+110 Punkte)"]);
+  assert.deepStrictEqual([L.rankProgress(2540).pct, L.rankProgress(2540).text], [100, "Maximum erreicht!"]);
+  assert.deepStrictEqual([L.rankProgress(2650).pct, L.rankProgress(2650).text], [100, "Maximum übertroffen (+110 Punkte)"]);
 }
 
-// Variables Maximum: 2.400 + (multiplizierter Wert − Grundwert) je Stapel-Quest mit Multiplikator
+// Variables Maximum: 2.540 + (multiplizierter Wert − Grundwert) je Stapel-Quest mit Multiplikator
 {
   let v = L.newGame(C, 31, t);
-  assert.strictEqual(L.maxPoints(v, C), 2400);
+  assert.strictEqual(L.maxPoints(v, C), 2540);
   assert.strictEqual(L.summary(v, C).maxDelta, 0);
   C.regions.forEach(r => { v = act(v, { type: "quest", questId: r.quests[0].id }); }); // Punkte für den Shop
   v.rolls = [1.5, 0.5, 5]; // feste Würfe für den Test
   const a = v.open[0], b = v.open[1], c = v.open[2];
   const exp = (id, f) => Math.ceil(L.stackBase(C, id) * f - 1e-9) - L.stackBase(C, id);
   v = act(v, { type: "mult", questId: a });
-  assert.strictEqual(L.maxPoints(v, C), 2400 + exp(a, 1.5));
+  assert.strictEqual(L.maxPoints(v, C), 2540 + exp(a, 1.5));
   v = act(v, { type: "mult", questId: b });
-  assert.strictEqual(L.maxPoints(v, C), 2400 + exp(a, 1.5) + exp(b, 0.5)); // ×0,5 senkt das Maximum
+  assert.strictEqual(L.maxPoints(v, C), 2540 + exp(a, 1.5) + exp(b, 0.5)); // ×0,5 senkt das Maximum
   // erledigte Stapel-Quest mit Multiplikator zählt weiter mit ihrem multiplizierten Wert
   v = act(v, { type: "stack", questId: a });
-  assert.strictEqual(L.maxPoints(v, C), 2400 + exp(a, 1.5) + exp(b, 0.5));
+  assert.strictEqual(L.maxPoints(v, C), 2540 + exp(a, 1.5) + exp(b, 0.5));
   // Rückgängig des Multiplikator-Kaufs -> sofort neu berechnet
   v = act(v, { type: "undo", logId: v.log.find(e => e.type === "mult" && e.data.questId === b).id });
-  assert.strictEqual(L.maxPoints(v, C), 2400 + exp(a, 1.5));
+  assert.strictEqual(L.maxPoints(v, C), 2540 + exp(a, 1.5));
   v = act(v, { type: "mult", questId: c }); // Jackpot: Slot 2 frei? Slot 1 wieder frei -> Faktor 0,5
   assert.strictEqual(v.mults[c].factor, 0.5);
-  assert.strictEqual(L.summary(v, C).maxPoints, 2400 + exp(a, 1.5) + exp(c, 0.5));
+  assert.strictEqual(L.summary(v, C).maxPoints, 2540 + exp(a, 1.5) + exp(c, 0.5));
   // Teamrang-Balken: goldene Etappe läuft bis zum aktuellen Maximum
   assert.strictEqual(L.rankProgress(1500, 2430).text, "noch 930 Punkte bis zum Maximum");
   assert.strictEqual(L.rankProgress(2430, 2430).text, "Maximum erreicht!");
@@ -793,10 +801,21 @@ assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, unde
   // Wo bin ich? Region aus den Gemeindegrenzen, Höhe über dem Meeresspiegel
   const MW = {}; require("vm").runInNewContext(require("fs").readFileSync(__dirname + "/../public/map-data.js", "utf8"), { window: MW });
   const MAPD = MW.MADEIRA_MAP;
-  C.regions.forEach((r) => assert(MAPD.regions[r.name], "Grenzen für " + r.name));
+  const GEMEINDEN = C.regions.filter((r) => !r.villa); // die Villa Fjord hat keine Fläche
+  GEMEINDEN.forEach((r) => assert(MAPD.regions[r.name], "Grenzen für " + r.name));
+  assert(!MAPD.regions["Villa Fjord"]);
   assert.strictEqual(T.regionAt(MAPD, -50, -50), null);                                 // Meer / außerhalb
+  // „Wo bin ich?“ an der Villa zeigt die echte Gemeinde: Ribeira Brava (Umrechnung wie toMap in app.js)
+  {
+    const src = require("fs").readFileSync(__dirname + "/../public/app.js", "utf8");
+    const fn = src.slice(src.indexOf("  function toMap(lat, lon) {"), src.indexOf("  const PINS = [];"));
+    const toMap = new Function("MAP", fn + "; return toMap;")(MAPD);
+    const v = C.regions.find((r) => r.villa), xy = toMap(v.pin[0], v.pin[1]);
+    assert.strictEqual(T.regionAt(MAPD, xy[0], xy[1]), "Ribeira Brava");
+    v.quests.forEach((q) => assert.deepStrictEqual(q.pin, v.pin, "Villa-Quests am Haus"));
+  }
   // ein Punkt in jeder Region (Mitte eines Dreiecks am Rand) wird dieser Region zugeordnet
-  C.regions.forEach((r) => {
+  GEMEINDEN.forEach((r) => {
     const ring = T.pathRings(MAPD.regions[r.name][0])[0];
     let found = null;
     for (let i = 0; i < ring.length && !found; i += 3) {
@@ -808,6 +827,58 @@ assert.strictEqual(L.apply(g, C, { type: "reset", seed: 1 }, "X", t).tools, unde
   });
   assert.deepStrictEqual([T.seaLevelAltitude(1048.4, false), T.seaLevelAltitude(1000, true), T.seaLevelAltitude(null, false)], [1000, 1000, null]);
 }
+// ---------------------------------------------------------------- Villa Fjord (11. Region)
+{
+  const V = C.regions.find((r) => r.villa);
+  assert.deepStrictEqual(V.quests.map((q) => q.title), ["Pool Plantsch", "Madeira Filmfestspiele", "Blackout im Fjord"]);
+  V.quests.forEach((q) => {
+    assert.strictEqual(q.mapsUrl, "https://maps.app.goo.gl/8NJkVpvWyD9ncUDbA");
+    assert(!q.desc && !/geheim/i.test(q.title + q.task), q.id + ": kurz, ohne „geheim“");
+  });
+  assert.deepStrictEqual(V.pin, [32.6738992, -17.0587713]);
+  const tc = T.config("q-vil-3", C);
+  assert(tc && tc.kind === "timer" && tc.minutes === 60 && T.hasTimer(tc), "Blackout: 60-Minuten-Timer");
+  let tv = T.update(tc, null, { type: "tStart" }, 1000, "A");
+  assert.strictEqual(T.timerLeft(tc, tv, 1000 + 60000), 59 * 60000);
+  // Stufen wie überall: 100 / +20 / +20
+  let vg = L.newGame(C, 5, t);
+  vg = L.apply(vg, C, { type: "quest", questId: "q-vil-1" }, "A", t);
+  assert.strictEqual(L.summary(vg, C).levels.villa, 1); assert.strictEqual(L.summary(vg, C).earned, 100);
+  vg = L.apply(vg, C, { type: "quest", questId: "q-vil-2" }, "A", t);
+  vg = L.apply(vg, C, { type: "quest", questId: "q-vil-3" }, "A", t);
+  assert.strictEqual(L.summary(vg, C).levels.villa, 3); assert.strictEqual(L.regionPoints(vg, C, "villa"), 140);
+  // Region-Joker gilt auch für die Villa (erkundet ohne 100 P)
+  let jg = L.newGame(C, 6, t);
+  ["q-cal-1", "q-fun-1"].forEach((id) => { jg = L.apply(jg, C, { type: "quest", questId: id }, "A", t); });
+  jg = L.apply(jg, C, { type: "joker", regionId: "villa" }, "A", t);
+  assert.strictEqual(L.summary(jg, C).levels.villa, 1); assert.strictEqual(L.regionPoints(jg, C, "villa"), 0);
+  jg = L.apply(jg, C, { type: "quest", questId: "q-vil-1" }, "A", t);
+  assert.strictEqual(L.summary(jg, C).levels.villa, 2); assert.strictEqual(L.regionPoints(jg, C, "villa"), 20);
+  // Madeira erkundet erst mit allen 11 Regionen (10 Gemeinden reichen nicht)
+  let eg = L.newGame(C, 8, t);
+  C.regions.filter((r) => !r.villa).forEach((r) => { eg = L.apply(eg, C, { type: "quest", questId: r.quests[0].id }, "A", t); });
+  assert(!L.summary(eg, C).allExplored); assert.strictEqual(L.summary(eg, C).explored, 10);
+  assert.strictEqual(L.regionProgress(L.summary(eg, C), C).text, "10 von 11 Regionen erkundet");
+  eg = L.apply(eg, C, { type: "quest", questId: "q-vil-1" }, "A", t);
+  assert(L.summary(eg, C).allExplored); assert.strictEqual(L.summary(eg, C).earned, 11 * 100 + 300);
+  // Alter Spielstand ohne Villa-Quests: bleibt gültig, Villa unbesucht, Punkte unverändert
+  const oldState = JSON.parse(JSON.stringify(eg)); delete oldState.quests["q-vil-1"];
+  assert(L.isCompatible(oldState, C)); assert.strictEqual(L.summary(oldState, C).levels.villa, 0);
+  // Rückblick: Villa ist ein Ziel wie die anderen (Region, Luftlinie)
+  const rv = L.recap(eg, C), ve = rv.events.find((e) => e.id === "q-vil-1");
+  assert(ve && ve.region === "villa" && ve.points === 400 && ve.km > 0, "Villa im Rückblick (+100 + Insel-Bonus)");
+  // Test-Simulation: kommt mit der Villa zurecht, Punkte stimmen
+  let seen = 0;
+  for (let sd = 1; sd <= 40; sd++) {
+    const sg = L.simulateGame(C, sd, Date.now(), ["A", "B", "C"]);
+    const sm3 = L.summary(sg, C);
+    assert.strictEqual(sg.log.reduce((a, e) => a + e.dE, 0), sm3.earned);
+    if (sm3.allExplored) assert(sm3.levels.villa >= 1);
+    if (sm3.levels.villa > 0) seen++;
+  }
+  assert(seen >= 5, "Villa kommt in Simulationen vor (" + seen + ")");
+}
+
 // ---------------------------------------------------------------- Offline-Warteschlange (L.replay)
 {
   const toolApply = (st, it) => Object.assign({}, st, { tools: Object.assign({}, st.tools, { [it.qid]: T.update(T.config(it.qid, C), (st.tools || {})[it.qid], it.op, it.now, it.by) }) });
